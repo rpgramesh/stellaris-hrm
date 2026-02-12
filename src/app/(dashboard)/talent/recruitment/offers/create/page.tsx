@@ -9,8 +9,8 @@ import { Applicant, Job, OfferStatus } from '@/types';
 function CreateOfferContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const applicantId = searchParams.get('applicantId');
-  const jobId = searchParams.get('jobId');
+  const applicantId = searchParams?.get('applicantId');
+  const jobId = searchParams?.get('jobId');
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);

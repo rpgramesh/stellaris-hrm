@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createUser } from '@/app/actions/auth';
 import { Employee } from '@/types';
+import { organizationService, Department, Manager } from '@/services/organizationService';
 
 interface EmployeeFormProps {
   initialData?: Employee;
@@ -19,6 +20,27 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
   const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'family' | 'contact' | 'health' | 'directory' | 'others'>('quick');
   const [password, setPassword] = useState('');
   
+  // Hierarchy State
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [filteredManagers, setFilteredManagers] = useState<Manager[]>([]);
+  const [loadingHierarchy, setLoadingHierarchy] = useState(false);
+
+  // Load Departments on mount
+  useEffect(() => {
+    const loadDepartments = async () => {
+      setLoadingHierarchy(true);
+      try {
+        const data = await organizationService.getDepartments();
+        setDepartments(data);
+      } catch (err) {
+        console.error('Failed to load departments:', err);
+      } finally {
+        setLoadingHierarchy(false);
+      }
+    };
+    loadDepartments();
+  }, []);
+
   // Default form state
   const defaultFormData = {
     // Personal / Quick
@@ -47,8 +69,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     lineManager: '',
     lineManagerId: '',
     department: '',
+    departmentId: '',
     branch: '',
     level: '',
+    status: 'Active',
     employmentTermsEffectiveDate: '2026-01-01',
     
     // Salary
@@ -144,8 +168,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         lineManager: initialData.lineManager || '',
         lineManagerId: initialData.lineManagerId || '',
         department: initialData.department,
+        departmentId: initialData.departmentId || '',
         branch: initialData.branch || '',
         level: initialData.level || '',
+        status: initialData.status || 'Active',
         employmentTermsEffectiveDate: initialData.employmentTermsEffectiveDate || '',
         
         // Salary
@@ -211,6 +237,28 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     }
   }, [initialData]);
 
+  // Sync Managers when Department changes
+  useEffect(() => {
+    const fetchManagers = async () => {
+      if (formData.departmentId) {
+        const dept = departments.find(d => d.id === formData.departmentId);
+        try {
+          // If we found the department, use its branch info for better filtering
+          // Otherwise just try fetching by departmentId
+          const managers = await organizationService.getManagers(dept?.branchId || undefined, formData.departmentId || undefined);
+          // Filter out the current employee from the manager list to prevent self-management
+          setFilteredManagers(managers.filter(m => m.id !== formData.id));
+        } catch (error) {
+          console.error('Error fetching managers:', error);
+        }
+      } else {
+        setFilteredManagers([]);
+      }
+    };
+    
+    fetchManagers();
+  }, [formData.departmentId, departments]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
@@ -218,6 +266,20 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const handleDepartmentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const deptId = e.target.value;
+    const selectedDept = departments.find(d => d.id === deptId);
+    
+    setFormData(prev => ({
+      ...prev,
+      departmentId: deptId,
+      department: selectedDept?.name || '',
+      branch: selectedDept?.branchName || '',
+      lineManager: '',
+      lineManagerId: ''
     }));
   };
 
@@ -246,7 +308,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       joinDate: formData.dateJoined,
       endOfProbation: formData.endOfProbation,
       timeClockNeeded: formData.timeClockNeeded,
-      status: initialData?.status || 'Active', // Preserve status or default to Active
+      status: formData.status as 'Active' | 'On Leave' | 'Terminated' | 'Probation',
+      avatarUrl: (formData as any).avatarUrl,
      // Placement
       placementEffectiveDate: formData.placementEffectiveDate,
       lineManager: formData.lineManager,
@@ -386,6 +449,31 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     </div>
   );
 
+  const renderDepartmentSelect = () => (
+    <div className="relative">
+      <select
+        name="departmentId"
+        value={(formData as any).departmentId ?? ''}
+        onChange={handleDepartmentChange}
+        className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none bg-transparent appearance-none"
+        required
+      >
+        <option value="">Select Department</option>
+        {departments.map(dept => (
+          <option key={dept.id} value={dept.id}>
+            {dept.name}
+          </option>
+        ))}
+      </select>
+      <label className="absolute left-3 top-0 text-xs text-gray-500">
+        Department {loadingHierarchy && '(Loading...)'}
+      </label>
+      <div className="absolute right-3 top-4 pointer-events-none">
+        <svg className="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+      </div>
+    </div>
+  );
+
   const renderManagerSelect = () => (
     <div className="relative">
       <select
@@ -393,7 +481,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         value={(formData as any).lineManagerId ?? ''}
         onChange={(e) => {
           const selectedId = e.target.value;
-          const selectedManager = managers.find(m => m.id === selectedId);
+          const selectedManager = filteredManagers.find(m => m.id === selectedId);
           setFormData(prev => ({
             ...prev,
             lineManagerId: selectedId,
@@ -401,16 +489,18 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
           }));
         }}
         className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none bg-transparent appearance-none"
+        disabled={!formData.departmentId}
+        required
       >
         <option value="">Select Line Manager</option>
-        {managers.map(m => (
+        {filteredManagers.map(m => (
           <option key={m.id} value={m.id}>
             {m.firstName} {m.lastName}
           </option>
         ))}
       </select>
       <label className="absolute left-3 top-0 text-xs text-gray-500">
-        Line Manager
+        Line Manager {!formData.departmentId ? '(Select Dept First)' : ''}
       </label>
       <div className="absolute right-3 top-4 pointer-events-none">
         <svg className="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
@@ -528,9 +618,22 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                  <h3 className="font-medium text-lg border-b pb-2 mb-4">Job Details</h3>
                  <div className="grid grid-cols-2 gap-4">
                     {renderTextField('dateJoined', 'Date Joined', false, 'date')}
-                    {renderTextField('department', 'Department')}
-                    {renderTextField('branch', 'Branch')}
+                    {renderDepartmentSelect()}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="branch"
+                        value={formData.branch}
+                        readOnly
+                        className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 bg-gray-50 text-gray-500 focus:outline-none"
+                        placeholder="Branch"
+                      />
+                      <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
+                        Branch (Auto-filled)
+                      </label>
+                    </div>
                     {renderManagerSelect()}
+                    {renderSelectField('status', 'Employment Status', ['Active', 'On Leave', 'Terminated', 'Probation'], true)}
                     <div className="flex items-center gap-3">
                          <input 
                             type="checkbox" 

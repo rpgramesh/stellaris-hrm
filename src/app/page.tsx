@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 
 export default function Home() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'admin' | 'employee'>('admin');
+  const [activeTab, setActiveTab] = useState<'admin' | 'employee'>('employee');
   const [showPassword, setShowPassword] = useState(false);
   const [isHrRole, setIsHrRole] = useState(false);
   const [email, setEmail] = useState('');
@@ -88,7 +88,7 @@ export default function Home() {
           if (!employee) {
              throw new Error('Access Denied: No employee record found for this user.');
           }
-          router.push('/self-service/profile');
+          router.push('/self-service');
         }
       }
     } catch (err: any) {

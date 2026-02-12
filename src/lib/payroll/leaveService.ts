@@ -1,4 +1,11 @@
-import { LeaveAccrualRule } from "@/types/payroll";
+
+// Local type definition
+interface LeaveAccrualRule {
+  leaveType: string;
+  method: string;
+  rate: number;
+  accrueOnOvertime: boolean;
+}
 
 const STANDARD_ACCRUAL_RULES: LeaveAccrualRule[] = [
   {

@@ -7,6 +7,8 @@ import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
 import { payrollService } from '@/services/payrollService';
 import { attendanceService } from '@/services/attendanceService';
+import { holidayService } from '@/services/holidayService';
+import { calculateWorkingDays } from '@/utils/workDayCalculations';
 import { Employee, LeaveRequest, Payslip, AttendanceRecord } from '@/types';
 
 export default function ESSDashboardPage() {
@@ -50,28 +52,29 @@ export default function ESSDashboardPage() {
 
         // 2. Fetch related data
         const currentYear = new Date().getFullYear();
-        const [leaves, payslips, attendance, entitlements] = await Promise.all([
+        const [leaves, payslips, attendance, entitlements, thisYearHolidays, nextYearHolidays] = await Promise.all([
           leaveService.getByEmployeeId(currentEmployee.id!),
           payrollService.getPayslipsByEmployee(currentEmployee.id!),
           attendanceService.getAll(undefined, undefined, currentEmployee.id!),
-          leaveService.getEntitlements(currentEmployee.id!, currentYear)
+          leaveService.getEntitlements(currentEmployee.id!, currentYear),
+          holidayService.getByYear(currentYear),
+          holidayService.getByYear(currentYear + 1)
         ]);
+
+        const allHolidays = [...thisYearHolidays, ...nextYearHolidays].map(h => new Date(h.date));
 
         // 3. Process Leave Balance
         // Calculate total entitlement for Annual Leave
-        const annualEntitlement = entitlements
-            .filter(e => e.leaveType === 'Annual')
+        const annualEntitlementRaw = entitlements
+            .filter(e => e.leaveType === 'Annual' || e.leaveType === 'Annual Leave')
             .reduce((sum, e) => sum + Number(e.totalDays || 0) + Number(e.carriedOver || 0), 0);
+        
+        // Fallback if no entitlement records exist
+        const totalEntitlement = entitlements.length > 0 ? annualEntitlementRaw : 20;
 
-        const totalEntitlement = annualEntitlement;
-
-        const approvedLeaves = leaves.filter(l => l.status === 'Approved' && l.type === 'Annual');
+        const approvedLeaves = leaves.filter(l => l.status === 'Approved' && (l.type === 'Annual' || l.type === 'Annual Leave'));
         const daysTaken = approvedLeaves.reduce((acc, l) => {
-          const start = new Date(l.startDate);
-          const end = new Date(l.endDate);
-          const diffTime = Math.abs(end.getTime() - start.getTime());
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; 
-          return acc + diffDays;
+          return acc + calculateWorkingDays(l.startDate, l.endDate, allHolidays);
         }, 0);
         setLeaveBalance(Math.max(totalEntitlement - daysTaken, 0));
 
@@ -109,7 +112,7 @@ export default function ESSDashboardPage() {
         }
 
         // 6. Generate Recent Activity Feed
-        const activities = [];
+        const activities: any[] = [];
 
         // Payslips
         payslips.slice(0, 2).forEach(p => {

@@ -1,4 +1,7 @@
-import { SuperRateSchedule } from "@/types/payroll";
+export interface SuperRateSchedule {
+  effectiveDate: string;
+  rate: number;
+}
 
 const DEFAULT_SUPER_SCHEDULE: SuperRateSchedule[] = [
   { effectiveDate: '2023-07-01', rate: 11.0 },

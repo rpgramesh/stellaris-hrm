@@ -1,9 +1,27 @@
 import { AttendanceRecord } from "@/types";
-import { AwardRule, PayComponent } from "@/types/payroll";
-import { differenceInHours, getDay, isSaturday, isSunday, parseISO } from "date-fns";
+import { differenceInHours, isSaturday, isSunday, parseISO } from "date-fns";
+
+// Local types to avoid conflict with global AwardRule
+export interface SimpleAwardRule {
+  id: string;
+  name: string;
+  type: string;
+  condition: { field: string; operator: string; value: number };
+  multiplier: number;
+  applyTo: string;
+}
+
+export interface SimplePayComponent {
+  code: string;
+  description: string;
+  units: number;
+  rate: number;
+  amount: number;
+  type: string;
+}
 
 // Mock Rules for a standard award (e.g., Clerks Private Sector)
-export const STANDARD_AWARD_RULES: AwardRule[] = [
+export const STANDARD_AWARD_RULES: SimpleAwardRule[] = [
   {
     id: 'OT-1',
     name: 'Overtime > 8h',
@@ -33,9 +51,9 @@ export const STANDARD_AWARD_RULES: AwardRule[] = [
 export const interpretTimesheet = (
   record: AttendanceRecord, 
   hourlyRate: number, 
-  rules: AwardRule[] = STANDARD_AWARD_RULES
-): PayComponent[] => {
-  const components: PayComponent[] = [];
+  rules: SimpleAwardRule[] = STANDARD_AWARD_RULES
+): SimplePayComponent[] => {
+  const components: SimplePayComponent[] = [];
   const date = parseISO(record.date);
   
   if (!record.clockIn || !record.clockOut) {
@@ -99,6 +117,6 @@ export const interpretTimesheet = (
   return components;
 };
 
-export const calculateGrossPay = (components: PayComponent[]): number => {
+export const calculateGrossPay = (components: SimplePayComponent[]): number => {
   return components.reduce((sum, c) => sum + c.amount, 0);
 };

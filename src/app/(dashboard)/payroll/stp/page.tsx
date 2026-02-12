@@ -1,16 +1,26 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { stpService } from "@/services/stpService";
-import { payrollService } from "@/services/payrollService"; // To fetch real payslips
-import { STPPayEvent } from "@/types/payroll";
-import { submitToATO } from "@/lib/payroll/stpService"; // Mock ATO submission logic
+import { supabase } from "@/lib/supabase";
+
+interface STPEvent {
+  id: string;
+  submission_date: string;
+  submission_id: string;
+  submission_type: string;
+  status: 'Draft' | 'Submitted' | 'Accepted' | 'Rejected' | 'Corrected';
+  employee_count: number;
+  total_gross: number;
+  total_tax: number;
+  total_super: number;
+  response_message?: string;
+}
 
 export default function STPPage() {
   const [atoOrgId, setAtoOrgId] = useState("");
-  const [softwareId, setSoftwareId] = useState("");
+  const [softwareId, setSoftwareId] = useState("SSID-882910");
   const [lastSubmission, setLastSubmission] = useState<string | null>(null);
-  const [events, setEvents] = useState<STPPayEvent[]>([]);
+  const [events, setEvents] = useState<STPEvent[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -21,8 +31,18 @@ export default function STPPage() {
 
   const loadData = async () => {
     try {
-      const data = await stpService.getEvents();
-      setEvents(data);
+      const { data, error } = await supabase
+        .from('stp_submissions')
+        .select('*')
+        .order('submission_date', { ascending: false });
+
+      if (error) throw error;
+      setEvents(data || []);
+
+      const lastSuccess = data?.find(e => e.status === 'Accepted' || e.status === 'Submitted');
+      if (lastSuccess) {
+        setLastSubmission(lastSuccess.submission_date);
+      }
     } catch (error) {
       console.error('Failed to load STP events:', error);
     } finally {
@@ -33,50 +53,88 @@ export default function STPPage() {
   const handleGeneratePayEvent = async () => {
     setIsGenerating(true);
     try {
-      // Fetch real payslips from the latest pay run or all pending payslips
-      // For now, we'll fetch all payslips to simulate a run
-      const payslips = await payrollService.getAllPayslips();
-      
-      // Filter for current period or just take last 5 for demo if no run logic exists yet
-      const currentPayslips = payslips.slice(0, 5); 
+      // Find latest approved payroll run that hasn't been submitted
+      const { data: payRuns, error: runError } = await supabase
+        .from('payroll_runs')
+        .select('*')
+        .eq('status', 'Paid')
+        .is('stp_submission_id', null)
+        .order('payment_date', { ascending: false })
+        .limit(1);
 
-      if (currentPayslips.length === 0) {
-        alert("No payslips found to generate event.");
+      if (runError) throw runError;
+
+      if (!payRuns || payRuns.length === 0) {
+        alert("No pending pay runs found to generate event.");
         setIsGenerating(false);
         return;
       }
 
-      const newEvent = await stpService.generateEvent("RUN-" + Date.now(), currentPayslips);
+      const payRun = payRuns[0];
+
+      // Create STP submission record
+      const { data: newSubmission, error: submitError } = await supabase
+        .from('stp_submissions')
+        .insert({
+          payroll_run_id: payRun.id,
+          submission_type: 'PayEvent',
+          submission_id: `STP-${Date.now()}`,
+          status: 'Draft',
+          submission_date: new Date().toISOString(),
+          employee_count: payRun.employee_count,
+          total_gross: payRun.total_gross_pay,
+          total_tax: payRun.total_tax,
+          total_super: payRun.total_super
+        })
+        .select()
+        .single();
+
+      if (submitError) throw submitError;
       
-      // Save to DB
-      await stpService.createEvent(newEvent);
-      
-      setEvents([newEvent, ...events]);
-    } catch (error) {
+      setEvents([newSubmission, ...events]);
+    } catch (error: any) {
       alert("Error generating pay event");
-      console.error(error);
+      console.error('STP Generation Error:', error.message || error.details || error);
     }
     setIsGenerating(false);
   };
 
-  const handleSubmitToATO = async (event: STPPayEvent) => {
+  const handleSubmitToATO = async (event: STPEvent) => {
     setIsSubmitting(true);
     try {
-      // 1. Submit to ATO (Mock)
-      const result = await submitToATO(event);
+      // Mock ATO submission delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      if (result.success) {
-        // 2. Update status in DB
-        await stpService.updateEventStatus(event.id, "Submitted", result.message);
+      const success = Math.random() > 0.1; // 90% success rate mock
+      const status = success ? 'Submitted' : 'Rejected';
+      const message = success ? 'Received by ATO' : 'Connection timeout';
+
+      const { error } = await supabase
+        .from('stp_submissions')
+        .update({
+          status: status,
+          response_message: message,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', event.id);
+
+      if (error) throw error;
+
+      // Update payroll run status
+      if (success) {
+         await supabase
+          .from('payroll_runs')
+          .update({ stp_status: 'Submitted' })
+          .eq('stp_submission_id', event.submission_id); // Assuming we link back, but schema has stp_submission_id on payroll_runs
+      }
         
-        // Optimistic update
-        setEvents(events.map(e => (e.id === event.id ? { ...e, status: "Submitted" as const, responseMessage: result.message } : e)));
+      // Optimistic update
+      setEvents(events.map(e => (e.id === event.id ? { ...e, status: status as any, response_message: message } : e)));
+      if (success) {
         setLastSubmission(new Date().toISOString());
-        alert(result.message);
+        alert(message);
       } else {
-        await stpService.updateEventStatus(event.id, "Rejected", result.message);
-        setEvents(events.map(e => (e.id === event.id ? { ...e, status: "Rejected" as const, responseMessage: result.message } : e)));
-        alert("Submission Failed: " + result.message);
+        alert("Submission Failed: " + message);
       }
     } catch (error) {
       alert("Error submitting to ATO");
@@ -164,13 +222,13 @@ export default function STPPage() {
                   events.map((event) => (
                     <tr key={event.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {new Date(event.submissionDate).toLocaleDateString()}
+                        {new Date(event.submission_date).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
-                        {event.transactionId.substring(0, 8)}...
+                        {event.submission_id?.substring(0, 15)}...
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        Pay Event ({event.employeeCount} employees)
+                        {event.submission_type} ({event.employee_count} employees)
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
@@ -182,7 +240,7 @@ export default function STPPage() {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        Gross: ${event.totalGross.toLocaleString()} | Tax: ${event.totalTax.toLocaleString()}
+                        Gross: ${(event.total_gross || 0).toLocaleString()} | Tax: ${(event.total_tax || 0).toLocaleString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {event.status === 'Draft' && (

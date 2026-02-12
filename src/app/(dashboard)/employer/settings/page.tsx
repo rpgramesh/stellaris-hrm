@@ -29,7 +29,7 @@ export default function SettingsPage() {
   const loadSettings = async () => {
     try {
       const data = await settingsService.get();
-      setSettings(data);
+      if (data) setSettings(data);
     } catch (error) {
       console.error('Error loading settings:', error);
     } finally {

@@ -90,11 +90,11 @@ export default function NewJobPage() {
         description: formData.description,
         requirements: requirementsList,
         responsibilities: responsibilitiesList,
-        salaryRange: {
-          min: formData.salaryMin ? Number(formData.salaryMin) : undefined,
-          max: formData.salaryMax ? Number(formData.salaryMax) : undefined,
+        salaryRange: (formData.salaryMin && formData.salaryMax) ? {
+          min: Number(formData.salaryMin),
+          max: Number(formData.salaryMax),
           currency: formData.salaryCurrency
-        },
+        } : undefined,
         experienceLevel: formData.experienceLevel,
         status: formData.status,
         priority: formData.priority,

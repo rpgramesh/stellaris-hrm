@@ -15,10 +15,14 @@ export const departmentService = {
   async getAll(): Promise<Department[]> {
     const { data, error } = await supabase
       .from('departments')
-      .select('*');
+      .select('*, branches(name)');
 
     if (error) throw error;
-    return data ? data.map(mapDepartmentFromDb) : [];
+    return data ? data.map(d => ({
+      ...mapDepartmentFromDb(d),
+      branchId: d.branch_id || null,
+      branchName: d.branches?.name || null
+    })) : [];
   },
 
   async create(department: Omit<Department, 'id'>): Promise<Department> {
@@ -27,7 +31,8 @@ export const departmentService = {
       .insert({
         name: department.name,
         manager_id: department.managerId || null,
-        location: department.location || null
+        location: department.location || null,
+        branch_id: department.branchId || null
       })
       .select()
       .single();
@@ -41,6 +46,7 @@ export const departmentService = {
      if (updates.name) dbUpdates.name = updates.name;
      if (updates.managerId !== undefined) dbUpdates.manager_id = updates.managerId || null;
      if (updates.location !== undefined) dbUpdates.location = updates.location || null;
+     if (updates.branchId !== undefined) dbUpdates.branch_id = updates.branchId || null;
      
      const { data, error } = await supabase
        .from('departments')

@@ -9,7 +9,7 @@ import { Job, Applicant } from '@/types';
 export default function JobDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const id = params.id as string;
+  const id = params?.id as string;
 
   const [job, setJob] = useState<Job | null>(null);
   const [applicants, setApplicants] = useState<Applicant[]>([]);

@@ -9,7 +9,7 @@ import { Offer, OfferStatus } from '@/types';
 export default function OfferDetailsPage() {
   const router = useRouter();
   const params = useParams();
-  const id = params.id as string;
+  const id = params?.id as string;
 
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);

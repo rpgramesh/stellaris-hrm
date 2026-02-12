@@ -7,7 +7,8 @@ import { Job, Applicant } from '@/types';
 import Link from 'next/link';
 
 export default function ApplyJobPage() {
-  const { id } = useParams();
+  const params = useParams();
+  const id = params?.id;
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);

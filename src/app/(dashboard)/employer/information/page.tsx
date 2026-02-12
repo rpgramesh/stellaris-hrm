@@ -28,7 +28,7 @@ export default function EmployerInformationPage() {
   const loadCompanyInfo = async () => {
     try {
       const data = await companyInformationService.get();
-      setFormData(data);
+      if (data) setFormData(data);
     } catch (error) {
       console.error('Error loading company info:', error);
     } finally {

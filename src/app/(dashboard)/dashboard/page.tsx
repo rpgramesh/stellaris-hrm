@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
 import { expensesService } from '@/services/expensesService';
 import { attendanceService } from '@/services/attendanceService';
 import { payrollService } from '@/services/payrollService';
+import { holidayService } from '@/services/holidayService';
+import { calculateWorkingDays } from '@/utils/workDayCalculations';
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({
@@ -39,13 +42,15 @@ export default function DashboardPage() {
           leavesRes,
           expensesRes,
           attendanceRes,
-          payslipsRes
+          payslipsRes,
+          holidaysRes
         ] = await Promise.allSettled([
           employeeService.getAll(),
           leaveService.getAll(),
           expensesService.getExpenses(),
           attendanceService.getAll(), // We might want to limit this to current week
-          payrollService.getAllPayslips()
+          payrollService.getAllPayslips(),
+          holidayService.getByYear(currentYear)
         ]);
 
         // Process Employees
@@ -81,15 +86,29 @@ export default function DashboardPage() {
             l.endDate >= todayStr
           );
           onLeaveToday = activeLeaves.length;
-          onLeaveTodayList = activeLeaves.slice(0, 5); // Take first 5 for avatars
+          onLeaveTodayList = activeLeaves.slice(0, 5).map(l => ({
+            ...l,
+            employeeName: employeeMap.get(l.employeeId) || 'Unknown'
+          }));
 
           // Pending Approvals
           pendingLeave = leaves.filter(l => l.status === 'Pending').length;
 
-          // Leave Distribution (YTD)
+          // Process Holidays
+          let holidays: Date[] = [];
+          if (holidaysRes.status === 'fulfilled') {
+            holidays = holidaysRes.value.map(h => new Date(h.date));
+          }
+
+          // Leave Distribution (YTD) - Calculate working days instead of count
           leaves.forEach(l => {
             if (l.status === 'Approved') {
-              leaveDistribution[l.type] = (leaveDistribution[l.type] || 0) + 1;
+              const leaveDate = new Date(l.startDate);
+              // Only include leaves for current year
+              if (leaveDate.getFullYear() === currentYear) {
+                const days = calculateWorkingDays(l.startDate, l.endDate, holidays);
+                leaveDistribution[l.type] = (leaveDistribution[l.type] || 0) + days;
+              }
             }
           });
         }
@@ -231,35 +250,96 @@ export default function DashboardPage() {
       
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-          <h3 className="text-gray-500 text-sm font-medium">Total Employees</h3>
-          <p className="text-2xl font-bold text-gray-900 mt-2">{stats.totalEmployees}</p>
-          <p className="text-xs text-green-600 mt-1">↑ {stats.newEmployees} new this month</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-yellow-500">
-          <h3 className="text-gray-500 text-sm font-medium">On Leave Today</h3>
-          <p className="text-2xl font-bold text-gray-900 mt-2">{stats.onLeaveToday}</p>
-          <div className="flex -space-x-2 mt-2">
-            {stats.onLeaveTodayList.slice(0, 3).map((_, i) => (
-              <div key={i} className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-gray-600">
-                {String.fromCharCode(65+i)}
-              </div>
-            ))}
-            {stats.onLeaveToday > 3 && (
-                <div className="w-6 h-6 rounded-full bg-gray-100 border-2 border-white flex items-center justify-center text-[10px] text-gray-500">+{stats.onLeaveToday - 3}</div>
-            )}
+        
+        {/* Total Employees */}
+        <Link href="/employees" className="block group relative">
+          <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500 transition-transform transform group-hover:-translate-y-1 h-full">
+            <h3 className="text-gray-500 text-sm font-medium">Total Employees</h3>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.totalEmployees}</p>
+            <p className="text-xs text-green-600 mt-1">↑ {stats.newEmployees} new this month</p>
+            
+            {/* Hover Details */}
+            <div className="absolute top-full left-0 w-full mt-2 p-3 bg-gray-800 text-white text-xs rounded z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg">
+              <p className="font-semibold mb-1">Overview</p>
+              <ul className="space-y-1">
+                <li>Total: {stats.totalEmployees}</li>
+                <li>New: {stats.newEmployees}</li>
+                <li>Click to manage employees</li>
+              </ul>
+            </div>
           </div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500">
-          <h3 className="text-gray-500 text-sm font-medium">Pending Approvals</h3>
-          <p className="text-2xl font-bold text-gray-900 mt-2">{stats.pendingLeave + stats.pendingExpenses}</p>
-          <p className="text-xs text-gray-500 mt-1">Leave: {stats.pendingLeave} | Expenses: {stats.pendingExpenses}</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-          <h3 className="text-gray-500 text-sm font-medium">Upcoming Payroll</h3>
-          <p className="text-2xl font-bold text-gray-900 mt-2">{stats.upcomingPayrollDays} Days</p>
-          <p className="text-xs text-gray-500 mt-1">Due: {stats.upcomingPayrollDate}</p>
-        </div>
+        </Link>
+
+        {/* On Leave Today */}
+        <Link href="/leave/schedule" className="block group relative">
+          <div className="bg-white p-6 rounded-lg shadow border-l-4 border-yellow-500 transition-transform transform group-hover:-translate-y-1 h-full">
+            <h3 className="text-gray-500 text-sm font-medium">On Leave Today</h3>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.onLeaveToday}</p>
+            <div className="flex -space-x-2 mt-2">
+              {stats.onLeaveTodayList.slice(0, 3).map((l, i) => (
+                <div key={i} className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-gray-600" title={l.employeeName}>
+                  {l.employeeName.charAt(0)}
+                </div>
+              ))}
+              {stats.onLeaveToday > 3 && (
+                <div className="w-6 h-6 rounded-full bg-gray-100 border-2 border-white flex items-center justify-center text-[10px] text-gray-500">+{stats.onLeaveToday - 3}</div>
+              )}
+            </div>
+
+            {/* Hover Details */}
+            <div className="absolute top-full left-0 w-full mt-2 p-3 bg-gray-800 text-white text-xs rounded z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg">
+              <p className="font-semibold mb-1">Who's on leave?</p>
+              {stats.onLeaveTodayList.length > 0 ? (
+                <ul className="space-y-1">
+                  {stats.onLeaveTodayList.map((l, i) => (
+                    <li key={i} className="truncate">• {l.employeeName}</li>
+                  ))}
+                  {stats.onLeaveToday > 5 && <li>...and {stats.onLeaveToday - 5} more</li>}
+                </ul>
+              ) : (
+                <p className="text-gray-400">No one is on leave today.</p>
+              )}
+            </div>
+          </div>
+        </Link>
+
+        {/* Pending Approvals */}
+        <Link href="/employees/requests" className="block group relative">
+          <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500 transition-transform transform group-hover:-translate-y-1 h-full">
+            <h3 className="text-gray-500 text-sm font-medium">Pending Approvals</h3>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.pendingLeave + stats.pendingExpenses}</p>
+            <p className="text-xs text-gray-500 mt-1">Leave: {stats.pendingLeave} | Expenses: {stats.pendingExpenses}</p>
+
+            {/* Hover Details */}
+            <div className="absolute top-full left-0 w-full mt-2 p-3 bg-gray-800 text-white text-xs rounded z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg">
+              <p className="font-semibold mb-1">Action Items</p>
+              <ul className="space-y-1">
+                <li className="flex justify-between"><span>Leave Requests:</span> <span>{stats.pendingLeave}</span></li>
+                <li className="flex justify-between"><span>Expense Claims:</span> <span>{stats.pendingExpenses}</span></li>
+                <li className="text-gray-400 mt-1 pt-1 border-t border-gray-700">Click to review requests</li>
+              </ul>
+            </div>
+          </div>
+        </Link>
+
+        {/* Upcoming Payroll */}
+        <Link href="/payroll/process" className="block group relative">
+          <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500 transition-transform transform group-hover:-translate-y-1 h-full">
+            <h3 className="text-gray-500 text-sm font-medium">Upcoming Payroll</h3>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.upcomingPayrollDays} Days</p>
+            <p className="text-xs text-gray-500 mt-1">Due: {stats.upcomingPayrollDate}</p>
+
+            {/* Hover Details */}
+            <div className="absolute top-full left-0 w-full mt-2 p-3 bg-gray-800 text-white text-xs rounded z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg">
+              <p className="font-semibold mb-1">Next Pay Run</p>
+              <ul className="space-y-1">
+                <li>Date: {stats.upcomingPayrollDate}</li>
+                <li>Status: Scheduled</li>
+                <li className="text-gray-400 mt-1 pt-1 border-t border-gray-700">Click to process payroll</li>
+              </ul>
+            </div>
+          </div>
+        </Link>
       </div>
 
       {/* Charts Section */}

@@ -1,0 +1,41 @@
+{
+  "stpEvents": [],
+  "awardInterpretations": [
+    {
+      "recordId": "ATT001",
+      "date": "2025-06-02",
+      "components": [
+        {
+          "code": "ORD",
+          "description": "Ordinary Hours",
+          "units": 8,
+          "rate": 40,
+          "amount": 320,
+          "type": "Ordinary"
+        },
+        {
+          "code": "OT1.5",
+          "description": "Overtime (1.5x)",
+          "units": 1,
+          "rate": 60,
+          "amount": 60,
+          "type": "Overtime"
+        }
+      ]
+    },
+    {
+      "recordId": "ATT002",
+      "date": "2025-06-07",
+      "components": [
+        {
+          "code": "ORD",
+          "description": "Ordinary Hours",
+          "units": 5,
+          "rate": 50,
+          "amount": 250,
+          "type": "Ordinary"
+        }
+      ]
+    }
+  ]
+}

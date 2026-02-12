@@ -1,5 +1,28 @@
-import { STPPayEvent, STPPayeePayload } from "@/types/payroll";
 import { Payslip } from "@/types";
+
+// Local type definitions to avoid missing exports
+export interface STPPayeePayload {
+  employeeId: string;
+  payPeriodGross: number;
+  payPeriodTax: number;
+  payPeriodSuper: number;
+  ytdGross: number;
+  ytdTax: number;
+  ytdSuper: number;
+}
+
+export interface STPPayEvent {
+  id: string;
+  submissionDate: string;
+  runDate: string;
+  transactionId: string;
+  status: string;
+  employeeCount: number;
+  totalGross: number;
+  totalTax: number;
+  totalSuper: number;
+  payees: STPPayeePayload[];
+}
 
 // Mocking ATO SBR (Standard Business Reporting) Interaction
 

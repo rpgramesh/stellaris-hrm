@@ -3,13 +3,20 @@
 import { useState, useEffect } from 'react';
 import { leaveService } from '@/services/leaveService';
 import { employeeService } from '@/services/employeeService';
+import { holidayService } from '@/services/holidayService';
 import { LeaveRequest, Employee } from '@/types';
+import LeaveDetailsModal from '@/components/leave/LeaveDetailsModal';
+import LeaveReportModal from '@/components/leave/LeaveReportModal';
+import { calculateWorkingDays } from '@/utils/workDayCalculations';
 
 export default function LeavePage() {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [holidays, setHolidays] = useState<Date[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null);
   const [formData, setFormData] = useState({
     type: 'Annual',
     startDate: '',
@@ -24,12 +31,17 @@ export default function LeavePage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [leaveData, empData] = await Promise.all([
+      const yearStart = new Date(new Date().getFullYear(), 0, 1);
+      const yearEnd = new Date(new Date().getFullYear() + 1, 11, 31); // 2 years coverage
+
+      const [leaveData, empData, holidayData] = await Promise.all([
         leaveService.getAll(),
-        employeeService.getAll()
+        employeeService.getAll(),
+        holidayService.getHolidays(yearStart.toISOString(), yearEnd.toISOString())
       ]);
       setRequests(leaveData);
       setEmployees(empData);
+      setHolidays(holidayData.map(h => new Date(h.date)));
     } catch (error) {
       console.error('Failed to load leave data:', error);
     } finally {
@@ -49,6 +61,12 @@ export default function LeavePage() {
       return;
     }
 
+    const workingDays = calculateWorkingDays(formData.startDate, formData.endDate, holidays);
+    if (workingDays === 0) {
+      alert('Selected range has 0 working days (weekends or holidays). Please select valid dates.');
+      return;
+    }
+
     try {
       // TODO: Replace with actual logged-in user ID
       const currentEmployeeId = employees[0].id;
@@ -59,6 +77,7 @@ export default function LeavePage() {
         startDate: formData.startDate,
         endDate: formData.endDate,
         reason: formData.reason,
+        totalHours: workingDays * 8 // Assume 8h days
       });
 
       setRequests([newRequest, ...requests]);
@@ -97,15 +116,26 @@ export default function LeavePage() {
           <h1 className="text-3xl font-bold text-gray-900">Leave Management</h1>
           <p className="text-gray-600 mt-1">View and manage leave requests.</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Apply for Leave
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setIsReportOpen(true)}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 font-medium"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Export Report
+          </button>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Apply for Leave
+          </button>
+        </div>
       </div>
 
       {/* Leave Entitlements Summary (Mock) */}
@@ -163,22 +193,30 @@ export default function LeavePage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    {req.status === 'Pending' && (
-                      <div className="flex space-x-2">
-                        <button 
-                          onClick={() => handleStatusChange(req.id, 'Approved')}
-                          className="text-green-600 hover:text-green-900"
-                        >
-                          Approve
-                        </button>
-                        <button 
-                          onClick={() => handleStatusChange(req.id, 'Rejected')}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => setSelectedRequest(req)}
+                        className="text-blue-600 hover:text-blue-900 font-medium"
+                      >
+                        Details
+                      </button>
+                      {req.status === 'Pending' && (
+                        <>
+                          <button 
+                            onClick={() => handleStatusChange(req.id, 'Approved')}
+                            className="text-green-600 hover:text-green-900"
+                          >
+                            Approve
+                          </button>
+                          <button 
+                            onClick={() => handleStatusChange(req.id, 'Rejected')}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -186,6 +224,23 @@ export default function LeavePage() {
           </table>
         </div>
       </div>
+
+      {/* Details Modal */}
+      <LeaveDetailsModal 
+        isOpen={!!selectedRequest}
+        onClose={() => setSelectedRequest(null)}
+        request={selectedRequest}
+        employee={selectedRequest ? employees.find(e => e.id === selectedRequest.employeeId) || null : null}
+      />
+
+      {/* Report Modal */}
+      <LeaveReportModal 
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        requests={requests}
+        employees={employees}
+        holidays={holidays}
+      />
 
       {/* Apply Modal */}
       {isModalOpen && (

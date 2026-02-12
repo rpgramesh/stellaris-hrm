@@ -7,7 +7,8 @@ import { recruitmentService } from '@/services/recruitmentService';
 import { Job } from '@/types';
 
 export default function JobDetailsPage() {
-  const { id } = useParams();
+  const params = useParams();
+  const id = params?.id;
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
 

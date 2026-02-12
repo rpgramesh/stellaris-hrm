@@ -54,6 +54,7 @@ export interface Employee {
   // Job / Placement
   role: Role;
   department: string;
+  departmentId?: string;
   position: string;
   joinDate: string; // ISO date string
   endOfProbation?: string;
@@ -116,6 +117,8 @@ export interface Department {
   name: string;
   managerId: string;
   location: string;
+  branchId?: string;
+  branchName?: string;
 }
 
 export interface JobPosition {
@@ -367,7 +370,10 @@ export interface LeaveRequest {
   type: string;
   startDate: string;
   endDate: string;
+  startTime?: string;
+  endTime?: string;
   days: number;
+  totalHours?: number;
   status: 'Pending' | 'Approved' | 'Rejected' | 'Manager Approved';
   reason?: string;
   approvedBy?: string;
@@ -932,4 +938,51 @@ export interface SystemSettings {
   pushNotifications: boolean;
   twoFactorAuth: boolean;
   sessionTimeout: string;
+}
+
+// Timesheet & Projects
+export type TimesheetStatus = 'Draft' | 'Submitted' | 'Approved' | 'Rejected';
+
+export interface Project {
+  id: string;
+  name: string;
+  code: string;
+  description?: string;
+  managerId?: string;
+  color: string;
+  active: boolean;
+}
+
+export interface TimesheetEntry {
+  id: string;
+  rowId: string;
+  date: string;
+  hours: number;
+  notes?: string;
+}
+
+export interface TimesheetRow {
+  id: string;
+  timesheetId: string;
+  projectId?: string;
+  project?: Project;
+  type: 'Project' | 'Break';
+  entries: TimesheetEntry[];
+}
+
+export interface TimesheetTemplate {
+  id: string;
+  name: string;
+  projectIds: string[];
+}
+
+export interface Timesheet {
+  id: string;
+  employeeId: string;
+  weekStartDate: string;
+  status: TimesheetStatus;
+  totalHours: number;
+  rows: TimesheetRow[];
+  created_at: string;
+  updated_at: string;
 }

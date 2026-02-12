@@ -13,6 +13,7 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     phone: dbRecord.phone || '',
     role: dbRecord.role,
     department: dbRecord.department?.name || 'Unknown',
+    departmentId: dbRecord.department_id,
     position: dbRecord.position?.title || 'Unknown',
     joinDate: dbRecord.start_date,
     timeClockNeeded: true, // Default
@@ -162,9 +163,26 @@ export const employeeService = {
     return `${data.first_name} ${data.last_name}`;
   },
 
+  async getTeammates(departmentName: string): Promise<Employee[]> {
+    const { data, error } = await supabase
+      .from('employees')
+      .select(`
+        *,
+        department:departments!inner(name),
+        position:job_positions(title)
+      `)
+      .eq('department.name', departmentName);
+
+    if (error) {
+      console.error('Error fetching teammates:', error);
+      return [];
+    }
+    return data ? data.map(mapEmployeeFromDb) : [];
+  },
+
   async create(employee: Omit<Employee, 'id'>): Promise<Employee> {
     try {
-      const deptId = await getDepartmentId(employee.department);
+      const deptId = employee.departmentId || await getDepartmentId(employee.department);
       const posId = await getPositionId(employee.position, deptId);
 
       const dbPayload = {
@@ -249,7 +267,7 @@ export const employeeService = {
 
   async update(id: string, updates: Partial<Employee>): Promise<Employee> {
     try {
-      const deptId = updates.department ? await getDepartmentId(updates.department) : undefined;
+      const deptId = updates.departmentId || (updates.department ? await getDepartmentId(updates.department) : undefined);
       const posId = updates.position ? await getPositionId(updates.position, deptId || null) : undefined;
 
       const dbPayload: any = {};

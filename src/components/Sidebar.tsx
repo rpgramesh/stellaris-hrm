@@ -98,6 +98,7 @@ const menuItems = [
       { name: 'Management', href: '/attendance/management' },
       { name: 'Field Check-In', href: '/attendance/field-check-in' },
       { name: 'Time Clock Report', href: '/attendance/time-clock-report' },
+      { name: 'Projects & Approvers', href: '/attendance/projects' },
       { name: 'Workday', href: '/attendance/workday' },
       { name: 'Holiday', href: '/attendance/holiday' },
       { name: 'Setting', href: '/attendance/settings' },
@@ -154,18 +155,19 @@ const menuItems = [
     href: '/payroll', 
     icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     subItems: [
-      { name: 'Salary Adjustment', href: '/payroll/salary-adjustment' },
-      { name: 'Process', href: '/payroll/process' },
+      { name: 'Dashboard', href: '/payroll' },
+      { name: 'Salary Adjustments', href: '/payroll/adjustments' },
+      { name: 'Process Payroll', href: '/payroll/process' },
+      { name: 'Superannuation', href: '/payroll/superannuation' },
       { name: 'STP Phase 2', href: '/payroll/stp' },
       { name: 'Award Interpretation', href: '/payroll/award-interpretation' },
-      { name: 'Superannuation', href: '/payroll/superannuation' },
       { name: 'Annual Salary Statement', href: '/payroll/annual-salary-statement' },
       { name: 'Earning', href: '/payroll/earning' },
       { name: 'Deduction', href: '/payroll/deduction' },
       { name: 'Bonus', href: '/payroll/bonus' },
       { name: 'Statutory Contribution', href: '/payroll/statutory-contribution' },
       { name: 'Statutory Table', href: '/payroll/statutory-table' },
-      { name: 'Setting', href: '/payroll/settings' },
+      { name: 'Settings', href: '/payroll/settings' },
     ]
   },
   { 
@@ -174,6 +176,7 @@ const menuItems = [
     icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
     subItems: [
       { name: 'Information', href: '/employer/information' },
+      { name: 'Organization Hierarchy', href: '/organization' },
       { type: 'divider' },
       { name: 'Job Position', href: '/employer/job-positions' },
       { name: 'Department', href: '/employer/departments' },
@@ -261,7 +264,7 @@ export default function Sidebar() {
         const allowedSubItems = ['Review', 'Planner', 'Schedule', 'Management'];
         return {
           ...item,
-          subItems: item.subItems.filter(sub => allowedSubItems.includes(sub.name))
+          subItems: item.subItems.filter(sub => sub.name && allowedSubItems.includes(sub.name))
         };
       }
 
@@ -283,10 +286,10 @@ export default function Sidebar() {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className={`p-6 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
-        <div className="flex items-center overflow-hidden">
+        <Link href="/dashboard" className="flex items-center overflow-hidden">
             <h1 className={`text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-teal-400 transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}>Stellaris HRM</h1>
             <span className={`text-2xl font-bold text-blue-400 ${isExpanded ? 'hidden' : 'block'}`}>S</span>
-        </div>
+        </Link>
         
         {isExpanded && (
             <button 
