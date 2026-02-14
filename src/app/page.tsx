@@ -1,249 +1,311 @@
 "use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
+import Image from 'next/image';
+import { 
+  Phone, 
+  Mail, 
+  Linkedin, 
+  Globe, 
+  ChevronDown, 
+  ArrowRight,
+  Users,
+  ShieldCheck,
+  Cloud,
+  Cpu
+} from 'lucide-react';
 
-export default function Home() {
-  const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'admin' | 'employee'>('employee');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isHrRole, setIsHrRole] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (authError) throw authError;
-
-      if (authData.user) {
-        // Fetch employee role
-        // 1. Try by user_id
-        let { data: employee, error: empError } = await supabase
-          .from('employees')
-          .select('role, is_password_change_required')
-          .eq('user_id', authData.user.id)
-          .single();
-
-        // 2. Fallback to email if not found by user_id
-        if (!employee) {
-             const { data: empByEmail, error: emailError } = await supabase
-               .from('employees')
-               .select('id, role, is_password_change_required')
-               .eq('email', authData.user.email)
-               .single();
-             
-             if (empByEmail) {
-                employee = empByEmail;
-                // Auto-link user_id for future logins
-                await supabase
-                  .from('employees')
-                  .update({ user_id: authData.user.id })
-                  .eq('id', empByEmail.id);
-             }
-        }
-        
-        // Check for forced password change
-        if (employee?.is_password_change_required) {
-            router.push('/change-password');
-            return;
-        }
-
-        const role = employee?.role;
-
-        // Define valid roles mapping
-        const validAdminRoles = ['Super Admin', 'Employer Admin', 'Administrator', 'HR Admin'];
-        const validHrRoles = ['HR Manager', 'HR', 'HR Admin'];
-
-        if (activeTab === 'admin') {
-          // Administrator Tab Logic
-          if (isHrRole) {
-            // HR Role Toggle is ON: Must be HR or Administrator with HR privileges
-            // Allowing Super Admin to access HR as well
-            if (!validHrRoles.includes(role) && !validAdminRoles.includes(role)) {
-              throw new Error('Access Denied: You do not have HR privileges.');
-            }
-          } else {
-            // HR Role Toggle is OFF: Must be Administrator
-            if (!validAdminRoles.includes(role)) {
-              throw new Error('Access Denied: You do not have Administrator privileges.');
-            }
-          }
-          router.push('/dashboard');
-        } else {
-          // Employee Tab Logic
-          // Require an employee record to exist
-          if (!employee) {
-             throw new Error('Access Denied: No employee record found for this user.');
-          }
-          router.push('/self-service');
-        }
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred during login');
-      await supabase.auth.signOut();
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export default function LandingPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4 font-sans">
-      <div className="w-full max-w-md bg-white shadow-xl rounded-sm overflow-hidden">
-        {/* Tabs */}
-        <div className="flex text-sm font-bold uppercase tracking-wide">
-          <button
-            onClick={() => { setActiveTab('admin'); setError(null); }}
-            className={`flex-1 py-5 text-center transition-colors ${
-              activeTab === 'admin'
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-blue-400 hover:bg-gray-200'
-            }`}
-          >
-            Administrator
-          </button>
-          <button
-            onClick={() => { setActiveTab('employee'); setError(null); }}
-            className={`flex-1 py-5 text-center transition-colors ${
-              activeTab === 'employee'
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-blue-400 hover:bg-gray-200'
-            }`}
-          >
-            Employee
-          </button>
+    <div className="min-h-screen bg-white font-sans text-gray-800">
+      {/* Header */}
+      <header className="fixed w-full z-50 bg-white shadow-sm">
+        {/* Top bar (contact info) */}
+        <div className="bg-[#1a2b4a] text-white py-2 text-xs">
+          <div className="container mx-auto px-4 flex flex-col md:flex-row justify-between items-center space-y-2 md:space-y-0">
+            <div className="flex flex-col md:flex-row md:space-x-6 space-y-1 md:space-y-0 text-center md:text-left">
+              <div className="flex items-center justify-center md:justify-start space-x-2">
+                <Phone className="w-3 h-3" />
+                <span>Call us: +1300 922 358</span>
+              </div>
+              <div className="flex items-center justify-center md:justify-start space-x-2">
+                <Mail className="w-3 h-3" />
+                <span>Email us: contact@stellarisconsulting.com.au</span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+               <span className="opacity-80">Follow us:</span>
+               <a href="#" className="hover:text-blue-300 transition"><Linkedin className="w-4 h-4" /></a>
+            </div>
+          </div>
         </div>
-
-        {/* Form */}
-        <form onSubmit={handleLogin} className="p-8 space-y-8">
-          
-          {error && (
-            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
-              <p className="text-red-700 text-sm">{error}</p>
-            </div>
-          )}
-
-          {/* Email Input */}
-          <div className="relative group">
-            <div className="flex items-end border-b border-gray-300 py-2">
-              <div className="text-gray-500 mr-4 mb-1">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
-                   <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
-                </svg>
-              </div>
-              <div className="flex-1">
-                <label className="block text-sm text-gray-500 mb-1">Email</label>
-                <input
-                  type="email"
-                  className="appearance-none bg-transparent border-none w-full text-gray-700 py-1 leading-tight focus:outline-none"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Password Input */}
-          <div className="relative group">
-             <div className="flex items-center border-b border-gray-300 bg-blue-50 px-2 py-2">
-                <div className="text-gray-500 mr-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-0.5">Password</label>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    className="appearance-none bg-transparent border-none w-full text-gray-800 py-1 leading-tight focus:outline-none font-medium tracking-widest"
-                    value={password}
-                    placeholder="••••••••••••"
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-gray-500 focus:outline-none ml-2"
-                >
-                  {showPassword ? (
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  )}
-                </button>
+        
+        {/* Main Nav */}
+        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+           {/* Logo */}
+           <div className="flex items-center">
+             <img 
+               src="/logo.png" 
+               alt="Stellaris Logo" 
+               className="h-16 w-auto object-contain"
+             />
+           </div>
+           
+           {/* Desktop Nav Links */}
+           <nav className="hidden lg:flex items-center space-x-8 text-sm font-bold text-[#1a2b4a]">
+             <Link href="#" className="text-[#00b0f0]">Home</Link>
+             <div className="group relative cursor-pointer flex items-center space-x-1 hover:text-[#00b0f0] transition">
+                <span>Services</span>
+                <ChevronDown className="w-3 h-3" />
              </div>
-          </div>
-
-          {/* HR Role Toggle - Only for Administrator */}
-          {activeTab === 'admin' && (
-            <div className="flex justify-end pt-2">
-              <div className="flex items-center space-x-3 border border-blue-400 rounded-full px-4 py-1">
-                <span className="text-blue-500 font-bold text-sm">HR Role</span>
-                <button
-                  type="button"
-                  onClick={() => setIsHrRole(!isHrRole)}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    isHrRole ? 'bg-blue-400' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      isHrRole ? 'translate-x-5' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Forgot Password */}
-          <div className="text-right">
-            <a href="#" className="text-sm text-cyan-500 hover:text-cyan-700">
-              Forgot {activeTab === 'admin' ? 'Administrator' : 'Employee'} Password?
-            </a>
-          </div>
-
-        </form>
-
-        {/* Login Button */}
-        <div className="px-8 pb-8">
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className={`w-full text-white font-bold py-3 px-4 rounded shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors uppercase text-sm tracking-wide ${
-                loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
-              }`}
-            >
-              {loading ? 'Logging in...' : activeTab === 'admin' ? 'HR Login' : 'Employee Login'}
-            </button>
-            <div className="mt-4 text-center">
-               <Link href="/register" className="text-sm text-blue-500 hover:text-blue-700">
-                 Need an account? Register here
-               </Link>
+             <div className="group relative cursor-pointer flex items-center space-x-1 hover:text-[#00b0f0] transition">
+                <span>Products</span>
+                <ChevronDown className="w-3 h-3" />
              </div>
+             <div className="group relative cursor-pointer flex items-center space-x-1 hover:text-[#00b0f0] transition">
+                <span>Career</span>
+                <ChevronDown className="w-3 h-3" />
+             </div>
+             <div className="group relative cursor-pointer flex items-center space-x-1 hover:text-[#00b0f0] transition">
+                <span>About Us</span>
+                <ChevronDown className="w-3 h-3" />
+             </div>
+             <Link href="#" className="hover:text-[#00b0f0] transition">Contact Us</Link>
+             
+             <div className="flex items-center space-x-1 text-[#00b0f0]">
+                <Globe className="w-4 h-4" />
+                <span>EN</span>
+                <ChevronDown className="w-3 h-3" />
+             </div>
+           </nav>
+           
+           {/* My HR Button */}
+           <Link href="/login" className="flex items-center group">
+             <span className="text-[#0066cc] font-black text-2xl mr-2 group-hover:text-[#0052a3] transition">MY-HR</span>
+             <div className="bg-[#0066cc] text-white rounded-full p-2 group-hover:bg-[#0052a3] transition shadow-md">
+                <Users className="w-5 h-5" />
+             </div>
+           </Link>
         </div>
-      </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="pt-40 pb-20 bg-white overflow-hidden">
+        <div className="container mx-auto px-4 flex flex-col lg:flex-row items-center">
+           {/* Text Content */}
+           <div className="lg:w-1/2 lg:pr-16 mb-12 lg:mb-0 z-10">
+              <h2 className="text-[#00b0f0] font-semibold mb-4 text-lg">IT Advisory & Workforce Solutions</h2>
+              <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#1a2b4a] leading-tight mb-6">
+                Complete Tech Solutions<br/>That Power Your Growth
+              </h1>
+              <p className="text-gray-500 mb-8 leading-relaxed text-lg max-w-xl">
+                 Stellaris is a people-first technology and consulting firm delivering tailored IT and professional services across industries. Driving innovation in Cyber Security, Data Science, Machine Learning, ECM, CRM, BPM, and RPA, while specialising in document generation, management, and capture solutions.
+              </p>
+              <p className="text-gray-500 mb-8 leading-relaxed text-lg max-w-xl">
+                 We are committed to equal opportunity, collaboration, and going the extra mile, supporting over 100+ consultants across Australia, New Zealand, and India.
+              </p>
+              <button className="bg-[#00b0f0] text-white font-bold py-4 px-10 rounded shadow-lg hover:bg-[#009bd6] transition transform hover:-translate-y-1 text-lg">
+                Let's Connect
+              </button>
+           </div>
+           
+           {/* Hero Image */}
+           <div className="lg:w-1/2 relative">
+              <div className="relative z-10 rounded-[60px] overflow-hidden border-8 border-[#e6f7fc] shadow-2xl transform rotate-1 hover:rotate-0 transition duration-500">
+                 {/* Placeholder for Hero Image */}
+                 <div className="bg-gray-200 w-full h-[500px] flex items-center justify-center relative">
+                    <img 
+                        src="https://placehold.co/800x600/e6f7fc/1a2b4a?text=Office+Collaboration" 
+                        alt="Team Collaboration" 
+                        className="w-full h-full object-cover"
+                    />
+                    {/* Graphic overlays matching design */}
+                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-transparent to-white/20"></div>
+                 </div>
+              </div>
+              
+              {/* Decorative Elements */}
+              <div className="absolute -top-10 -right-10 w-32 h-32 bg-yellow-300 rounded-full opacity-20 blur-2xl"></div>
+              <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-blue-300 rounded-full opacity-20 blur-2xl"></div>
+           </div>
+        </div>
+      </section>
+
+      {/* Services Section */}
+      <section className="bg-[#0e2a47] py-24 text-white relative overflow-hidden">
+        <div className="container mx-auto px-4 relative z-10">
+            <div className="text-center mb-16">
+                <h3 className="text-[#00b0f0] font-bold tracking-widest uppercase mb-3">WHAT WE DO</h3>
+                <h2 className="text-4xl md:text-5xl font-bold text-white">Specialised IT Solutions</h2>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                {/* Card 1 */}
+                <div className="bg-white text-[#1a2b4a] p-8 rounded-xl shadow-xl hover:transform hover:-translate-y-2 transition duration-300">
+                    <div className="mb-6 text-[#1a2b4a]">
+                        <Users className="w-12 h-12" />
+                    </div>
+                    <h3 className="text-xl font-bold mb-4">Workforce Solutions</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">
+                        IT resourcing and staff augmentation backed by strong expertise in identifying and delivering the right skills across a wide range of IT domains, including niche and hard-to-find capabilities.
+                    </p>
+                </div>
+
+                {/* Card 2 */}
+                <div className="bg-white text-[#1a2b4a] p-8 rounded-xl shadow-xl hover:transform hover:-translate-y-2 transition duration-300">
+                    <div className="mb-6 text-[#1a2b4a]">
+                        <ShieldCheck className="w-12 h-12" />
+                    </div>
+                    <h3 className="text-xl font-bold mb-4">Cyber Security</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">
+                        Deep expertise in cyber security and data governance, encompassing identity and access management, cloud security, privacy compliance, and data protection to safeguard your digital landscape and deliver secure, modernised solutions.
+                    </p>
+                </div>
+
+                {/* Card 3 */}
+                <div className="bg-white text-[#1a2b4a] p-8 rounded-xl shadow-xl hover:transform hover:-translate-y-2 transition duration-300">
+                    <div className="mb-6 text-[#1a2b4a]">
+                        <Cloud className="w-12 h-12" />
+                    </div>
+                    <h3 className="text-xl font-bold mb-4">Cloud & Data</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">
+                        Strategic consulting underpinned by deep, specialised IT consulting capabilities across multiple domains—including architecture, cloud, data, security, and platforms—to accelerate your digital initiatives and cloud transformation.
+                    </p>
+                </div>
+
+                {/* Card 4 */}
+                <div className="bg-white text-[#1a2b4a] p-8 rounded-xl shadow-xl hover:transform hover:-translate-y-2 transition duration-300">
+                    <div className="mb-6 text-[#1a2b4a]">
+                        <Cpu className="w-12 h-12" />
+                    </div>
+                    <h3 className="text-xl font-bold mb-4">Managed Services</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">
+                        Project-based delivery and managed services delivering end-to-end IT operations, application support, service governance, and continuous improvement to enhance operational efficiency.
+                    </p>
+                </div>
+            </div>
+        </div>
+      </section>
+
+      {/* StockSimpli Section */}
+      <section className="py-24 bg-white">
+        <div className="container mx-auto px-4 flex flex-col lg:flex-row items-center">
+           {/* Text Content */}
+           <div className="lg:w-1/2 lg:pr-16 mb-12 lg:mb-0">
+              <h3 className="text-[#00b0f0] font-bold tracking-widest uppercase mb-3">STOCKSIMPLI</h3>
+              <h2 className="text-4xl font-bold text-[#1a2b4a] mb-6 leading-tight">
+                Smart Stock &<br/>Inventory<br/>Management Made<br/>Simple
+              </h2>
+              <p className="text-gray-500 mb-6 leading-relaxed">
+                 An intuitive and reliable Point of Sale system—online or offline—that's designed to streamline your stock and inventory management. With a wide range of features to suit your business needs, it's easy to set up, simple to manage, and built to keep both your team and customers satisfied.
+              </p>
+              <p className="text-gray-500 mb-8 leading-relaxed">
+                 Track inventory in real-time, manage stock levels efficiently, and process transactions seamlessly—all from one user-friendly platform.
+              </p>
+              <button className="bg-[#00b0f0] text-white font-bold py-3 px-8 rounded shadow-lg hover:bg-[#009bd6] transition">
+                Read More
+              </button>
+           </div>
+           
+           {/* Feature Image */}
+           <div className="lg:w-1/2 relative">
+              <div className="rounded-[40px] overflow-hidden shadow-2xl">
+                 <div className="bg-gray-100 w-full h-[400px] flex items-center justify-center">
+                    <img 
+                        src="https://placehold.co/800x600/f3f4f6/1a2b4a?text=StockSimpli+Tablet" 
+                        alt="StockSimpli Dashboard" 
+                        className="w-full h-full object-cover"
+                    />
+                 </div>
+              </div>
+           </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-[#11111e] text-white pt-20 pb-10">
+        <div className="container mx-auto px-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16">
+                {/* Col 1: Logo & Desc */}
+                <div>
+                    <div className="mb-6">
+                        <div className="text-white font-bold text-2xl tracking-widest flex items-center">
+                            <span className="text-3xl mr-1">🌳</span> 
+                            STELLARIS
+                            <sup className="text-xs ml-1">®</sup>
+                        </div>
+                        <div className="text-[10px] tracking-[0.2em] text-gray-400 font-bold uppercase pl-10">
+                            IT Consulting & Resourcing
+                        </div>
+                    </div>
+                    <p className="text-gray-400 text-sm leading-relaxed mb-8">
+                        We are an Australia-based IT professional services firm, offering end-to-end recruitment solutions and IT consulting to drive successful outcomes for our clients.
+                    </p>
+                    <div className="flex items-center space-x-4">
+                        <span className="text-lg font-bold">Have Any Project?</span>
+                        <button className="bg-[#00b0f0] text-white font-bold py-2 px-6 rounded shadow hover:bg-[#009bd6] transition">
+                            Let's Talk
+                        </button>
+                    </div>
+                </div>
+
+                {/* Col 2: Services */}
+                <div>
+                    <h4 className="text-xl font-bold mb-6">Services</h4>
+                    <ul className="space-y-4 text-gray-400">
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> Project & Consulting</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> IT Professional Services</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> Workforce Solutions</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> IT Support</a></li>
+                    </ul>
+                </div>
+
+                {/* Col 3: Quick Links */}
+                <div>
+                    <h4 className="text-xl font-bold mb-6">Quick Links</h4>
+                    <ul className="space-y-4 text-gray-400">
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> About Us</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> Career Openings</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> Stocksimpli</a></li>
+                        <li><a href="#" className="hover:text-[#00b0f0] transition flex items-center"><span className="mr-2">›</span> Contact Us</a></li>
+                    </ul>
+                </div>
+
+                {/* Col 4: Contact */}
+                <div>
+                    <h4 className="text-xl font-bold mb-6">Contact</h4>
+                    <ul className="space-y-6 text-gray-400">
+                        <li className="flex items-start">
+                            <Globe className="w-5 h-5 mr-3 mt-1 text-[#00b0f0]" />
+                            <span>Head Office: Level 1, 182 Latrobe Terrace, Geelong West, Victoria 3218, Australia</span>
+                        </li>
+                        <li className="flex items-center">
+                            <Mail className="w-5 h-5 mr-3 text-[#00b0f0]" />
+                            <a href="mailto:contact@stellarisconsulting.com.au" className="hover:text-white">contact@stellarisconsulting.com.au</a>
+                        </li>
+                        <li className="flex items-center">
+                            <Phone className="w-5 h-5 mr-3 text-[#00b0f0]" />
+                            <a href="tel:1300922358" className="hover:text-white">1300 922 358</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div className="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center text-xs text-gray-500">
+                <div className="mb-4 md:mb-0">
+                    © 2026 Stellaris Consulting Australia Pty Ltd. All Rights Reserved | Privacy Policy | Terms of Use | WHS | Disclaimer
+                </div>
+                <div className="flex space-x-4">
+                   {/* Placeholder for Certification Logos */}
+                   <div className="flex space-x-2 grayscale opacity-50">
+                      <div className="bg-white text-black p-1 rounded font-bold text-[8px]">ACS</div>
+                      <div className="bg-white text-black p-1 rounded font-bold text-[8px]">APSCo</div>
+                      <div className="bg-white text-black p-1 rounded font-bold text-[8px]">RCSA</div>
+                   </div>
+                </div>
+            </div>
+        </div>
+      </footer>
     </div>
   );
 }

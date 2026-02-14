@@ -22,7 +22,7 @@ export const legalDocumentService = {
       issueDate: doc.issue_date,
       expiryDate: doc.expiry_date,
       issuingAuthority: doc.issuing_authority,
-      attachment: doc.attachment,
+      attachment: Array.isArray(doc.attachment) ? doc.attachment : (doc.attachment ? [doc.attachment] : []),
       remark: doc.remark
     })) : [];
   },
@@ -48,7 +48,7 @@ export const legalDocumentService = {
       issueDate: doc.issue_date,
       expiryDate: doc.expiry_date,
       issuingAuthority: doc.issuing_authority,
-      attachment: doc.attachment,
+      attachment: Array.isArray(doc.attachment) ? doc.attachment : (doc.attachment ? [doc.attachment] : []),
       remark: doc.remark
     })) : [];
   },
@@ -83,7 +83,7 @@ export const legalDocumentService = {
       issueDate: data.issue_date,
       expiryDate: data.expiry_date,
       issuingAuthority: data.issuing_authority,
-      attachment: data.attachment,
+      attachment: Array.isArray(data.attachment) ? data.attachment : (data.attachment ? [data.attachment] : []),
       remark: data.remark
     };
   },
@@ -119,7 +119,7 @@ export const legalDocumentService = {
       issueDate: data.issue_date,
       expiryDate: data.expiry_date,
       issuingAuthority: data.issuing_authority,
-      attachment: data.attachment,
+      attachment: Array.isArray(data.attachment) ? data.attachment : (data.attachment ? [data.attachment] : []),
       remark: data.remark
     };
   },
@@ -131,5 +131,29 @@ export const legalDocumentService = {
       .eq('id', id);
 
     if (error) throw error;
+  },
+
+  async uploadAttachments(files: File[]): Promise<string[]> {
+    const uploadPromises = files.map(async (file) => {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+      const filePath = `legal-documents/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      return data.publicUrl;
+    });
+
+    return Promise.all(uploadPromises);
   }
 };

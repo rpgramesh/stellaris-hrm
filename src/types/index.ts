@@ -315,7 +315,7 @@ export interface Training {
   trainer: string;
   trainerId?: string;
   result?: string;
-  attachment?: string;
+  attachment?: string[];
   remark?: string;
 }
 
@@ -328,7 +328,7 @@ export interface LegalDocument {
   issueDate: string;
   expiryDate: string;
   issuingAuthority?: string;
-  attachment?: string;
+  attachment?: string[];
   remark?: string;
 }
 
@@ -834,6 +834,8 @@ export interface LMSCourse {
   format: CourseFormat;
   level: CourseLevel;
   duration: number; // hours
+  durationMinutes?: number; // minutes (new field)
+  skillsCovered?: string[]; // (new field)
   instructor?: string;
   instructorId?: string;
   location?: string;
@@ -854,7 +856,7 @@ export interface LMSCourse {
   updatedDate: string;
 }
 
-export type EnrollmentStatus = 'Enrolled' | 'In Progress' | 'Completed' | 'Dropped' | 'Waitlisted';
+export type EnrollmentStatus = 'Enrolled' | 'In Progress' | 'Completed' | 'Dropped' | 'Waitlisted' | 'Overdue';
 
 export interface CourseEnrollment {
   id: string;
@@ -866,6 +868,9 @@ export interface CourseEnrollment {
   enrolledDate: string;
   startedDate?: string;
   completedDate?: string;
+  dueDate?: string; // (new field)
+  assignedBy?: string; // (new field)
+  instructions?: string; // (new field)
   progress: number; // 0-100
   score?: number; // 0-100
   certificateUrl?: string;
@@ -986,3 +991,30 @@ export interface Timesheet {
   created_at: string;
   updated_at: string;
 }
+
+// Learning & Development
+export interface LearningAnalytics {
+  totalEnrollments: number;
+  activeLearners: number;
+  completionRate: number;
+  avgTime: number;
+  // Legacy fields for backward compatibility
+  totalAssigned?: number;
+  averageScore?: number;
+  hoursLearned?: number;
+  overdueCount?: number;
+  categoryDistribution?: Record<string, number>;
+  monthlyCompletions?: { month: string; count: number }[];
+  skillGaps?: { skill: string; gap: number }[];
+}
+
+
+export interface CourseAssignment {
+  courseId: string;
+  employeeIds: string[];
+  dueDate: string;
+  instructions?: string;
+  priority: 'Low' | 'Medium' | 'High';
+}
+
+

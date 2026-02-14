@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Bell, User, Search } from 'lucide-react';
+import { Bell, User } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
+import GlobalSearch from './GlobalSearch';
 
 export default function Navbar() {
   const router = useRouter();
@@ -38,16 +39,9 @@ export default function Navbar() {
   };
 
   return (
-    <header className="bg-white shadow p-4 flex justify-between items-center">
+    <header className="bg-white shadow p-4 flex justify-between items-center z-10 relative">
       <div className="flex items-center w-96">
-        <div className="relative w-full">
-          <input
-            type="text"
-            placeholder="Search..."
-            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <Search className="absolute left-3 top-2.5 text-gray-400 w-5 h-5" />
-        </div>
+        <GlobalSearch />
       </div>
       <div className="flex items-center space-x-4">
         <button className="p-2 hover:bg-gray-100 rounded-full relative">

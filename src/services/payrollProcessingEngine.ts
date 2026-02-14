@@ -508,7 +508,15 @@ export const payrollProcessingEngine = {
       awardClassification: data.award_classification,
       isSalarySacrifice: data.is_salary_sacrifice,
       effectiveFrom: data.effective_from,
-      effectiveTo: data.effective_to
+      effectiveTo: data.effective_to,
+      companyId: data.company_id || '',
+      industryCode: data.industry_code,
+      state: data.state,
+      hasHELPDebt: data.has_help_debt,
+      hasSFSSDebt: data.has_sfss_debt,
+      hasPrivateHealthInsurance: data.has_private_health_insurance,
+      isExemptFromPayrollTax: data.is_exempt_from_payroll_tax,
+      jobClassification: data.job_classification
     };
   },
 

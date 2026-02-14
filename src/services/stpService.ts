@@ -25,7 +25,7 @@ export class STPPhase2Service {
       await auditService.logAction(
         'stp_submissions',
         submission.id,
-        'CREATE',
+        'INSERT',
         null,
         { submission, response },
         payrollRun.processedBy || 'system'

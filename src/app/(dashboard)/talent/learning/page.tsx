@@ -1,193 +1,555 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from 'react';
-import { trainingService } from '@/services/trainingService';
-import { courseService } from '@/services/courseService';
-import { Training, Course } from '@/types';
+import React, { useEffect, useState } from 'react';
+import { learningService } from '@/services/learningService';
+import { employeeService } from '@/services/employeeService';
+import { LMSCourse, CourseEnrollment, Employee } from '@/types';
+import { supabase } from '@/lib/supabase';
+import { useRouter } from 'next/navigation';
+import { 
+  BookOpen, 
+  Search, 
+  Filter, 
+  Clock, 
+  Award, 
+  CheckCircle, 
+  BarChart, 
+  Users, 
+  Calendar,
+  AlertCircle,
+  ChevronRight
+} from 'lucide-react';
 
 export default function LearningPage() {
-  const [activeTab, setActiveTab] = useState('mandatory');
-  const [trainings, setTrainings] = useState<Training[]>([]);
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [activeTab, setActiveTab] = useState('catalog');
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
+  
+  // Data
+  const [courses, setCourses] = useState<LMSCourse[]>([]);
+  const [myEnrollments, setMyEnrollments] = useState<CourseEnrollment[]>([]);
+  const [allAssignments, setAllAssignments] = useState<CourseEnrollment[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [analytics, setAnalytics] = useState<any>(null);
+
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedLevel, setSelectedLevel] = useState('All');
+
+  // Assignment Modal
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignForm, setAssignForm] = useState({
+    courseId: '',
+    employeeIds: [] as string[],
+    dueDate: '',
+    instructions: ''
+  });
 
   useEffect(() => {
-    loadData();
+    fetchInitialData();
   }, []);
 
-  const loadData = async () => {
+  useEffect(() => {
+    // Re-fetch data whenever the tab is active to ensure freshness
+    // especially after returning from the player
+    const handleFocus = () => {
+      if (activeTab === 'my-learning' && currentUser) {
+        fetchMyEnrollments();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [activeTab, currentUser]);
+
+  useEffect(() => {
+    if (activeTab === 'catalog') {
+      fetchCatalog();
+      if (currentUser) {
+        fetchMyEnrollments();
+      }
+    } else if (activeTab === 'my-learning' && currentUser) {
+      fetchMyEnrollments();
+    } else if (activeTab === 'management' && isHR()) {
+      fetchAllAssignments();
+      fetchEmployees();
+    } else if (activeTab === 'analytics' && isHR()) {
+      fetchAnalytics();
+    }
+  }, [activeTab, currentUser, searchQuery, selectedCategory, selectedLevel]);
+
+  const fetchInitialData = async () => {
     try {
-      const [trainingsData, coursesData] = await Promise.all([
-        trainingService.getAll(),
-        courseService.getAll()
-      ]);
-      setTrainings(trainingsData);
-      setCourses(coursesData);
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const emp = await employeeService.getByUserId(user.id);
+        setCurrentUser(emp || null);
+      }
+      await fetchCatalog();
     } catch (error) {
-      console.error('Failed to load learning data:', error);
+      console.error('Error fetching initial data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper logic to mimic original mock data structure
-  const getProgress = (training: Training): number => {
-    if (training.result === 'Pass' || training.result === 'Completed') return 100;
-    if (training.result === 'Fail') return 0;
-    return 50;
+  const fetchCatalog = async () => {
+    const data = await learningService.getCatalog({
+      search: searchQuery,
+      category: selectedCategory,
+      level: selectedLevel
+    });
+    setCourses(data);
   };
 
-  const getStatus = (training: Training) => {
-    if (training.result === 'Pass' || training.result === 'Completed') return 'Completed';
-    return 'In Progress';
+  const fetchMyEnrollments = async () => {
+    if (!currentUser) return;
+    const data = await learningService.getEmployeeEnrollments(currentUser.id);
+    setMyEnrollments(data);
   };
 
-  const inProgressCount = trainings.filter(t => getStatus(t) === 'In Progress').length;
-  const completedCount = trainings.filter(t => getStatus(t) === 'Completed').length;
-  
-  // Calculate hours - assuming 2 hours per course as we don't have duration in Training or Course types yet
-  // actually Course type has description but not duration. 
-  const completedHours = completedCount * 2; 
+  const fetchAllAssignments = async () => {
+    const data = await learningService.getAllAssignments();
+    setAllAssignments(data);
+  };
 
-  if (loading) {
-    return <div className="p-6">Loading...</div>;
+  const fetchEmployees = async () => {
+    const data = await employeeService.getAll();
+    setEmployees(data);
+  };
+
+  const fetchAnalytics = async () => {
+    const data = await learningService.getAnalytics();
+    setAnalytics(data);
+  };
+
+  const handleAssignCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    try {
+      await learningService.assignCourse({
+        courseId: assignForm.courseId,
+        employeeIds: assignForm.employeeIds,
+        dueDate: assignForm.dueDate,
+        instructions: assignForm.instructions,
+        assignedBy: currentUser.id
+      });
+      setShowAssignModal(false);
+      setAssignForm({ courseId: '', employeeIds: [], dueDate: '', instructions: '' });
+      if (activeTab === 'management') fetchAllAssignments();
+      alert('Course assigned successfully!');
+    } catch (error) {
+      console.error('Error assigning course:', error);
+      alert('Failed to assign course.');
+    }
+  };
+
+  const handleMarkComplete = async (enrollmentId: string) => {
+    if (!confirm('Are you sure you want to mark this course as completed?')) return;
+    try {
+      await learningService.completeCourse(enrollmentId);
+      fetchMyEnrollments(); // Refresh list
+    } catch (error) {
+      console.error('Error completing course:', error);
+      alert('Failed to update status.');
+    }
+  };
+
+  const handleViewCertificate = (enrollment: CourseEnrollment) => {
+    if (enrollment.certificateUrl) {
+      window.open(enrollment.certificateUrl, '_blank');
+    } else {
+      // Open generated certificate page
+      const url = `/talent/learning/certificate/${enrollment.id}`;
+      window.open(url, '_blank');
+    }
+  };
+
+  const isHR = () => currentUser?.role === 'HR Admin' || currentUser?.role === 'Manager'; // Adjust based on specific role requirements
+
+  const router = useRouter(); // Ensure useRouter is imported from next/navigation
+
+  if (loading && !currentUser) {
+    return <div className="p-8 text-center">Loading...</div>;
   }
 
   return (
-    <div className="space-y-8">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Learning & Development</h1>
-          <p className="text-gray-500">Access training modules, compliance courses, and track your progress.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Learning & Development</h1>
+          <p className="text-gray-500">Manage your professional growth and training</p>
         </div>
-      </div>
-
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-          <div className="text-blue-600 font-medium mb-1">In Progress</div>
-          <div className="text-2xl font-bold text-blue-900">
-            {inProgressCount} Courses
-          </div>
-        </div>
-        <div className="bg-red-50 p-4 rounded-xl border border-red-100">
-          <div className="text-red-600 font-medium mb-1">Overdue</div>
-          <div className="text-2xl font-bold text-red-900">
-            0 Modules
-          </div>
-        </div>
-        <div className="bg-green-50 p-4 rounded-xl border border-green-100">
-          <div className="text-green-600 font-medium mb-1">Completed (YTD)</div>
-          <div className="text-2xl font-bold text-green-900">
-            {completedHours} Hours
-          </div>
-        </div>
-        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
-          <div className="text-purple-600 font-medium mb-1">Certificates</div>
-          <div className="text-2xl font-bold text-purple-900">
-            {completedCount} Earned
-          </div>
-        </div>
+        {isHR() && (
+          <button
+            onClick={() => setShowAssignModal(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+          >
+            <BookOpen size={18} />
+            Assign Course
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveTab('mandatory')}
-            className={`whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'mandatory' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            My Trainings
-          </button>
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className={`whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'catalog' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Course Catalog
-          </button>
-        </nav>
+      <div className="flex gap-4 border-b border-gray-200">
+        <TabButton id="catalog" label="Course Catalog" icon={<BookOpen size={18} />} active={activeTab} onClick={setActiveTab} />
+        <TabButton id="my-learning" label="My Learning" icon={<Award size={18} />} active={activeTab} onClick={setActiveTab} />
+        {isHR() && (
+          <>
+            <TabButton id="management" label="Management" icon={<Users size={18} />} active={activeTab} onClick={setActiveTab} />
+            <TabButton id="analytics" label="Analytics" icon={<BarChart size={18} />} active={activeTab} onClick={setActiveTab} />
+          </>
+        )}
       </div>
 
       {/* Content */}
-      {activeTab === 'mandatory' && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900">My Training Records</h3>
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-            {trainings.length === 0 ? (
-              <div className="p-6 text-center text-gray-500">No training records found.</div>
-            ) : (
-              trainings.map((training) => {
-                const progress = getProgress(training);
-                const status = getStatus(training);
-                const daysSinceEnrolled = Math.floor((Date.now() - new Date(training.date).getTime()) / (1000 * 60 * 60 * 24));
-                
-                return (
-                  <div key={training.id} className="p-6 border-b border-gray-100 last:border-0 hover:bg-gray-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-start gap-4">
-                      <div className={`mt-1 p-2 rounded-lg ${progress === 0 ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-600'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">{training.course}</h4>
-                        <p className="text-sm text-gray-500">
-                          {status} • Assigned: {new Date(training.date).toLocaleDateString()}
-                        </p>
-                        {training.remark && <p className="text-xs text-gray-400 mt-1">{training.remark}</p>}
-                      </div>
-                    </div>
+      <div className="min-h-[500px]">
+        {activeTab === 'catalog' && (
+          <div className="space-y-6">
+            {/* Filters */}
+            <div className="flex flex-wrap gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+              <div className="flex-1 min-w-[200px] relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search courses..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <select
+                className="px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+              >
+                <option value="All">All Categories</option>
+                <option value="Technical">Technical</option>
+                <option value="Soft Skills">Soft Skills</option>
+                <option value="Compliance">Compliance</option>
+                <option value="Management">Management</option>
+              </select>
+              <select
+                className="px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                value={selectedLevel}
+                onChange={(e) => setSelectedLevel(e.target.value)}
+              >
+                <option value="All">All Levels</option>
+                <option value="Beginner">Beginner</option>
+                <option value="Intermediate">Intermediate</option>
+                <option value="Advanced">Advanced</option>
+              </select>
+            </div>
 
-                    <div className="flex items-center gap-6">
-                      {progress > 0 && (
-                        <div className="w-32 hidden md:block">
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>{progress}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-1.5">
-                            <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${progress}%` }}></div>
-                          </div>
-                        </div>
-                      )}
-                      <button className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                        status === 'Completed' 
-                          ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      }`}>
-                        {status === 'Completed' ? 'View Certificate' : 'Continue'}
-                      </button>
+            {/* Course Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {courses.map(course => (
+                <div key={course.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
+                  <div className="h-40 bg-gradient-to-r from-blue-500 to-indigo-600 p-6 flex items-center justify-center text-white">
+                    <BookOpen size={48} className="opacity-50" />
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="flex justify-between items-start">
+                      <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full">
+                        {course.category}
+                      </span>
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <Clock size={12} />
+                        {course.durationMinutes ? `${Math.round(course.durationMinutes / 60)}h` : `${course.duration}h`}
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 line-clamp-1">{course.title}</h3>
+                    <p className="text-sm text-gray-500 line-clamp-2">{course.description}</p>
+                    
+                    {course.skillsCovered && course.skillsCovered.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {course.skillsCovered.slice(0, 3).map((skill, i) => (
+                          <span key={i} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="pt-4 border-t border-gray-100 flex justify-between items-center">
+                      <span className="text-sm font-medium text-gray-900">{course.level}</span>
+                      <div className="flex gap-2">
+                        {/* Check if current user is enrolled */}
+                        {myEnrollments.some(e => e.courseId === course.id) ? (
+                          <button
+                            onClick={() => setActiveTab('my-learning')}
+                            className="text-sm text-green-600 font-medium hover:underline flex items-center gap-1"
+                          >
+                            <CheckCircle size={14} />
+                            Enrolled
+                          </button>
+                        ) : (
+                          // If not enrolled, show nothing for employees (unless self-enrollment is added later)
+                          // HR can still assign
+                          null
+                        )}
+
+                        {isHR() && (
+                          <button
+                            onClick={() => {
+                              setAssignForm(prev => ({ ...prev, courseId: course.id }));
+                              setShowAssignModal(true);
+                            }}
+                            className="text-sm text-blue-600 font-medium hover:underline"
+                          >
+                            Assign
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                );
-              })
+                </div>
+              ))}
+            </div>
+            {courses.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                No courses found matching your filters.
+              </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {activeTab === 'catalog' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {courses.length === 0 ? (
-             <div className="col-span-full text-center py-12 text-gray-500 bg-white rounded-xl border border-gray-200">
-               No courses available in the catalog.
-             </div>
-          ) : (
-            courses.map(course => (
-              <div key={course.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{course.name}</h3>
-                <p className="text-gray-500 text-sm mb-4 line-clamp-3">{course.description}</p>
-                <button className="w-full py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100">
-                  Enroll
+        {activeTab === 'my-learning' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-4">
+              {myEnrollments.map(enrollment => (
+                <div key={enrollment.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-6 items-start md:items-center">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-lg font-semibold text-gray-900">{enrollment.courseTitle}</h3>
+                      <StatusBadge status={enrollment.status} />
+                    </div>
+                    {enrollment.dueDate && (
+                      <p className="text-sm text-red-500 flex items-center gap-1 mb-2">
+                        <AlertCircle size={14} />
+                        Due: {new Date(enrollment.dueDate).toLocaleDateString()}
+                      </p>
+                    )}
+                    <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                      <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${enrollment.progress}%` }}></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>Progress: {enrollment.progress}%</span>
+                      {enrollment.instructions && (
+                        <span className="italic">Note: {enrollment.instructions}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    {enrollment.status === 'Completed' ? (
+                      <button 
+                        onClick={() => handleViewCertificate(enrollment)}
+                        className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-green-100 transition-colors"
+                      >
+                        <CheckCircle size={16} />
+                        View Certificate
+                      </button>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => router.push(`/talent/learning/play/${enrollment.id}`)}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                        >
+                          Continue Learning
+                        </button>
+                        <button 
+                          onClick={() => handleMarkComplete(enrollment.id)}
+                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
+                        >
+                          Mark Complete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {myEnrollments.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                You are not enrolled in any courses yet.
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'management' && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Employee</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Course</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Due Date</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Progress</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {allAssignments.map(assignment => (
+                  <tr key={assignment.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-gray-900">{assignment.employeeName}</div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600">{assignment.courseTitle}</td>
+                    <td className="px-6 py-4">
+                      <StatusBadge status={assignment.status} />
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600">
+                      {assignment.dueDate ? new Date(assignment.dueDate).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 bg-gray-200 rounded-full h-1.5">
+                          <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${assignment.progress}%` }}></div>
+                        </div>
+                        <span className="text-xs text-gray-500">{assignment.progress}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'analytics' && analytics && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <AnalyticsCard title="Total Enrollments" value={analytics.totalEnrollments} icon={<BookOpen className="text-blue-500" />} />
+            <AnalyticsCard title="Active Learners" value={analytics.activeLearners} icon={<Users className="text-indigo-500" />} />
+            <AnalyticsCard title="Completion Rate" value={`${analytics.completionRate}%`} icon={<CheckCircle className="text-green-500" />} />
+            <AnalyticsCard title="Avg. Time (min)" value={analytics.avgTime} icon={<Clock className="text-orange-500" />} />
+          </div>
+        )}
+      </div>
+
+      {/* Assignment Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl">
+            <h2 className="text-xl font-bold mb-4">Assign Course</h2>
+            <form onSubmit={handleAssignCourse} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
+                <select
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  value={assignForm.courseId}
+                  onChange={(e) => setAssignForm({ ...assignForm, courseId: e.target.value })}
+                >
+                  <option value="">Select a course</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>{c.title}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employee(s)</label>
+                <select
+                  required
+                  multiple
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg h-32"
+                  value={assignForm.employeeIds}
+                  onChange={(e) => {
+                    const options = Array.from(e.target.selectedOptions, option => option.value);
+                    setAssignForm({ ...assignForm, employeeIds: options });
+                  }}
+                >
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.firstName} {emp.lastName}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                <input
+                  type="date"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  value={assignForm.dueDate}
+                  onChange={(e) => setAssignForm({ ...assignForm, dueDate: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Instructions</label>
+                <textarea
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  rows={3}
+                  value={assignForm.instructions}
+                  onChange={(e) => setAssignForm({ ...assignForm, instructions: e.target.value })}
+                  placeholder="Optional instructions..."
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAssignModal(false)}
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Assign Course
                 </button>
               </div>
-            ))
-          )}
+            </form>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+const TabButton = ({ id, label, icon, active, onClick }: any) => (
+  <button
+    onClick={() => onClick(id)}
+    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+      active === id
+        ? 'border-blue-600 text-blue-600'
+        : 'border-transparent text-gray-500 hover:text-gray-700'
+    }`}
+  >
+    {icon}
+    {label}
+  </button>
+);
+
+const StatusBadge = ({ status }: { status: string }) => {
+  const colors: any = {
+    'Enrolled': 'bg-blue-100 text-blue-800',
+    'In Progress': 'bg-yellow-100 text-yellow-800',
+    'Completed': 'bg-green-100 text-green-800',
+    'Overdue': 'bg-red-100 text-red-800',
+    'Dropped': 'bg-gray-100 text-gray-800'
+  };
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${colors[status] || 'bg-gray-100 text-gray-800'}`}>
+      {status}
+    </span>
+  );
+};
+
+const AnalyticsCard = ({ title, value, icon }: any) => (
+  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+    <div className="p-3 bg-gray-50 rounded-full">{icon}</div>
+    <div>
+      <p className="text-sm text-gray-500">{title}</p>
+      <p className="text-2xl font-bold text-gray-900">{value}</p>
+    </div>
+  </div>
+);

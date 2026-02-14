@@ -13,7 +13,7 @@ export const performanceService = {
       .order('due_date', { ascending: true });
 
     if (error) {
-        console.error('Error fetching KPIs:', error);
+        console.error('Error fetching KPIs:', JSON.stringify(error, null, 2));
         return [];
     }
     
@@ -48,7 +48,7 @@ export const performanceService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-        console.error('Error fetching OKRs:', error);
+        console.error('Error fetching OKRs:', JSON.stringify(error, null, 2));
         return [];
     }
 
@@ -84,13 +84,13 @@ export const performanceService = {
       .from('performance_reviews')
       .select(`
         *,
-        employee:employees(first_name, last_name),
+        employee:employees!employee_id(first_name, last_name),
         reviewer:employees!reviewer_id(first_name, last_name)
       `)
       .order('created_at', { ascending: false });
 
     if (error) {
-        console.error('Error fetching reviews:', error);
+        console.error('Error fetching reviews:', JSON.stringify(error, null, 2));
         return [];
     }
 
@@ -123,13 +123,13 @@ export const performanceService = {
       .from('feedback_360')
       .select(`
         *,
-        employee:employees(first_name, last_name),
+        employee:employees!employee_id(first_name, last_name),
         reviewer:employees!reviewer_id(first_name, last_name)
       `)
       .order('created_at', { ascending: false });
 
     if (error) {
-        console.error('Error fetching feedback 360:', error);
+        console.error('Error fetching feedback 360:', JSON.stringify(error, null, 2));
         return [];
     }
 

@@ -19,7 +19,7 @@ export interface EarningsConfiguration {
   conditions?: {
     minimumHours?: number;
     maximumHours?: number;
-    employmentTypes?: ('FullTime' | 'PartTime' | 'Casual')[];
+    employmentTypes?: ('FullTime' | 'PartTime' | 'Casual' | 'Apprentice' | 'Contractor' | 'Trainee')[];
     classifications?: string[];
     awards?: string[];
     dayOfWeek?: number[];

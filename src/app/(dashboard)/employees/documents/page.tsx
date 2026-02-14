@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { LegalDocument, Employee, DocumentCategory } from '@/types';
 import { legalDocumentService } from '@/services/legalDocumentService';
 import { employeeService } from '@/services/employeeService';
@@ -16,6 +16,13 @@ export default function DocumentsPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isViewing, setIsViewing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  
+  // New Category State
+  const [showCategoryInput, setShowCategoryInput] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -54,6 +61,7 @@ export default function DocumentsPage() {
     setEditingId(doc.id);
     setIsViewing(true);
     setIsAdding(true);
+    setSelectedFiles([]);
   };
 
   const handleEdit = (doc: LegalDocument) => {
@@ -61,6 +69,7 @@ export default function DocumentsPage() {
     setEditingId(doc.id);
     setIsViewing(false);
     setIsAdding(true);
+    setSelectedFiles([]);
   };
 
   const handleDelete = async (id: string) => {
@@ -75,30 +84,58 @@ export default function DocumentsPage() {
     }
   };
 
-  const handleAddItem = async () => {
-    const name = prompt('Enter new document type:');
-    if (name) {
-      try {
-        const newCategory = await documentCategoryService.create({ name });
-        setDocumentCategories(prev => [...prev, newCategory]);
-        setFormData(prev => ({ ...prev, documentType: newCategory.name }));
-      } catch (error) {
-        console.error('Error adding document category:', error);
-        alert('Failed to add document category');
-      }
+  const handleAddItem = () => {
+    setShowCategoryInput(true);
+    setNewCategoryName('');
+  };
+
+  const saveCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    try {
+      const newCategory = await documentCategoryService.create({ name: newCategoryName });
+      setDocumentCategories(prev => [...prev, newCategory]);
+      setFormData(prev => ({ ...prev, documentType: newCategory.name }));
+      setShowCategoryInput(false);
+    } catch (error) {
+      console.error('Error adding document category:', error);
+      alert('Failed to add document category');
     }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+    }
+  };
+
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeExistingAttachment = (index: number) => {
+    const currentAttachments = formData.attachment || [];
+    const newAttachments = currentAttachments.filter((_, i) => i !== index);
+    setFormData({ ...formData, attachment: newAttachments });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewing) return;
 
+    setUploading(true);
     const employee = employees.find(e => e.id === formData.employeeId);
     const employeeName = employee ? `${employee.firstName} ${employee.lastName}` : 'Unknown';
 
     try {
+      let attachmentUrls: string[] = formData.attachment || [];
+
+      if (selectedFiles.length > 0) {
+        const newUrls = await legalDocumentService.uploadAttachments(selectedFiles);
+        attachmentUrls = [...attachmentUrls, ...newUrls];
+      }
+
       if (editingId) {
-        const updatedDoc = await legalDocumentService.update(editingId, formData);
+        const updatedDoc = await legalDocumentService.update(editingId, { ...formData, attachment: attachmentUrls });
         setDocuments(prev => prev.map(d => d.id === editingId ? {
           ...updatedDoc,
           employeeName // Ensure employeeName is preserved or updated
@@ -112,7 +149,7 @@ export default function DocumentsPage() {
           expiryDate: formData.expiryDate || '',
           issuingAuthority: formData.issuingAuthority,
           remark: formData.remark,
-          attachment: formData.attachment
+          attachment: attachmentUrls
         });
         setDocuments([newDocument, ...documents]);
       }
@@ -122,6 +159,8 @@ export default function DocumentsPage() {
     } catch (error) {
       console.error('Failed to save document:', error);
       alert(`Failed to save document: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -134,6 +173,7 @@ export default function DocumentsPage() {
       issuingAuthority: '',
       remark: ''
     });
+    setSelectedFiles([]);
   };
 
   if (loading) return <div>Loading...</div>;
@@ -294,16 +334,88 @@ export default function DocumentsPage() {
 
               {/* Attachment */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Attachment</label>
-                <div className={`border rounded-md p-2 flex items-center justify-between ${isViewing ? 'bg-gray-100' : 'bg-white'}`}>
-                  <span className="text-gray-500 text-sm">
-                    {formData.attachment ? 'File attached' : 'No file chosen'}
-                  </span>
-                  <button type="button" disabled={isViewing} className="text-gray-400 hover:text-gray-600">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-                    </svg>
-                  </button>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Attachments</label>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  onChange={handleFileChange}
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                  multiple
+                />
+                
+                <div className="space-y-2">
+                  {/* Existing Attachments */}
+                  {formData.attachment && formData.attachment.map((url, index) => (
+                     <div key={`existing-${index}`} className="border rounded-md p-2 flex items-center justify-between bg-gray-50">
+                        <span className="text-gray-500 text-sm truncate max-w-[200px]">
+                          {/* Try to extract filename, fallback to generic */}
+                          {url.split('/').pop() || `Document ${index + 1}`}
+                        </span>
+                        <div className="flex items-center gap-2">
+                           <a 
+                              href={url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 text-sm"
+                            >
+                              View
+                            </a>
+                            {!isViewing && (
+                              <button
+                                type="button"
+                                onClick={() => removeExistingAttachment(index)}
+                                className="text-red-500 hover:text-red-700"
+                                title="Remove attachment"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                        </div>
+                     </div>
+                  ))}
+
+                  {/* Selected New Files */}
+                  {selectedFiles.map((file, index) => (
+                    <div key={`new-${index}`} className="border rounded-md p-2 flex items-center justify-between bg-white">
+                      <span className="text-gray-500 text-sm truncate max-w-[200px]">
+                        {file.name}
+                      </span>
+                      <div className="flex items-center gap-2">
+                         <span className="text-xs text-gray-400">New</span>
+                         {!isViewing && (
+                            <button
+                              type="button"
+                              onClick={() => removeSelectedFile(index)}
+                              className="text-red-500 hover:text-red-700"
+                              title="Remove file"
+                            >
+                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                         )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Add Button */}
+                  {!isViewing && (
+                     <button 
+                        type="button" 
+                        disabled={uploading} 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="mt-2 text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Add Attachment
+                      </button>
+                  )}
+                  {uploading && <span className="text-xs text-blue-500 ml-2">Uploading...</span>}
                 </div>
               </div>
 
@@ -339,6 +451,37 @@ export default function DocumentsPage() {
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Category Modal */}
+      {showCategoryInput && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 z-[60] flex items-center justify-center">
+          <div className="bg-white p-4 rounded-lg shadow-xl w-80">
+            <h4 className="font-bold text-lg mb-3">New Document Type</h4>
+            <input
+              type="text"
+              className="w-full border border-gray-300 rounded p-2 mb-3"
+              placeholder="Enter type name"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowCategoryInput(false)}
+                className="px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveCategory}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       )}

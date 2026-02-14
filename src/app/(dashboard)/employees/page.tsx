@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Employee } from '@/types';
 import { employeeService } from '@/services/employeeService';
 
@@ -9,6 +10,29 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const viewId = searchParams?.get('view');
+
+  useEffect(() => {
+    if (viewId && employees.length > 0) {
+      const emp = employees.find(e => e.id === viewId);
+      if (emp) {
+        setSelectedEmployee(emp);
+      }
+    } else if (!viewId) {
+      setSelectedEmployee(null);
+    }
+  }, [viewId, employees]);
+
+  const handleViewEmployee = (id: string) => {
+    router.push(`/employees?view=${id}`, { scroll: false });
+  };
+
+  const handleCloseModal = () => {
+    router.push('/employees', { scroll: false });
+  };
+
 
   useEffect(() => {
     const fetchEmployees = async () => {
@@ -270,7 +294,7 @@ export default function EmployeesPage() {
                       Delete
                     </button>
                     <button 
-                      onClick={() => setSelectedEmployee(employee)}
+                      onClick={() => handleViewEmployee(employee.id)}
                       className="text-gray-600 hover:text-gray-900"
                     >
                       View
@@ -288,7 +312,7 @@ export default function EmployeesPage() {
           <div className="relative mx-auto p-5 border w-[800px] shadow-lg rounded-md bg-white max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold text-gray-900">Employee Details</h3>
-              <button onClick={() => setSelectedEmployee(null)} className="text-gray-500 hover:text-gray-700">
+              <button onClick={handleCloseModal} className="text-gray-500 hover:text-gray-700">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -391,7 +415,7 @@ export default function EmployeesPage() {
             
             <div className="mt-6 flex justify-end">
               <button
-                onClick={() => setSelectedEmployee(null)}
+                onClick={handleCloseModal}
                 className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Close

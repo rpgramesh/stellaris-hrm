@@ -7,7 +7,7 @@ export interface PayrollEmployee {
   taxFileNumber?: string;
   taxScale: string;
   residencyStatus: 'Resident' | 'NonResident' | 'WorkingHoliday';
-  employmentType: 'FullTime' | 'PartTime' | 'Casual';
+  employmentType: 'FullTime' | 'PartTime' | 'Casual' | 'Apprentice' | 'Contractor' | 'Trainee';
   superFundId?: string;
   superMemberNumber?: string;
   awardId?: string;
@@ -15,6 +15,14 @@ export interface PayrollEmployee {
   isSalarySacrifice: boolean;
   effectiveFrom: string;
   effectiveTo?: string;
+  state?: string;
+  companyId: string;
+  industryCode?: string;
+  hasHELPDebt?: boolean;
+  hasSFSSDebt?: boolean;
+  hasPrivateHealthInsurance?: boolean;
+  isExemptFromPayrollTax?: boolean;
+  jobClassification?: string;
 }
 
 export interface SalaryAdjustment {

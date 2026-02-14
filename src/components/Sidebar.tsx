@@ -19,6 +19,7 @@ const menuItems = [
       { name: 'Apply Leave', href: '/self-service/leave' },
       { name: 'Timesheets', href: '/attendance' },
       { name: 'Jobs', href: '/self-service/jobs' },
+      { name: 'My Learning', href: '/talent/learning' },
     ]
   },
   { 
@@ -287,7 +288,11 @@ export default function Sidebar() {
     >
       <div className={`p-6 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <Link href="/dashboard" className="flex items-center overflow-hidden">
-            <h1 className={`text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-teal-400 transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}>Stellaris HRM</h1>
+            <img 
+                src="/logo.png" 
+                alt="Stellaris HRM" 
+                className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
+            />
             <span className={`text-2xl font-bold text-blue-400 ${isExpanded ? 'hidden' : 'block'}`}>S</span>
         </Link>
         

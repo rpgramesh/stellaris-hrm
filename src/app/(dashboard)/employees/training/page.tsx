@@ -17,6 +17,12 @@ export default function TrainingPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isViewing, setIsViewing] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  
+  // New Item State
+  const [addingItemType, setAddingItemType] = useState<'course' | 'trainer' | null>(null);
+  const [newItemName, setNewItemName] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -72,23 +78,38 @@ export default function TrainingPage() {
     }
   };
 
-  const handleAddItem = async (type: 'course' | 'trainer') => {
-    const name = prompt(`Enter new ${type} name:`);
-    if (name) {
-      try {
-        if (type === 'course') {
-          const newCourse = await courseService.create({ name });
-          setCourses(prev => [...prev, newCourse]);
-          setFormData(prev => ({ ...prev, course: newCourse.name, courseId: newCourse.id }));
-        } else {
-          const newTrainer = await trainerService.create({ name });
-          setTrainers(prev => [...prev, newTrainer]);
-          setFormData(prev => ({ ...prev, trainer: newTrainer.name, trainerId: newTrainer.id }));
-        }
-      } catch (error) {
-        console.error(`Error adding ${type}:`, error);
-        alert(`Failed to add ${type}`);
+  const handleAddItem = (type: 'course' | 'trainer') => {
+    setAddingItemType(type);
+    setNewItemName('');
+  };
+
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeExistingAttachment = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      attachment: prev.attachment ? prev.attachment.filter((_, i) => i !== index) : []
+    }));
+  };
+
+  const saveItem = async () => {
+    if (!newItemName.trim() || !addingItemType) return;
+    try {
+      if (addingItemType === 'course') {
+        const newCourse = await courseService.create({ name: newItemName });
+        setCourses(prev => [...prev, newCourse]);
+        setFormData(prev => ({ ...prev, course: newCourse.name, courseId: newCourse.id }));
+      } else {
+        const newTrainer = await trainerService.create({ name: newItemName });
+        setTrainers(prev => [...prev, newTrainer]);
+        setFormData(prev => ({ ...prev, trainer: newTrainer.name, trainerId: newTrainer.id }));
       }
+      setAddingItemType(null);
+    } catch (error) {
+      console.error(`Error adding ${addingItemType}:`, error);
+      alert(`Failed to add ${addingItemType}`);
     }
   };
 
@@ -99,9 +120,17 @@ export default function TrainingPage() {
     const employee = employees.find(e => e.id === formData.employeeId);
     const employeeName = employee ? `${employee.firstName} ${employee.lastName}` : 'Unknown';
 
+    setUploading(true);
     try {
+      let attachmentUrls: string[] = formData.attachment || [];
+
+      if (selectedFiles.length > 0) {
+        const newUrls = await trainingService.uploadAttachments(selectedFiles);
+        attachmentUrls = [...attachmentUrls, ...newUrls];
+      }
+
       if (editingId) {
-        const updatedTraining = await trainingService.update(editingId, formData);
+        const updatedTraining = await trainingService.update(editingId, { ...formData, attachment: attachmentUrls });
         setTrainings(prev => prev.map(t => t.id === editingId ? updatedTraining : t));
       } else {
         const newTraining = await trainingService.create({
@@ -112,7 +141,7 @@ export default function TrainingPage() {
           trainer: formData.trainer || '',
           trainerId: formData.trainerId,
           result: formData.result,
-          attachment: formData.attachment,
+          attachment: attachmentUrls,
           remark: formData.remark
         });
         setTrainings([newTraining, ...trainings]);
@@ -120,9 +149,11 @@ export default function TrainingPage() {
       setIsAdding(false);
       setEditingId(null);
       resetForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save training:', error);
-      alert('Failed to save training record. Please try again.');
+      alert(`Failed to save training record: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -136,6 +167,7 @@ export default function TrainingPage() {
       result: '',
       remark: ''
     });
+    setSelectedFiles([]);
   };
 
   return (
@@ -300,16 +332,75 @@ export default function TrainingPage() {
               {/* Attachment */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Attachment</label>
-                <div className={`border rounded-md p-2 flex items-center justify-between ${isViewing ? 'bg-gray-100' : 'bg-white'}`}>
-                  <span className="text-gray-500 text-sm">
-                    {formData.attachment ? 'File attached' : 'No file chosen'}
-                  </span>
-                  <button type="button" disabled={isViewing} className="text-gray-400 hover:text-gray-600">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-                    </svg>
-                  </button>
-                </div>
+                {!isViewing && (
+                  <div className="mb-2">
+                    <input
+                      type="file"
+                      multiple
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                      onChange={(e) => {
+                        if (e.target.files) {
+                          setSelectedFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                
+                {/* Selected Files List */}
+                {selectedFiles.length > 0 && (
+                  <div className="mb-2 space-y-2">
+                    <p className="text-xs font-medium text-gray-500 uppercase">Selected Files:</p>
+                    {selectedFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded-md border">
+                        <span className="text-sm text-gray-700 truncate">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeSelectedFile(index)}
+                          className="text-red-500 hover:text-red-700"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Existing Attachments List */}
+                {formData.attachment && formData.attachment.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gray-500 uppercase">Existing Attachments:</p>
+                    {formData.attachment.map((url, index) => (
+                      <div key={index} className="flex items-center justify-between bg-blue-50 p-2 rounded-md border border-blue-100">
+                        <a 
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="text-sm text-blue-600 hover:underline truncate flex-1"
+                        >
+                          View Document {index + 1}
+                        </a>
+                        {!isViewing && (
+                          <button
+                            type="button"
+                            onClick={() => removeExistingAttachment(index)}
+                            className="text-red-500 hover:text-red-700 ml-2"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {!isViewing && selectedFiles.length === 0 && (!formData.attachment || formData.attachment.length === 0) && (
+                  <p className="text-sm text-gray-500 italic">No files selected</p>
+                )}
               </div>
 
               {/* Remark */}
@@ -337,13 +428,47 @@ export default function TrainingPage() {
                 {!isViewing && (
                   <button
                     type="submit"
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+                    disabled={uploading}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
                   >
-                    {editingId ? 'Update' : 'Save'}
+                    {uploading ? 'Uploading...' : (editingId ? 'Update' : 'Save')}
                   </button>
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Item Modal */}
+      {addingItemType && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 z-[60] flex items-center justify-center">
+          <div className="bg-white p-4 rounded-lg shadow-xl w-80">
+            <h4 className="font-bold text-lg mb-3">
+              New {addingItemType === 'course' ? 'Course' : 'Trainer'}
+            </h4>
+            <input
+              type="text"
+              className="w-full border border-gray-300 rounded p-2 mb-3"
+              placeholder={`Enter ${addingItemType} name`}
+              value={newItemName}
+              onChange={(e) => setNewItemName(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setAddingItemType(null)}
+                className="px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveItem}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       )}

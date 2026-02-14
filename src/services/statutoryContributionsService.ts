@@ -265,7 +265,7 @@ export class StatutoryContributionsService {
       const payrollTaxRates = statutoryRates.filter(rate => 
         rate.contributionType === 'payroll-tax' && 
         rate.isActive &&
-        rate.applicableStates?.includes(employee.state)
+        rate.applicableStates?.includes(employee.state || '')
       );
       
       if (!payrollTaxRates || payrollTaxRates.length === 0) {
@@ -302,7 +302,7 @@ export class StatutoryContributionsService {
         rateApplied: taxRate,
         periodStart: payPeriod.startDate,
         periodEnd: payPeriod.endDate,
-        paymentDueDate: this.getPayrollTaxPaymentDueDate(payPeriod.endDate, employee.state),
+        paymentDueDate: this.getPayrollTaxPaymentDueDate(payPeriod.endDate, employee.state || ''),
         liabilityAccount: '2-4000', // Payroll Tax Payable
         expenseAccount: '6-6000', // Payroll Tax Expense
         status: 'calculated',
@@ -341,7 +341,7 @@ export class StatutoryContributionsService {
       const workersCompRates = statutoryRates.filter(rate => 
         rate.contributionType === 'workers-compensation' && 
         rate.isActive &&
-        rate.applicableIndustries?.includes(employee.industryCode)
+        rate.applicableIndustries?.includes(employee.industryCode || '')
       );
       
       if (!workersCompRates || workersCompRates.length === 0) {
@@ -514,7 +514,7 @@ export class StatutoryContributionsService {
         calculationDetails: {
           rateType: rate.contributionType,
           originalRate: rate.rate,
-          applicableThresholds: rate.thresholds,
+          applicableThresholds: rate.threshold,
           employeeCircumstances: this.getEmployeeCircumstances(employee)
         },
         isReportable: rate.isReportable,
@@ -695,7 +695,7 @@ export class StatutoryContributionsService {
     return Math.round(medicareLevy * 100) / 100;
   }
   
-  private calculateHELPDebt(taxableIncome: number, employee: PayrollEmployee): number {
+  private calculateHELPDebt(taxableIncome: number, employee: PayrollEmployee, rate?: number): number {
     if (!employee.hasHELPDebt) return 0;
     
     const annualIncome = taxableIncome * this.getPayPeriodsPerYear(employee.payFrequency || 'fortnightly');
@@ -725,7 +725,7 @@ export class StatutoryContributionsService {
     return Math.round(helpRepayment * 100) / 100;
   }
   
-  private calculateSFSSDebt(taxableIncome: number, employee: PayrollEmployee): number {
+  private calculateSFSSDebt(taxableIncome: number, employee: PayrollEmployee, rate?: number): number {
     if (!employee.hasSFSSDebt) return 0;
     
     // SFSS (Student Financial Supplement Scheme) repayment
@@ -829,7 +829,7 @@ export class StatutoryContributionsService {
           ...contribution,
           created_at: now,
           updated_at: now,
-          company_id: (contribution as any).companyId || contribution.company_id
+          company_id: contribution.companyId
         }])
         .select()
         .single();
