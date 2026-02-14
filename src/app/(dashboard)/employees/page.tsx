@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Employee } from '@/types';
 import { employeeService } from '@/services/employeeService';
 
-export default function EmployeesPage() {
+function EmployeesContent() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
   const viewId = searchParams?.get('view');
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
     if (viewId && employees.length > 0) {
@@ -48,7 +49,6 @@ export default function EmployeesPage() {
     fetchEmployees();
   }, []);
 
-  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
   const getManagerName = (managerId?: string) => {
     if (!managerId) return '-';
@@ -425,5 +425,13 @@ export default function EmployeesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function EmployeesPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <EmployeesContent />
+    </Suspense>
   );
 }
