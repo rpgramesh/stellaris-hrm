@@ -20,6 +20,8 @@ const menuItems = [
       { name: 'Timesheets', href: '/attendance' },
       { name: 'Jobs', href: '/self-service/jobs' },
       { name: 'My Learning', href: '/talent/learning' },
+      { name: '100-Point ID Check', href: '/self-service/id-check' },
+      { name: 'Hardware Onboarding', href: '/self-service/hardware-onboarding' },
     ]
   },
   { 
@@ -37,7 +39,7 @@ const menuItems = [
       { name: 'Education', href: '/employees/education' },
       { name: 'Experience', href: '/employees/experience' },
       { name: 'Training', href: '/employees/training' },
-      { name: 'Legal Document', href: '/employees/documents' },
+      { name: 'Identification Documents', href: '/employees/documents' },
       { type: 'divider' },
       { name: 'Custom Role', href: '/employees/custom-roles' },
       { type: 'divider' },

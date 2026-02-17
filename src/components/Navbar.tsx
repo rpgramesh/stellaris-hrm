@@ -5,11 +5,13 @@ import { Bell, User } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
+import { notificationService } from '@/services/notificationService';
 import GlobalSearch from './GlobalSearch';
 
 export default function Navbar() {
   const router = useRouter();
   const [userName, setUserName] = useState<string>('User');
+  const [unreadCount, setUnreadCount] = useState<number>(0);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -26,7 +28,20 @@ export default function Navbar() {
       }
     };
 
+    const fetchNotifications = async () => {
+      try {
+        const notifications = await notificationService.getMyNotifications();
+        const unread = notifications.filter(n => !n.isRead);
+        setUnreadCount(unread.length);
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+      }
+    };
+
     fetchUser();
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleLogout = async () => {
@@ -44,9 +59,16 @@ export default function Navbar() {
         <GlobalSearch />
       </div>
       <div className="flex items-center space-x-4">
-        <button className="p-2 hover:bg-gray-100 rounded-full relative">
+        <button
+          type="button"
+          onClick={() => router.push('/notifications')}
+          className="p-2 hover:bg-gray-100 rounded-full relative"
+          aria-label="Open notifications"
+        >
           <Bell className="w-6 h-6 text-gray-600" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-1 min-w-[0.5rem] h-2 bg-red-500 rounded-full" />
+          )}
         </button>
         <div className="flex items-center space-x-2">
           <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
@@ -54,7 +76,7 @@ export default function Navbar() {
           </div>
           <span className="text-gray-700 font-medium">Welcome, {userName}</span>
         </div>
-        <button 
+        <button
           onClick={handleLogout}
           className="text-sm text-red-600 hover:text-red-800 font-medium"
         >

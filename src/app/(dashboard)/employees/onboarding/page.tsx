@@ -1,20 +1,198 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { OnboardingProcess, OnboardingTask, Employee } from '@/types';
+import { OnboardingProcess, OnboardingTask, Employee, LegalDocument } from '@/types';
 import { onboardingService } from '@/services/onboardingService';
 import { employeeService } from '@/services/employeeService';
-import { 
-  UserPlusIcon, 
-  CheckCircleIcon, 
+import { learningService } from '@/services/learningService';
+import { hardwareOnboardingService } from '@/services/hardwareOnboardingService';
+import { notificationService } from '@/services/notificationService';
+import { legalDocumentService } from '@/services/legalDocumentService';
+import {
+  UserPlusIcon,
+  CheckCircleIcon,
   ClockIcon,
   ChartBarIcon
 } from '@heroicons/react/24/outline';
+
+type IDCategory = 'Primary' | 'Secondary' | 'Tertiary';
+type IDStatus = 'Pending' | 'Approved' | 'Rejected';
+type DocumentSubmissionStage = 'requested' | 'submitted' | 'sent_back' | 'approved';
+type ClientOnboardingStage = 'requested' | 'updated';
+type HardwareOnboardingStage = 'requested' | 'updated';
+
+interface HRIdCheckDoc {
+  id: string;
+  typeLabel: string;
+  category?: IDCategory;
+  points?: number;
+  status: IDStatus;
+  url?: string;
+  uploadedDate?: string;
+  remark?: string | null;
+}
+
+const parseIdCheckMetadata = (remark?: string | null): {
+  category?: IDCategory;
+  points?: number;
+  status: IDStatus;
+  typeLabel?: string;
+} => {
+  if (!remark) {
+    return { status: 'Pending' };
+  }
+
+  let category: IDCategory | undefined;
+  let points: number | undefined;
+  let status: IDStatus = 'Pending';
+  let typeLabel: string | undefined;
+
+  const categoryMatch = remark.match(/\[ID_CHECK_CATEGORY:(Primary|Secondary|Tertiary)\]/);
+  if (categoryMatch) {
+    category = categoryMatch[1] as IDCategory;
+  }
+
+  const pointsMatch = remark.match(/\[ID_CHECK_POINTS:(\d+)\]/);
+  if (pointsMatch) {
+    const value = parseInt(pointsMatch[1], 10);
+    if (!Number.isNaN(value)) {
+      points = value;
+    }
+  }
+
+  const statusMatch = remark.match(/\[ID_CHECK_STATUS:(Pending|Approved|Rejected)\]/);
+  if (statusMatch) {
+    status = statusMatch[1] as IDStatus;
+  }
+
+  const typeMatch = remark.match(/\[ID_CHECK_TYPE:([^\]]+)\]/);
+  if (typeMatch) {
+    typeLabel = typeMatch[1];
+  }
+
+  return { category, points, status, typeLabel };
+};
+
+const upsertIdCheckStatusTag = (remark: string | null | undefined, status: IDStatus): string => {
+  const existing = remark || '';
+  if (existing.match(/\[ID_CHECK_STATUS:(Pending|Approved|Rejected)\]/)) {
+    return existing.replace(
+      /\[ID_CHECK_STATUS:(Pending|Approved|Rejected)\]/,
+      `[ID_CHECK_STATUS:${status}]`
+    );
+  }
+  const trimmed = existing.trim();
+  const tag = `[ID_CHECK_STATUS:${status}]`;
+  if (!trimmed) {
+    return tag;
+  }
+  return `${trimmed} ${tag}`;
+};
+
+const deriveDocumentSubmissionStage = (
+  docs: HRIdCheckDoc[],
+  totalPoints: number
+): DocumentSubmissionStage => {
+  if (!docs || docs.length === 0) {
+    return 'requested';
+  }
+  const hasApproved = docs.some(d => d.status === 'Approved');
+  const hasRejected = docs.some(d => d.status === 'Rejected');
+  if (hasApproved && totalPoints >= 100) {
+    return 'approved';
+  }
+  if (hasRejected) {
+    return 'sent_back';
+  }
+  return 'submitted';
+};
+
+const getDocumentSubmissionClasses = (stage: DocumentSubmissionStage, completed: boolean) => {
+  if (completed || stage === 'approved') {
+    return 'bg-green-100 text-green-800 border border-green-200 cursor-default';
+  }
+  if (stage === 'submitted') {
+    return 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer';
+  }
+  if (stage === 'sent_back') {
+    return 'bg-red-100 text-red-800 border border-red-200 hover:bg-red-200 cursor-pointer';
+  }
+  return 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
+};
+
+const getDocumentSubmissionLabelSuffix = (stage: DocumentSubmissionStage) => {
+  if (stage === 'submitted') return ' (Submitted)';
+  if (stage === 'sent_back') return ' (Needs update)';
+  if (stage === 'approved') return ' (Approved)';
+  return ' (Requested)';
+};
+
+const getDocumentSubmissionTitle = (stage: DocumentSubmissionStage) => {
+  if (stage === 'submitted') {
+    return 'Employee has submitted ID documents. Awaiting HR review.';
+  }
+  if (stage === 'sent_back') {
+    return 'Documents sent back to employee. Waiting for updated upload.';
+  }
+  if (stage === 'approved') {
+    return 'HR has approved the documents and met the 100-point requirement.';
+  }
+  return 'Request sent to employee. No documents submitted yet.';
+};
 
 export default function OnboardingPage() {
   const [onboardingList, setOnboardingList] = useState<OnboardingProcess[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mandatoryModal, setMandatoryModal] = useState<{
+    processId: string;
+    employeeId: string;
+    employeeName: string;
+    courses: { id: string; title: string; status: string; dueDate?: string }[];
+  } | null>(null);
+  const [mandatoryLoading, setMandatoryLoading] = useState(false);
+  const [mandatoryAssignedEmployees, setMandatoryAssignedEmployees] = useState<Record<string, boolean>>({});
+  const [clientDocsModal, setClientDocsModal] = useState<{
+    processId: string;
+    employeeId: string;
+    employeeName: string;
+    documents: LegalDocument[];
+  } | null>(null);
+  const [clientDocsLoading, setClientDocsLoading] = useState(false);
+  const [hardwareModal, setHardwareModal] = useState<{
+    processId: string;
+    employeeId: string;
+    employeeName: string;
+    clientName?: string;
+    clientManagerEmail?: string;
+    assets: {
+      assetTag: string;
+      assetType: string;
+      serialNumber: string;
+      model: string;
+      status: string;
+      assetId: string;
+    }[];
+  } | null>(null);
+  const [hardwareLoading, setHardwareLoading] = useState(false);
+  const [idCheckModal, setIdCheckModal] = useState<{
+    processId: string;
+    employeeId: string;
+    employeeName: string;
+    docs: HRIdCheckDoc[];
+    totalPoints: number;
+  } | null>(null);
+  const [idCheckLoading, setIdCheckLoading] = useState(false);
+  const [idCheckComment, setIdCheckComment] = useState('');
+  const [documentSubmissionStatus, setDocumentSubmissionStatus] = useState<
+    Record<string, DocumentSubmissionStage>
+  >({});
+  const [clientOnboardingStatus, setClientOnboardingStatus] = useState<
+    Record<string, ClientOnboardingStage>
+  >({});
+  const [hardwareOnboardingStatus, setHardwareOnboardingStatus] = useState<
+    Record<string, HardwareOnboardingStage>
+  >({});
 
   useEffect(() => {
     const fetchData = async () => {
@@ -32,6 +210,78 @@ export default function OnboardingPage() {
       try {
         const wfs = await onboardingService.getAll();
         setOnboardingList(wfs);
+        const statusByProcess: Record<string, DocumentSubmissionStage> = {};
+        const clientStatusByProcess: Record<string, ClientOnboardingStage> = {};
+        const hardwareStatusByProcess: Record<string, HardwareOnboardingStage> = {};
+        await Promise.all(
+          wfs.map(async process => {
+            try {
+              const docs = await legalDocumentService.getByEmployeeId(process.employeeId);
+              const idDocs: HRIdCheckDoc[] = (docs || [])
+                .filter(
+                  (doc: LegalDocument) =>
+                    typeof doc.remark === 'string' &&
+                    doc.remark.includes('100-point ID check')
+                )
+                .map((doc: LegalDocument) => {
+                  const meta = parseIdCheckMetadata(doc.remark);
+                  const url =
+                    Array.isArray(doc.attachment) && doc.attachment.length > 0
+                      ? doc.attachment[0]
+                      : undefined;
+                  return {
+                    id: doc.id,
+                    typeLabel: meta.typeLabel || doc.documentType || 'ID document',
+                    category: meta.category,
+                    points: meta.points,
+                    status: meta.status,
+                    url,
+                    uploadedDate: doc.issueDate || undefined,
+                    remark: doc.remark
+                  };
+                });
+              const totalPoints = idDocs.reduce((sum, item) => sum + (item.points || 0), 0);
+              statusByProcess[process.id] = deriveDocumentSubmissionStage(idDocs, totalPoints);
+
+              const hasClientDocs =
+                docs &&
+                docs.some(
+                  (doc: LegalDocument) =>
+                    typeof doc.remark === 'string' &&
+                    doc.remark.includes('[CLIENT_ONBOARDING]')
+                );
+              clientStatusByProcess[process.id] = hasClientDocs ? 'updated' : 'requested';
+
+              const hasHardwareDocsLegacy =
+                docs &&
+                docs.some(
+                  (doc: LegalDocument) =>
+                    typeof doc.remark === 'string' &&
+                    doc.remark.includes('[HARDWARE_ONBOARDING]')
+                );
+
+              let hasHardwareDocs = hasHardwareDocsLegacy;
+              if (!hasHardwareDocsLegacy) {
+                try {
+                  hasHardwareDocs = await hardwareOnboardingService.hasHardwareForEmployee(
+                    process.employeeId
+                  );
+                } catch {
+                  hasHardwareDocs = false;
+                }
+              }
+
+              hardwareStatusByProcess[process.id] = hasHardwareDocs ? 'updated' : 'requested';
+            } catch {
+              statusByProcess[process.id] = 'requested';
+              clientStatusByProcess[process.id] = 'requested';
+              hardwareStatusByProcess[process.id] = 'requested';
+            }
+          })
+        );
+        setDocumentSubmissionStatus(statusByProcess);
+        setClientOnboardingStatus(clientStatusByProcess);
+        setHardwareOnboardingStatus(hardwareStatusByProcess);
       } catch (e) {
         console.error('Failed to fetch onboarding workflows:', e);
       } finally {
@@ -51,6 +301,75 @@ export default function OnboardingPage() {
     }
   };
 
+  const markMandatoryAssigned = (employeeId: string) => {
+    setMandatoryAssignedEmployees(prev => ({
+      ...prev,
+      [employeeId]: true
+    }));
+  };
+
+  const openIdCheckModalForEmployee = async (processId: string, employeeId: string, employeeName: string) => {
+    setIdCheckLoading(true);
+    try {
+      const docs = await legalDocumentService.getByEmployeeId(employeeId);
+      const mapped: HRIdCheckDoc[] = docs
+        .filter((doc: LegalDocument) => typeof doc.remark === 'string' && doc.remark.includes('100-point ID check'))
+        .map((doc: LegalDocument) => {
+          const meta = parseIdCheckMetadata(doc.remark);
+          const url =
+            Array.isArray(doc.attachment) && doc.attachment.length > 0
+              ? doc.attachment[0]
+              : undefined;
+          return {
+            id: doc.id,
+            typeLabel: meta.typeLabel || doc.documentType || 'ID document',
+            category: meta.category,
+            points: meta.points,
+            status: meta.status,
+            url,
+            uploadedDate: doc.issueDate || undefined,
+            remark: doc.remark
+          };
+        });
+
+      const totalPoints = mapped.reduce((sum, item) => sum + (item.points || 0), 0);
+
+      setIdCheckModal({
+        processId,
+        employeeId,
+        employeeName,
+        docs: mapped,
+        totalPoints
+      });
+      setIdCheckComment('');
+    } catch (error) {
+      console.error('Failed to load ID check documents for onboarding:', error);
+      alert('Failed to load ID documents. Please try again.');
+    } finally {
+      setIdCheckLoading(false);
+    }
+  };
+
+  const updateIdCheckDocStatus = async (doc: HRIdCheckDoc, status: IDStatus): Promise<HRIdCheckDoc> => {
+    const newRemark = upsertIdCheckStatusTag(doc.remark, status);
+    const updated = await legalDocumentService.update(doc.id, { remark: newRemark });
+    const meta = parseIdCheckMetadata(updated.remark);
+    const url =
+      Array.isArray(updated.attachment) && updated.attachment.length > 0
+        ? updated.attachment[0]
+        : undefined;
+    return {
+      id: updated.id,
+      typeLabel: meta.typeLabel || updated.documentType || 'ID document',
+      category: meta.category,
+      points: meta.points,
+      status: meta.status,
+      url,
+      uploadedDate: updated.issueDate || undefined,
+      remark: updated.remark
+    };
+  };
+
   const handleStartOnboarding = () => {
     setIsAdding(true);
   };
@@ -61,6 +380,49 @@ export default function OnboardingPage() {
     startDate: new Date().toISOString().split('T')[0],
     currentStage: 'Account Creation'
   });
+
+  const autoAssignOnboardingCourses = async (employeeId: string, startDate: string) => {
+    try {
+      const mandatoryCourses = await learningService.getMandatoryOnboardingCourses();
+      if (!mandatoryCourses || mandatoryCourses.length === 0) {
+        return;
+      }
+
+      const existingEnrollments = await learningService.getEmployeeEnrollments(employeeId);
+      const existingCourseIds = new Set(existingEnrollments.map(e => e.courseId));
+
+      const coursesToAssign = mandatoryCourses.filter(c => !existingCourseIds.has(c.id));
+      if (coursesToAssign.length === 0) {
+        return;
+      }
+
+      const baseDate = new Date(startDate);
+      if (isNaN(baseDate.getTime())) {
+        console.warn('Invalid onboarding start date for auto-assign, skipping due date calculation');
+      }
+      const dueDate = new Date(baseDate);
+      dueDate.setDate(dueDate.getDate() + 14);
+      const dueDateStr = isNaN(dueDate.getTime())
+        ? undefined
+        : dueDate.toISOString().split('T')[0];
+
+      await Promise.all(
+        coursesToAssign.map(course =>
+          learningService.assignCourse({
+            courseId: course.id,
+            employeeIds: [employeeId],
+            dueDate: dueDateStr,
+            instructions: 'Onboarding mandatory course',
+            assignedBy: employeeId
+          })
+        )
+      );
+      markMandatoryAssigned(employeeId);
+    } catch (error) {
+      console.error('Failed to auto-assign onboarding courses:', error);
+      // Do not block onboarding workflow creation on learning assignment failure
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,10 +439,28 @@ export default function OnboardingPage() {
           { id: 'T1', name: 'Account Creation', completed: false },
           { id: 'T2', name: 'Document Submission', completed: false },
           { id: 'T3', name: 'Hardware Setup', completed: false },
-          { id: 'T4', name: 'Orientation Training', completed: false },
-          { id: 'T5', name: 'Team Introduction', completed: false },
+          { id: 'T4', name: 'Client Onboarding Documents', completed: false },
+          { id: 'T5', name: 'Mandatory Learning', completed: false }
         ]
       });
+
+      const employee = getEmployee(formData.employeeId);
+      if (employee?.userId) {
+        await notificationService.createNotification(
+          employee.userId,
+          'Complete 100-Point ID Check',
+          'Please complete your 100-point ID document submission to finish onboarding.',
+          'warning'
+        );
+
+        await notificationService.createNotification(
+          employee.userId,
+          'Provide Client Onboarding Details',
+          'Please enter your client name, manager email and upload any client onboarding documents in Self Service.',
+          'info'
+        );
+      }
+
       setOnboardingList(prev => [...prev, newProcess]);
       setIsAdding(false);
       setFormData({
@@ -88,6 +468,8 @@ export default function OnboardingPage() {
         startDate: new Date().toISOString().split('T')[0],
         currentStage: 'Account Creation'
       });
+
+      await autoAssignOnboardingCourses(newProcess.employeeId, formData.startDate);
     } catch (error) {
       console.error('Failed to start onboarding:', JSON.stringify(error, null, 2));
       alert('Failed to start onboarding. Please try again.');
@@ -96,7 +478,182 @@ export default function OnboardingPage() {
 
   const [selectedTask, setSelectedTask] = useState<{processId: string, task: OnboardingTask} | null>(null);
 
+  const handleAssignMandatoryCourse = async (courseId: string) => {
+    if (!mandatoryModal) return;
+
+    try {
+      setMandatoryLoading(true);
+
+      let dueDateStr: string | undefined;
+      const process = onboardingList.find(p => p.id === mandatoryModal.processId);
+      if (process) {
+        const baseDate = new Date(process.startDate);
+        if (!isNaN(baseDate.getTime())) {
+          const dueDate = new Date(baseDate);
+          dueDate.setDate(dueDate.getDate() + 14);
+          dueDateStr = dueDate.toISOString().split('T')[0];
+        }
+      }
+
+      await learningService.assignCourse({
+        courseId,
+        employeeIds: [mandatoryModal.employeeId],
+        dueDate: dueDateStr,
+        instructions: 'Onboarding mandatory course',
+        assignedBy: mandatoryModal.employeeId
+      });
+
+      markMandatoryAssigned(mandatoryModal.employeeId);
+
+      await openMandatoryLearningModal(
+        mandatoryModal.processId,
+        mandatoryModal.employeeId,
+        mandatoryModal.employeeName
+      );
+    } catch (error) {
+      console.error('Failed to assign mandatory onboarding course:', error);
+      alert('Failed to assign course. Please try again.');
+    } finally {
+      setMandatoryLoading(false);
+    }
+  };
+
+  const openMandatoryLearningModal = async (processId: string, employeeId: string, employeeName: string) => {
+    setMandatoryLoading(true);
+    try {
+      const [mandatoryCourses, enrollments] = await Promise.all([
+        learningService.getMandatoryOnboardingCourses(),
+        learningService.getEmployeeEnrollments(employeeId)
+      ]);
+
+      const courses = mandatoryCourses.map(course => {
+        const enrollment = enrollments.find(e => e.courseId === course.id);
+        return {
+          id: course.id,
+          title: course.title,
+          status: enrollment ? enrollment.status : 'Not Assigned',
+          dueDate: enrollment?.dueDate
+        };
+      });
+
+      if (courses.some(c => c.status !== 'Not Assigned')) {
+        markMandatoryAssigned(employeeId);
+      }
+
+      setMandatoryModal({
+        processId,
+        employeeId,
+        employeeName,
+        courses
+      });
+    } catch (error) {
+      console.error('Failed to load mandatory learning details:', error);
+      alert('Failed to load mandatory learning details. Please try again.');
+    } finally {
+      setMandatoryLoading(false);
+    }
+  };
+
+  const openClientDocsModal = async (processId: string, employeeId: string, employeeName: string) => {
+    setClientDocsLoading(true);
+    try {
+      const docs = await legalDocumentService.getByEmployeeId(employeeId);
+      const clientDocs = (docs || []).filter(
+        (doc: LegalDocument) =>
+          typeof doc.remark === 'string' && doc.remark.includes('[CLIENT_ONBOARDING]')
+      );
+      setClientDocsModal({
+        processId,
+        employeeId,
+        employeeName,
+        documents: clientDocs
+      });
+    } catch (error) {
+      console.error('Failed to load client onboarding documents:', error);
+      alert('Failed to load client onboarding documents. Please try again.');
+    } finally {
+      setClientDocsLoading(false);
+    }
+  };
+
+  const openHardwareModal = async (processId: string, employeeId: string, employeeName: string) => {
+    setHardwareLoading(true);
+    try {
+      const record = await hardwareOnboardingService.getLatestByEmployee(employeeId);
+      if (!record) {
+        setHardwareModal({
+          processId,
+          employeeId,
+          employeeName,
+          assets: []
+        });
+        return;
+      }
+      setHardwareModal({
+        processId,
+        employeeId,
+        employeeName,
+        clientName: record.clientName,
+        clientManagerEmail: record.clientManagerEmail,
+        assets: record.assets.map(a => ({
+          assetTag: a.assetTag,
+          assetType: a.assetType,
+          serialNumber: a.serialNumber,
+          model: a.model,
+          status: a.status,
+          assetId: a.assetCode || ''
+        }))
+      });
+    } catch (error) {
+      console.error('Failed to load hardware onboarding details:', error);
+      alert('Failed to load hardware onboarding details. Please try again.');
+    } finally {
+      setHardwareLoading(false);
+    }
+  };
+
   const handleTaskClick = (processId: string, task: OnboardingTask) => {
+    const lowerName = task.name.toLowerCase();
+    if (lowerName.includes('mandatory learning')) {
+      const process = onboardingList.find(p => p.id === processId);
+      if (!process) return;
+      const employee = getEmployee(process.employeeId);
+      if (!employee) return;
+      const employeeName = `${employee.firstName} ${employee.lastName}`;
+      openMandatoryLearningModal(processId, process.employeeId, employeeName);
+      return;
+    }
+
+    if (lowerName.includes('document submission')) {
+      const process = onboardingList.find(p => p.id === processId);
+      if (!process) return;
+      const employee = getEmployee(process.employeeId);
+      if (!employee) return;
+      const employeeName = `${employee.firstName} ${employee.lastName}`;
+      openIdCheckModalForEmployee(processId, process.employeeId, employeeName);
+      return;
+    }
+
+    if (lowerName.includes('client onboarding')) {
+      const process = onboardingList.find(p => p.id === processId);
+      if (!process) return;
+      const employee = getEmployee(process.employeeId);
+      if (!employee) return;
+      const employeeName = `${employee.firstName} ${employee.lastName}`;
+      openClientDocsModal(processId, process.employeeId, employeeName);
+      return;
+    }
+
+    if (lowerName.includes('hardware')) {
+      const process = onboardingList.find(p => p.id === processId);
+      if (!process) return;
+      const employee = getEmployee(process.employeeId);
+      if (!employee) return;
+      const employeeName = `${employee.firstName} ${employee.lastName}`;
+      openHardwareModal(processId, process.employeeId, employeeName);
+      return;
+    }
+
     setSelectedTask({ processId, task });
   };
 
@@ -190,6 +747,676 @@ export default function OnboardingPage() {
                   onClick={() => setSelectedTask(null)}
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {idCheckModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-[640px] shadow-lg rounded-md bg-white">
+            <div className="mt-1">
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                100-Point ID Check
+              </h3>
+              <p className="text-sm text-gray-500 mb-3">
+                Uploaded documents for {idCheckModal.employeeName}. Review the points and send back
+                to the employee if changes are required.
+              </p>
+              {idCheckLoading ? (
+                <p className="text-sm text-gray-500">Loading ID documents...</p>
+              ) : idCheckModal.docs.length === 0 ? (
+                <p className="text-sm text-gray-500">
+                  No 100-point ID documents have been submitted yet. Ask the employee to complete
+                  the check in Self Service.
+                </p>
+              ) : (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Total Points
+                      </p>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {idCheckModal.totalPoints} points
+                      </p>
+                    </div>
+                    <div
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        idCheckModal.totalPoints >= 100
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}
+                    >
+                      {idCheckModal.totalPoints >= 100
+                        ? 'Requirement met (100 points)'
+                        : 'Less than 100 points'}
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto mb-4 border border-gray-100 rounded-md">
+                    <ul className="divide-y divide-gray-100">
+                      {idCheckModal.docs.map(doc => (
+                        <li key={doc.id} className="px-3 py-2 flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-900">
+                              {doc.typeLabel}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {(doc.category || 'Uncategorized')}{' '}
+                              {typeof doc.points === 'number' && `• ${doc.points} points`}
+                              {doc.uploadedDate &&
+                                ` • Uploaded ${new Date(doc.uploadedDate).toLocaleDateString()}`}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span
+                              className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                doc.status === 'Approved'
+                                  ? 'bg-green-100 text-green-800'
+                                  : doc.status === 'Rejected'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {doc.status}
+                            </span>
+                            {doc.url && (
+                              <a
+                                href={doc.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-indigo-600 hover:text-indigo-800"
+                              >
+                                View document
+                              </a>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                      Message to employee (optional when sending back)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={idCheckComment}
+                      onChange={(e) => setIdCheckComment(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="Explain what needs to be updated or which documents are missing."
+                    />
+                  </div>
+                </>
+              )}
+              <div className="flex justify-end mt-3 gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300 focus:outline-none"
+                  onClick={() => setIdCheckModal(null)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={idCheckLoading || !idCheckModal}
+                  onClick={async () => {
+                    if (!idCheckModal) return;
+                    const employee = getEmployee(idCheckModal.employeeId);
+                    try {
+                      setIdCheckLoading(true);
+                      const updatedDocs: HRIdCheckDoc[] = [];
+                      for (const doc of idCheckModal.docs) {
+                        const updated = await updateIdCheckDocStatus(doc, 'Rejected');
+                        updatedDocs.push(updated);
+                      }
+                      if (employee && employee.userId) {
+                        const docSummary = updatedDocs
+                          .map(d => {
+                            const label = d.typeLabel || d.id;
+                            const categoryLabel = d.category ? `${d.category} (${d.points || 0} pts)` : 'Uncategorised';
+                            return `${categoryLabel}: ${label}`;
+                          })
+                          .join('; ');
+                        const reason =
+                          idCheckComment.trim() ||
+                          'HR has requested changes to your 100-point ID documents. Please review and upload updated documents.';
+                        const message = docSummary
+                          ? `The following documents need updates: ${docSummary}. Reason: ${reason}`
+                          : reason;
+                        await notificationService.createNotification(
+                          employee.userId,
+                          'Update 100-Point ID Documents',
+                          message,
+                          'warning'
+                        );
+                      }
+                      setDocumentSubmissionStatus(prev => ({
+                        ...prev,
+                        [idCheckModal.processId]: deriveDocumentSubmissionStage(
+                          updatedDocs,
+                          updatedDocs.reduce((sum, item) => sum + (item.points || 0), 0)
+                        )
+                      }));
+                      setIdCheckModal({
+                        ...idCheckModal,
+                        docs: updatedDocs,
+                        totalPoints: updatedDocs.reduce(
+                          (sum, item) => sum + (item.points || 0),
+                          0
+                        )
+                      });
+                    } catch (error) {
+                      console.error('Failed to send ID check back to employee:', error);
+                      alert('Failed to send back request. Please try again.');
+                    } finally {
+                      setIdCheckLoading(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  Send Back To Employee
+                </button>
+                <button
+                  type="button"
+                  disabled={idCheckLoading || !idCheckModal}
+                  onClick={async () => {
+                    if (!idCheckModal) return;
+                    try {
+                      setIdCheckLoading(true);
+                      const updatedDocs: HRIdCheckDoc[] = [];
+                      for (const doc of idCheckModal.docs) {
+                        const updated = await updateIdCheckDocStatus(doc, 'Approved');
+                        updatedDocs.push(updated);
+                      }
+
+                      setDocumentSubmissionStatus(prev => ({
+                        ...prev,
+                        [idCheckModal.processId]: deriveDocumentSubmissionStage(
+                          updatedDocs,
+                          updatedDocs.reduce((sum, item) => sum + (item.points || 0), 0)
+                        )
+                      }));
+
+                      const process = onboardingList.find(p => p.id === idCheckModal.processId);
+                      if (process) {
+                        const targetTask = process.tasks.find(t =>
+                          t.name.toLowerCase().includes('document submission')
+                        );
+                        if (targetTask && !targetTask.completed) {
+                          await onboardingService.updateTask(targetTask.id, true);
+
+                          const updatedTasks = process.tasks.map(t =>
+                            t.id === targetTask.id ? { ...t, completed: true } : t
+                          );
+                          const completedCount = updatedTasks.filter(t => t.completed).length;
+                          const progress = Math.round(
+                            (completedCount / updatedTasks.length) * 100
+                          );
+                          const nextIncomplete = updatedTasks.find(t => !t.completed);
+                          const currentStage = nextIncomplete ? nextIncomplete.name : 'Completed';
+                          const status = progress === 100 ? 'Completed' : 'In Progress';
+
+                          await onboardingService.updateWorkflow(process.id, {
+                            progress,
+                            currentStage,
+                            status
+                          });
+
+                          setOnboardingList(prev =>
+                            prev.map(p =>
+                              p.id === process.id
+                                ? {
+                                    ...p,
+                                    tasks: updatedTasks,
+                                    progress,
+                                    currentStage,
+                                    status
+                                  }
+                                : p
+                            )
+                          );
+                        }
+                      }
+
+                      setIdCheckModal({
+                        ...idCheckModal,
+                        docs: updatedDocs,
+                        totalPoints: updatedDocs.reduce(
+                          (sum, item) => sum + (item.points || 0),
+                          0
+                        )
+                      });
+                    } catch (error) {
+                      console.error('Failed to approve ID documents:', error);
+                      alert('Failed to approve documents. Please try again.');
+                    } finally {
+                      setIdCheckLoading(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-300"
+                >
+                  Approve Documents
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clientDocsModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-[640px] shadow-lg rounded-md bg-white">
+            <div className="mt-1">
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                Client Onboarding Documents
+              </h3>
+              <p className="text-sm text-gray-500 mb-3">
+                Documents uploaded for {clientDocsModal.employeeName}. Review the client onboarding
+                documents before completing this task.
+              </p>
+              {clientDocsLoading ? (
+                <p className="text-sm text-gray-500">Loading client onboarding documents...</p>
+              ) : clientDocsModal.documents.length === 0 ? (
+                <p className="text-sm text-gray-500">
+                  No client onboarding documents have been uploaded yet for this employee.
+                </p>
+              ) : (
+                <>
+                  <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Client Name
+                      </p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {clientDocsModal.documents[0]?.documentNumber || '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Manager Email
+                      </p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {clientDocsModal.documents[0]?.issuingAuthority || '-'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto mb-4 border border-gray-100 rounded-md">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Type</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">
+                            Number / Reference
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Issued</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Expires</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Attachments</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-100">
+                        {clientDocsModal.documents.map(doc => (
+                          <tr key={doc.id}>
+                            <td className="px-3 py-2 text-gray-900">{doc.documentType}</td>
+                            <td className="px-3 py-2 text-gray-700">{doc.documentNumber || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">
+                              {doc.issueDate
+                                ? new Date(doc.issueDate).toLocaleDateString()
+                                : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700">
+                              {doc.expiryDate
+                                ? new Date(doc.expiryDate).toLocaleDateString()
+                                : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700">
+                              {Array.isArray(doc.attachment) && doc.attachment.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {doc.attachment.map((url, index) => (
+                                    <a
+                                      key={index}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                                    >
+                                      View {index + 1}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-400">No attachment</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              <div className="flex justify-end mt-3 gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300 focus:outline-none"
+                  onClick={() => setClientDocsModal(null)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={clientDocsLoading || !clientDocsModal}
+                  onClick={async () => {
+                    if (!clientDocsModal) return;
+                    try {
+                      const process = onboardingList.find(
+                        p => p.id === clientDocsModal.processId
+                      );
+                      if (!process) {
+                        setClientDocsModal(null);
+                        return;
+                      }
+                      const targetTask = process.tasks.find(t =>
+                        t.name.toLowerCase().includes('client onboarding')
+                      );
+                      if (!targetTask || targetTask.completed) {
+                        setClientDocsModal(null);
+                        return;
+                      }
+
+                      await onboardingService.updateTask(targetTask.id, true);
+
+                      const updatedTasks = process.tasks.map(t =>
+                        t.id === targetTask.id ? { ...t, completed: true } : t
+                      );
+                      const completedCount = updatedTasks.filter(t => t.completed).length;
+                      const progress = Math.round(
+                        (completedCount / updatedTasks.length) * 100
+                      );
+                      const nextIncomplete = updatedTasks.find(t => !t.completed);
+                      const currentStage = nextIncomplete ? nextIncomplete.name : 'Completed';
+                      const status = progress === 100 ? 'Completed' : 'In Progress';
+
+                      await onboardingService.updateWorkflow(process.id, {
+                        progress,
+                        currentStage,
+                        status
+                      });
+
+                      setOnboardingList(prev =>
+                        prev.map(p =>
+                          p.id === process.id
+                            ? {
+                                ...p,
+                                tasks: updatedTasks,
+                                progress,
+                                currentStage,
+                                status
+                              }
+                            : p
+                        )
+                      );
+
+                      setClientDocsModal(null);
+                    } catch (error) {
+                      console.error(
+                        'Failed to complete Client Onboarding Documents task:',
+                        error
+                      );
+                      alert('Failed to update task status. Please try again.');
+                    }
+                  }}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-300"
+                >
+                  Mark Task as Completed
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hardwareModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-[720px] shadow-lg rounded-md bg-white">
+            <div className="mt-1">
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                Hardware Onboarding
+              </h3>
+              <p className="text-sm text-gray-500 mb-3">
+                Review the hardware assigned to {hardwareModal.employeeName} for this onboarding and complete the task when everything is correct.
+              </p>
+              {hardwareLoading ? (
+                <p className="text-sm text-gray-500">Loading hardware onboarding details...</p>
+              ) : hardwareModal.assets.length === 0 ? (
+                <p className="text-sm text-gray-500">
+                  No hardware onboarding details have been provided yet for this employee.
+                </p>
+              ) : (
+                <>
+                  <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Employee
+                      </p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {hardwareModal.employeeName}
+                      </p>
+                    </div>
+                    {hardwareModal.clientName && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Client
+                        </p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {hardwareModal.clientName}
+                        </p>
+                        {hardwareModal.clientManagerEmail && (
+                          <p className="text-xs text-gray-500">
+                            Manager Email: {hardwareModal.clientManagerEmail}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Assets
+                      </p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {hardwareModal.assets.length} item
+                        {hardwareModal.assets.length === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto mb-4 border border-gray-100 rounded-md">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Asset ID</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Asset Tag</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Type</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Serial</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Model</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-100">
+                        {hardwareModal.assets.map((asset, index) => (
+                          <tr key={`${asset.assetId || asset.assetTag || index}`}>
+                            <td className="px-3 py-2 text-gray-900">{asset.assetId || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">{asset.assetTag || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">{asset.assetType || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">{asset.serialNumber || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">{asset.model || '-'}</td>
+                            <td className="px-3 py-2 text-gray-700">{asset.status || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              <div className="flex justify-end mt-3 gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300 focus:outline-none"
+                  onClick={() => setHardwareModal(null)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={hardwareLoading || !hardwareModal}
+                  onClick={async () => {
+                    if (!hardwareModal) return;
+                    try {
+                      const process = onboardingList.find(
+                        p => p.id === hardwareModal.processId
+                      );
+                      if (!process) {
+                        setHardwareModal(null);
+                        return;
+                      }
+                      const targetTask = process.tasks.find(t =>
+                        t.name.toLowerCase().includes('hardware')
+                      );
+                      if (!targetTask || targetTask.completed) {
+                        setHardwareModal(null);
+                        return;
+                      }
+
+                      await onboardingService.updateTask(targetTask.id, true);
+
+                      const updatedTasks = process.tasks.map(t =>
+                        t.id === targetTask.id ? { ...t, completed: true } : t
+                      );
+                      const completedCount = updatedTasks.filter(t => t.completed).length;
+                      const progress = Math.round(
+                        (completedCount / updatedTasks.length) * 100
+                      );
+                      const nextIncomplete = updatedTasks.find(t => !t.completed);
+                      const currentStage = nextIncomplete ? nextIncomplete.name : 'Completed';
+                      const status = progress === 100 ? 'Completed' : 'In Progress';
+
+                      await onboardingService.updateWorkflow(process.id, {
+                        progress,
+                        currentStage,
+                        status
+                      });
+
+                      setOnboardingList(prev =>
+                        prev.map(p =>
+                          p.id === process.id
+                            ? {
+                                ...p,
+                                tasks: updatedTasks,
+                                progress,
+                                currentStage,
+                                status
+                              }
+                            : p
+                        )
+                      );
+
+                      setHardwareModal(null);
+                    } catch (error) {
+                      console.error('Failed to complete hardware onboarding task:', error);
+                      alert('Failed to complete hardware onboarding task. Please try again.');
+                    }
+                  }}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-300"
+                >
+                  Mark Task as Completed
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mandatory Learning Modal */}
+      {mandatoryModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-[480px] shadow-lg rounded-md bg-white">
+            <div className="mt-1">
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                Mandatory Learning
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                {mandatoryLoading
+                  ? 'Loading mandatory courses...'
+                  : `Mandatory onboarding courses for ${mandatoryModal.employeeName}.`}
+              </p>
+              {!mandatoryLoading && (
+                <div className="max-h-64 overflow-y-auto mb-4">
+                  {mandatoryModal.courses.length === 0 ? (
+                    <p className="text-sm text-gray-500">
+                      No mandatory onboarding courses are configured yet.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {mandatoryModal.courses.map(course => {
+                        const isAssigned =
+                          course.status !== 'Not Assigned' &&
+                          course.status !== 'Completed';
+                        const displayLabel = isAssigned
+                          ? 'Mandatory Course Assigned'
+                          : course.status;
+
+                        return (
+                          <li
+                            key={course.id}
+                            className="flex items-center justify-between border border-gray-200 rounded-md px-3 py-2"
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">
+                                {course.title}
+                              </p>
+                              {course.dueDate && (
+                                <p className="text-xs text-gray-500">
+                                  Due: {new Date(course.dueDate).toLocaleDateString()}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                  course.status === 'Completed'
+                                    ? 'bg-green-100 text-green-800'
+                                    : isAssigned
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : course.status === 'Overdue'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}
+                              >
+                                {displayLabel}
+                              </span>
+                              {course.status === 'Not Assigned' && (
+                                <button
+                                  onClick={() => handleAssignMandatoryCourse(course.id)}
+                                  disabled={mandatoryLoading}
+                                  className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  Assign
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <div className="flex justify-end mt-2">
+                <button
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  onClick={() => setMandatoryModal(null)}
+                >
+                  Close
                 </button>
               </div>
             </div>
@@ -343,21 +1570,89 @@ export default function OnboardingPage() {
                   <div className="mt-4">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Pending Tasks</h4>
                     <div className="flex flex-wrap gap-2">
-                      {process.tasks.map((task) => (
-                        <button
-                          key={task.id} 
-                          onClick={() => !task.completed && handleTaskClick(process.id, task)}
-                          disabled={task.completed}
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                            task.completed 
-                              ? 'bg-green-100 text-green-800 cursor-default' 
+                      {process.tasks.map((task) => {
+                        const isMandatoryTask = task.name.toLowerCase().includes('mandatory learning');
+                        const isAssignedMandatory =
+                          isMandatoryTask &&
+                          !task.completed &&
+                          mandatoryAssignedEmployees[process.employeeId];
+                        const label = isAssignedMandatory ? 'Mandatory Course Assigned' : task.name;
+                        const isDocumentSubmissionTask = task.name.toLowerCase().includes('document submission');
+                        const documentStage =
+                          documentSubmissionStatus[process.id] ||
+                          (task.completed ? 'approved' : 'requested');
+                        const isClientOnboardingTask = task.name.toLowerCase().includes('client onboarding');
+                        const clientStage: ClientOnboardingStage =
+                          clientOnboardingStatus[process.id] ||
+                          (task.completed ? 'updated' : 'requested');
+                        const isHardwareTask = task.name.toLowerCase().includes('hardware');
+                        const hardwareStage: HardwareOnboardingStage =
+                          hardwareOnboardingStatus[process.id] ||
+                          (task.completed ? 'updated' : 'requested');
+                        const commonClasses =
+                          'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors';
+                        let pillClasses: string;
+                        let pillTitle: string | undefined;
+                        let pillLabel: string;
+
+                        if (isDocumentSubmissionTask) {
+                          pillClasses = `${commonClasses} ${getDocumentSubmissionClasses(documentStage, task.completed)}`;
+                          pillTitle = getDocumentSubmissionTitle(documentStage);
+                          pillLabel = `Document Submission${getDocumentSubmissionLabelSuffix(documentStage)}`;
+                        } else if (isClientOnboardingTask) {
+                          const clientClasses =
+                            task.completed
+                              ? 'bg-green-100 text-green-800 cursor-default'
+                              : clientStage === 'updated'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
+                              : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
+                          pillClasses = `${commonClasses} ${clientClasses}`;
+                          pillTitle =
+                            clientStage === 'updated'
+                              ? 'Employee has provided client details. Review and complete this task.'
+                              : 'Client details not provided yet.';
+                          const suffix = clientStage === 'updated' ? ' (Updated)' : ' (Requested)';
+                          pillLabel = `${task.name}${suffix}`;
+                        } else if (isHardwareTask) {
+                          const hardwareClasses =
+                            task.completed
+                              ? 'bg-green-100 text-green-800 cursor-default'
+                              : hardwareStage === 'updated'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
+                              : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
+                          pillClasses = `${commonClasses} ${hardwareClasses}`;
+                          pillTitle =
+                            hardwareStage === 'updated'
+                              ? 'Employee has provided hardware onboarding details. Review and complete this task.'
+                              : 'Hardware onboarding details not provided yet.';
+                          const suffix =
+                            hardwareStage === 'updated' ? ' (Updated)' : ' (Requested)';
+                          pillLabel = `${task.name}${suffix}`;
+                        } else {
+                          pillClasses = `${commonClasses} ${
+                            task.completed
+                              ? 'bg-green-100 text-green-800 cursor-default'
+                              : isAssignedMandatory
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200 hover:bg-blue-200 cursor-pointer'
                               : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer'
-                          }`}
-                        >
-                          {task.completed && <CheckCircleIcon className="w-3 h-3 mr-1" />}
-                          {task.name}
-                        </button>
-                      ))}
+                          }`;
+                          pillTitle = undefined;
+                          pillLabel = label;
+                        }
+
+                        return (
+                          <button
+                            key={task.id}
+                            onClick={() => !task.completed && handleTaskClick(process.id, task)}
+                            disabled={task.completed}
+                            className={pillClasses}
+                            title={pillTitle}
+                          >
+                            {task.completed && <CheckCircleIcon className="w-3 h-3 mr-1" />}
+                            {pillLabel}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

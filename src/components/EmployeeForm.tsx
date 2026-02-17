@@ -17,7 +17,7 @@ interface EmployeeFormProps {
 
 export default function EmployeeForm({ initialData, managers = [], onSubmit, title, backUrl }: EmployeeFormProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'family' | 'contact' | 'health' | 'directory' | 'others'>('quick');
+  const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'contact' | 'directory' | 'others'>('quick');
   const [password, setPassword] = useState('');
   
   // Hierarchy State
@@ -82,8 +82,9 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     nextReviewDate: '',
     paymentBank: '',
     paymentAccount: '',
+    paymentBsb: '',
     payCycle: 'Monthly',
-    paymentMethod: 'Cash',
+    paymentMethod: 'Bank',
     
     // Family
     maritalStatus: 'Single',
@@ -104,6 +105,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     officePhone: '',
     mobilePhone: '',
     homePhone: '',
+    emergencyContactName: '',
+    emergencyContactRelationship: '',
+    emergencyContactPhone: '',
+    emergencyContactAddress: '',
 
     // Health
     height: '',
@@ -137,6 +142,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
   };
 
   const [formData, setFormData] = useState(defaultFormData);
+  const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
   // Initialize form data from initialData if provided
   useEffect(() => {
@@ -181,8 +187,9 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         nextReviewDate: initialData.nextReviewDate || '',
         paymentBank: initialData.bankName || '',
         paymentAccount: initialData.bankAccount || '',
-        payCycle: initialData.payCycle || 'Monthly',
-        paymentMethod: initialData.paymentMethod || 'Cash',
+        paymentBsb: initialData.bankBsb || '',
+        payCycle: (initialData.payCycle as any) || 'Monthly',
+        paymentMethod: initialData.paymentMethod || 'Bank',
         
         // Family
         maritalStatus: initialData.maritalStatus || 'Single',
@@ -203,6 +210,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         officePhone: initialData.officePhone || '',
         mobilePhone: initialData.mobilePhone || '',
         homePhone: initialData.homePhone || '',
+        emergencyContactName: initialData.emergencyContactName || '',
+        emergencyContactRelationship: initialData.emergencyContactRelationship || '',
+        emergencyContactPhone: initialData.emergencyContactPhone || '',
+        emergencyContactAddress: initialData.emergencyContactAddress || '',
 
         // Health
         height: initialData.health?.height?.toString() || '',
@@ -262,11 +273,27 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
+    let nextValue: any = type === 'checkbox' ? checked : value;
+    
+    if (name === 'paymentBsb') {
+      const digitsOnly = (value || '').replace(/\D/g, '');
+      nextValue = digitsOnly.slice(0, 6);
+    } else if (name === 'paymentAccount') {
+      const digitsOnly = (value || '').replace(/\D/g, '');
+      nextValue = digitsOnly.slice(0, 10);
+    }
     
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: nextValue
     }));
+    if (errors[name]) {
+      setErrors(prev => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+    }
   };
 
   const handleDepartmentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -285,6 +312,20 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    const validationErrors: { [key: string]: string } = {};
+    const bsbRaw = formData.paymentBsb ? formData.paymentBsb.trim() : '';
+    const accountRaw = formData.paymentAccount ? formData.paymentAccount.trim() : '';
+    if (!/^\d{6}$/.test(bsbRaw)) {
+      validationErrors.paymentBsb = 'BSB must be exactly 6 digits';
+    }
+    if (!/^\d{6,10}$/.test(accountRaw)) {
+      validationErrors.paymentAccount = 'Account number must be 6 to 10 digits';
+    }
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
     
     // Map form data to Employee type
     const employeeData: Employee = {
@@ -325,10 +366,11 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       salaryEffectiveDate: formData.salaryEffectiveDate,
       currency: formData.currency,
       nextReviewDate: formData.nextReviewDate,
-      paymentMethod: formData.paymentMethod as 'Cash' | 'Bank',
+      paymentMethod: formData.paymentMethod as 'Bank',
       bankName: formData.paymentBank,
       bankAccount: formData.paymentAccount,
-      payCycle: formData.payCycle as 'Monthly' | 'Weekly' | 'Fortnightly',
+      bankBsb: formData.paymentBsb,
+      payCycle: formData.payCycle as 'Weekly' | 'Fortnightly' | 'Monthly' | 'Annually',
       
       maritalStatus: formData.maritalStatus as 'Single' | 'Married' | 'Divorced' | 'Widowed',
       spouse: formData.maritalStatus === 'Married' ? {
@@ -350,6 +392,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       officePhone: formData.officePhone,
       mobilePhone: formData.mobilePhone,
       homePhone: formData.homePhone,
+      emergencyContactName: formData.emergencyContactName,
+      emergencyContactRelationship: formData.emergencyContactRelationship,
+      emergencyContactPhone: formData.emergencyContactPhone,
+      emergencyContactAddress: formData.emergencyContactAddress,
 
       // Health
       health: {
@@ -413,21 +459,36 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     onSubmit(employeeData);
   };
 
-  const renderTextField = (name: string, label: string, required = false, type = 'text', placeholder = '') => (
-    <div className="relative">
-      <input
-        type={type}
-        name={name}
-        value={(formData as any)[name] ?? ''}
-        onChange={handleChange}
-        className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent"
-        placeholder={placeholder || label}
-      />
-      <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-    </div>
-  );
+  const renderTextField = (name: string, label: string, required = false, type = 'text', placeholder = '', maxLength?: number) => {
+    const error = errors[name];
+    const effectiveMaxLength =
+      typeof maxLength === 'number'
+        ? maxLength
+        : name === 'paymentBsb'
+        ? 6
+        : name === 'paymentAccount'
+        ? 10
+        : undefined;
+    return (
+      <div className="relative">
+        <input
+          type={type}
+          name={name}
+          value={(formData as any)[name] ?? ''}
+          onChange={handleChange}
+          maxLength={effectiveMaxLength}
+          className={`peer w-full border rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent ${error ? 'border-red-500' : 'border-gray-300'}`}
+          placeholder={placeholder || label}
+        />
+        <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+        {error && (
+          <p className="mt-1 text-xs text-red-600">{error}</p>
+        )}
+      </div>
+    );
+  };
 
   const renderSelectField = (name: string, label: string, options: string[], required = false) => (
     <div className="relative">
@@ -533,7 +594,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       {/* Tabs */}
       <div className="bg-white border-b border-gray-200 px-4 overflow-x-auto">
         <div className="flex space-x-6 text-sm">
-          {['quick', 'personal', 'job', 'salary', 'family', 'contact', 'health', 'directory', 'others'].map((tab) => (
+          {['quick', 'personal', 'job', 'salary', 'contact', 'directory', 'others'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab as any)}
@@ -655,36 +716,17 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderTextField('salaryEffectiveDate', 'Effective Date', false, 'date')}
                     {renderTextField('basicSalary', 'Basic Salary', false, 'number')}
                     {renderTextField('currency', 'Currency')}
-                    {renderTextField('nextReviewDate', 'Next Review', false, 'date')}
+                    {renderTextField('nextReviewDate', 'Performance Review', false, 'date')}
                  </div>
                  <div className="grid grid-cols-2 gap-4">
-                    {renderSelectField('paymentMethod', 'Payment Method', ['Cash', 'Bank'])}
-                    {renderSelectField('payCycle', 'Pay Cycle', ['Monthly', 'Weekly', 'Fortnightly'])}
+                    {renderSelectField('paymentMethod', 'Payment Method', ['Bank'])}
+                    {renderSelectField('payCycle', 'Pay Cycle', ['Weekly', 'Fortnightly', 'Monthly', 'Annually'])}
                  </div>
                  {formData.paymentMethod === 'Bank' && (
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-3 gap-4">
                         {renderTextField('paymentBank', 'Bank Name')}
+                        {renderTextField('paymentBsb', 'BSB Number')}
                         {renderTextField('paymentAccount', 'Account Number')}
-                    </div>
-                 )}
-            </div>
-          )}
-
-          {activeTab === 'family' && (
-            <div className="space-y-4 animate-fade-in bg-white p-4 rounded-md shadow-sm border border-gray-200">
-                 <h3 className="font-medium text-lg border-b pb-2 mb-4">Family Details</h3>
-                 <div className="grid grid-cols-2 gap-4">
-                    {renderSelectField('maritalStatus', 'Marital Status', ['Single', 'Married', 'Divorced', 'Widowed'])}
-                    {renderTextField('childrenCount', 'Children Count', false, 'number')}
-                 </div>
-                 {formData.maritalStatus === 'Married' && (
-                    <div className="mt-4 border-t pt-4">
-                        <h4 className="font-medium mb-3">Spouse Details</h4>
-                        <div className="grid grid-cols-2 gap-4 mb-4">
-                            {renderTextField('spouseFirstName', 'Spouse First Name')}
-                            {renderTextField('spouseLastName', 'Spouse Last Name')}
-                            {renderTextField('spouseBirthDate', 'Spouse Birth Date', false, 'date')}
-                        </div>
                     </div>
                  )}
             </div>
@@ -699,23 +741,13 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderTextField('mobilePhone', 'Mobile Phone', false, 'tel')}
                     {renderTextField('homePhone', 'Home Phone', false, 'tel')}
                  </div>
-            </div>
-          )}
 
-          {activeTab === 'health' && (
-            <div className="space-y-4 animate-fade-in bg-white p-4 rounded-md shadow-sm border border-gray-200">
-                 <h3 className="font-medium text-lg border-b pb-2 mb-4">Health Metrics</h3>
-                 <div className="grid grid-cols-3 gap-4">
-                    {renderTextField('height', 'Height (cm)', false, 'number')}
-                    {renderTextField('weight', 'Weight (kg)', false, 'number')}
-                    {renderTextField('bloodType', 'Blood Type')}
-                 </div>
-                 <h4 className="font-medium mt-4 mb-2">Senses & Limbs</h4>
+                 <h3 className="font-medium text-lg border-b pb-2 mt-6 mb-4">Emergency Contact</h3>
                  <div className="grid grid-cols-2 gap-4">
-                    {renderTextField('visionLeft', 'Vision (Left)')}
-                    {renderTextField('visionRight', 'Vision (Right)')}
-                    {renderTextField('hearingLeft', 'Hearing (Left)')}
-                    {renderTextField('hearingRight', 'Hearing (Right)')}
+                    {renderTextField('emergencyContactName', 'Contact Name', true)}
+                    {renderTextField('emergencyContactRelationship', 'Relationship', false)}
+                    {renderTextField('emergencyContactPhone', 'Contact Phone', true, 'tel')}
+                    {renderTextField('emergencyContactAddress', 'Contact Address', false)}
                  </div>
             </div>
           )}

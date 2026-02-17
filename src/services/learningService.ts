@@ -254,6 +254,78 @@ export const learningService = {
     );
   },
 
+  // Onboarding: Mandatory Courses
+  async getMandatoryOnboardingCourses(): Promise<LMSCourse[]> {
+    try {
+      const catalog = await learningService.getCatalog();
+      return catalog.filter(course => {
+        const title = course.title?.toLowerCase() || '';
+        const desc = course.description?.toLowerCase() || '';
+        return (
+          title.includes('induction') ||
+          desc.includes('[mandatory_onboarding]')
+        );
+      });
+    } catch (error) {
+      console.error('Error fetching mandatory onboarding courses:', error);
+      return [];
+    }
+  },
+
+  async hasCompletedMandatoryOnboarding(employeeId: string): Promise<boolean> {
+    try {
+      const mandatoryCourses = await learningService.getMandatoryOnboardingCourses();
+      if (!mandatoryCourses || mandatoryCourses.length === 0) {
+        return true;
+      }
+
+      const mandatoryIds = mandatoryCourses.map(c => c.id);
+
+      const { data, error } = await supabase
+        .from('course_enrollments')
+        .select('course_id, status')
+        .eq('employee_id', employeeId)
+        .in('course_id', mandatoryIds);
+
+      if (error) {
+        console.error('Error checking mandatory onboarding completion (course_enrollments):', JSON.stringify(error, null, 2));
+      }
+
+      const completedIds = new Set(
+        (data || [])
+          .filter((row: any) => row.status === 'Completed')
+          .map((row: any) => row.course_id)
+      );
+
+      try {
+        const { data: trData, error: trError } = await supabase
+          .from('training_records')
+          .select('course_id, result')
+          .eq('employee_id', employeeId)
+          .in('course_id', mandatoryIds);
+
+        if (trError) {
+          console.error('Error checking mandatory onboarding completion (training_records):', JSON.stringify(trError, null, 2));
+        } else if (trData) {
+          trData
+            .filter((row: any) => row.result && row.result !== '-' && row.result.trim() !== '')
+            .forEach((row: any) => {
+              if (row.course_id) {
+                completedIds.add(row.course_id);
+              }
+            });
+        }
+      } catch (innerError) {
+        console.error('Unexpected error while checking training_records for mandatory onboarding:', innerError);
+      }
+
+      return mandatoryIds.every(id => completedIds.has(id));
+    } catch (error) {
+      console.error('Error in hasCompletedMandatoryOnboarding:', error);
+      return false;
+    }
+  },
+
   // HR: Assign Course
   async assignCourse(enrollment: {
     courseId: string;
@@ -277,7 +349,48 @@ export const learningService = {
       .from('course_enrollments')
       .insert(enrollments);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error inserting into course_enrollments, falling back to training_records:', JSON.stringify(error, null, 2));
+
+      try {
+        const { data: courseData, error: courseError } = await supabase
+          .from('courses')
+          .select('name')
+          .eq('id', enrollment.courseId)
+          .single();
+
+        if (courseError) {
+          console.error('Error fetching course for fallback training_records:', JSON.stringify(courseError, null, 2));
+        }
+
+        const courseName = courseData?.name || 'Mandatory Course';
+        const today = new Date().toISOString().split('T')[0];
+
+        const trainingRows = enrollment.employeeIds.map(empId => ({
+          employee_id: empId,
+          date: today,
+          course: courseName,
+          course_id: enrollment.courseId,
+          trainer: 'System',
+          trainer_id: null,
+          result: '',
+          attachment: [],
+          remark: enrollment.instructions || 'Onboarding mandatory course'
+        }));
+
+        const { error: trError } = await supabase
+          .from('training_records')
+          .insert(trainingRows);
+
+        if (trError) {
+          console.error('Fallback insert into training_records failed:', JSON.stringify(trError, null, 2));
+          throw error;
+        }
+      } catch (fallbackError) {
+        console.error('Unexpected error during training_records fallback:', fallbackError);
+        throw error;
+      }
+    }
     
     // Send Notifications
     try {
@@ -662,5 +775,3 @@ export const learningService = {
         }
   }
 };
-
-

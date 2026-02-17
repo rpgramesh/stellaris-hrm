@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
 import { expensesService } from '@/services/expensesService';
 import { attendanceService } from '@/services/attendanceService';
 import { payrollService } from '@/services/payrollService';
 import { holidayService } from '@/services/holidayService';
+import { learningService } from '@/services/learningService';
+import { CourseEnrollment } from '@/types';
 import { calculateWorkingDays } from '@/utils/workDayCalculations';
 
 export default function DashboardPage() {
@@ -27,6 +28,8 @@ export default function DashboardPage() {
   const [leaveData, setLeaveData] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mandatoryLearning, setMandatoryLearning] = useState<CourseEnrollment[]>([]);
+  const [mandatoryError, setMandatoryError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -43,14 +46,16 @@ export default function DashboardPage() {
           expensesRes,
           attendanceRes,
           payslipsRes,
-          holidaysRes
+          holidaysRes,
+          learningRes
         ] = await Promise.allSettled([
           employeeService.getAll(),
           leaveService.getAll(),
           expensesService.getExpenses(),
           attendanceService.getAll(), // We might want to limit this to current week
           payrollService.getAllPayslips(),
-          holidayService.getByYear(currentYear)
+          holidayService.getByYear(currentYear),
+          learningService.getAllAssignments()
         ]);
 
         // Process Employees
@@ -79,14 +84,14 @@ export default function DashboardPage() {
         if (leavesRes.status === 'fulfilled') {
           const leaves = leavesRes.value;
           
-          // On Leave Today (Approved and covers today)
-          const activeLeaves = leaves.filter(l => 
-            l.status === 'Approved' && 
-            l.startDate <= todayStr && 
-            l.endDate >= todayStr
-          );
-          onLeaveToday = activeLeaves.length;
-          onLeaveTodayList = activeLeaves.slice(0, 5).map(l => ({
+          const upcomingLeaves = leaves
+            .filter(l => 
+              l.status === 'Approved' && 
+              l.startDate >= todayStr
+            )
+            .sort((a, b) => a.startDate.localeCompare(b.startDate));
+          onLeaveToday = upcomingLeaves.length;
+          onLeaveTodayList = upcomingLeaves.slice(0, 5).map(l => ({
             ...l,
             employeeName: employeeMap.get(l.employeeId) || 'Unknown'
           }));
@@ -167,19 +172,39 @@ export default function DashboardPage() {
           upcomingPayrollDate: upcomingPayrollDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         });
 
-        // Set Leave Data for Chart
-        const leaveChartData = Object.entries(leaveDistribution).map(([name, value]) => ({ name, value }));
-        // If empty, show some placeholders or empty state
-        if (leaveChartData.length === 0) {
-            setLeaveData([
-                { name: 'Annual', value: 0 },
-                { name: 'Sick', value: 0 },
-                { name: 'Unpaid', value: 0 },
-                { name: 'Maternity', value: 0 },
-            ]);
+        // Process Mandatory Learning (non-completed assignments only)
+        let mandatoryItems: CourseEnrollment[] = [];
+        if (learningRes.status === 'fulfilled') {
+          const allAssignments = (learningRes.value || []) as CourseEnrollment[];
+          mandatoryItems = allAssignments.filter(a => a.status !== 'Completed');
+
+          // Validate due dates; skip items with invalid due dates
+          mandatoryItems = mandatoryItems.filter(a => {
+            if (!a.dueDate) return true;
+            const parsed = new Date(a.dueDate);
+            const isValid = !isNaN(parsed.getTime());
+            if (!isValid) {
+              console.warn('Skipping mandatory learning item with invalid due date', a);
+            }
+            return isValid;
+          });
+
+          // Sort by due date (earliest first), then by enrolled date
+          mandatoryItems.sort((a, b) => {
+            const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Number.POSITIVE_INFINITY;
+            const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Number.POSITIVE_INFINITY;
+            if (aDate === bDate) {
+              return new Date(a.enrolledDate).getTime() - new Date(b.enrolledDate).getTime();
+            }
+            return aDate - bDate;
+          });
+
+          setMandatoryError(null);
         } else {
-            setLeaveData(leaveChartData);
+          console.error('Error fetching mandatory learning:', learningRes.reason);
+          setMandatoryError('Unable to load mandatory learning at this time.');
         }
+        setMandatoryLearning(mandatoryItems);
 
         // Process Recent Activity (Combine sources)
         const activities: any[] = [];
@@ -235,8 +260,6 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
-
   if (loading) {
       return <div className="p-6">Loading dashboard data...</div>;
   }
@@ -270,14 +293,27 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* On Leave Today */}
+        {/* Upcoming Approved Leave */}
         <Link href="/leave/schedule" className="block group relative">
           <div className="bg-white p-6 rounded-lg shadow border-l-4 border-yellow-500 transition-transform transform group-hover:-translate-y-1 h-full">
-            <h3 className="text-gray-500 text-sm font-medium">On Leave Today</h3>
-            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.onLeaveToday}</p>
+            <h3 className="text-gray-500 text-sm font-medium">Upcoming Approved Leave</h3>
+            <p
+              className="text-2xl font-bold text-gray-900 mt-2"
+              title={
+                stats.onLeaveTodayList.length > 0
+                  ? `${stats.onLeaveTodayList[0].employeeName} (${new Date(stats.onLeaveTodayList[0].startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(stats.onLeaveTodayList[0].endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+                  : 'No upcoming approved leave'
+              }
+            >
+              {stats.onLeaveToday}
+            </p>
             <div className="flex -space-x-2 mt-2">
               {stats.onLeaveTodayList.slice(0, 3).map((l, i) => (
-                <div key={i} className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-gray-600" title={l.employeeName}>
+                <div
+                  key={i}
+                  className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[10px] font-bold text-gray-600"
+                  title={`${l.employeeName} (${new Date(l.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(l.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`}
+                >
                   {l.employeeName.charAt(0)}
                 </div>
               ))}
@@ -292,12 +328,16 @@ export default function DashboardPage() {
               {stats.onLeaveTodayList.length > 0 ? (
                 <ul className="space-y-1">
                   {stats.onLeaveTodayList.map((l, i) => (
-                    <li key={i} className="truncate">• {l.employeeName}</li>
+                    <li key={i} className="truncate">
+                      • {l.employeeName} (
+                      {new Date(l.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} -{' '}
+                      {new Date(l.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                    </li>
                   ))}
                   {stats.onLeaveToday > 5 && <li>...and {stats.onLeaveToday - 5} more</li>}
                 </ul>
               ) : (
-                <p className="text-gray-400">No one is on leave today.</p>
+                <p className="text-gray-400">No upcoming approved leave.</p>
               )}
             </div>
           </div>
@@ -342,56 +382,92 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Weekly Attendance</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={attendanceData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="present" fill="#4ade80" name="Present" />
-                <Bar dataKey="late" fill="#facc15" name="Late" />
-                <Bar dataKey="absent" fill="#f87171" name="Absent" />
-              </BarChart>
-            </ResponsiveContainer>
+      {/* Mandatory Learning Section */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Mandatory Learning</h3>
+            <p className="text-xs text-gray-500">
+              Only non-completed assignments are shown here.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">
+              {mandatoryLearning.length} item{mandatoryLearning.length === 1 ? '' : 's'}
+            </span>
+            <Link
+              href="/talent/learning?tab=management"
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+            >
+              Open in Learning
+            </Link>
           </div>
         </div>
+        {mandatoryError && (
+          <p className="text-sm text-red-600 mb-3">{mandatoryError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Employee Name
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Due Date
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {mandatoryLearning.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="px-6 py-4 text-sm text-gray-500 text-center"
+                  >
+                    No pending mandatory learning.
+                  </td>
+                </tr>
+              ) : (
+                mandatoryLearning.map((item) => {
+                  const displayStatus =
+                    item.status === 'In Progress' ? 'In Progress' : 'Req Sent';
+                  const dueDateText = item.dueDate
+                    ? new Date(item.dueDate).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })
+                    : '-';
 
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Leave Distribution (YTD)</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={leaveData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {leaveData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex justify-center gap-4 mt-2">
-              {leaveData.map((entry, index) => (
-                <div key={index} className="flex items-center text-xs">
-                  <div className="w-3 h-3 rounded-full mr-1" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                  {entry.name}
-                </div>
-              ))}
-            </div>
-          </div>
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.employeeName || 'Unknown'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {dueDateText}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span
+                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            displayStatus === 'In Progress'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {displayStatus}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -439,7 +515,7 @@ export default function DashboardPage() {
             </a>
             <a href="/attendance" className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
               <span className="text-2xl mb-2">⏱️</span>
-              <span className="text-sm font-medium text-gray-700">Clock In/Out</span>
+              <span className="text-sm font-medium text-gray-700">Timesheets</span>
             </a>
             <a href="/leave" className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
               <span className="text-2xl mb-2">📅</span>

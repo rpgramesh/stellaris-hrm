@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { learningService } from '@/services/learningService';
 import { employeeService } from '@/services/employeeService';
-import { LMSCourse, CourseEnrollment, Employee } from '@/types';
+import { onboardingService } from '@/services/onboardingService';
+import { LMSCourse, CourseEnrollment, Employee, OnboardingProcess } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { 
@@ -31,6 +32,7 @@ export default function LearningPage() {
   const [allAssignments, setAllAssignments] = useState<CourseEnrollment[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [onboardingProcesses, setOnboardingProcesses] = useState<OnboardingProcess[]>([]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,6 +76,7 @@ export default function LearningPage() {
     } else if (activeTab === 'management' && isHR()) {
       fetchAllAssignments();
       fetchEmployees();
+      fetchOnboarding();
     } else if (activeTab === 'analytics' && isHR()) {
       fetchAnalytics();
     }
@@ -120,6 +123,15 @@ export default function LearningPage() {
     setEmployees(data);
   };
 
+  const fetchOnboarding = async () => {
+    try {
+      const data = await onboardingService.getAll();
+      setOnboardingProcesses(data);
+    } catch (error) {
+      console.error('Error fetching onboarding workflows for learning management:', error);
+    }
+  };
+
   const fetchAnalytics = async () => {
     const data = await learningService.getAnalytics();
     setAnalytics(data);
@@ -149,9 +161,11 @@ export default function LearningPage() {
 
   const handleMarkComplete = async (enrollmentId: string) => {
     if (!confirm('Are you sure you want to mark this course as completed?')) return;
+    if (!currentUser) return;
     try {
       await learningService.completeCourse(enrollmentId);
-      fetchMyEnrollments(); // Refresh list
+      await onboardingService.syncMandatoryLearningTask(currentUser.id);
+      fetchMyEnrollments();
     } catch (error) {
       console.error('Error completing course:', error);
       alert('Failed to update status.');
@@ -171,6 +185,15 @@ export default function LearningPage() {
   const isHR = () => currentUser?.role === 'HR Admin' || currentUser?.role === 'Manager'; // Adjust based on specific role requirements
 
   const router = useRouter(); // Ensure useRouter is imported from next/navigation
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab === 'management' && isHR()) {
+      setActiveTab('management');
+    }
+  }, [currentUser]);
 
   if (loading && !currentUser) {
     return <div className="p-8 text-center">Loading...</div>;
@@ -464,9 +487,17 @@ export default function LearningPage() {
                     setAssignForm({ ...assignForm, employeeIds: options });
                   }}
                 >
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.firstName} {emp.lastName}</option>
-                  ))}
+                  {employees.map(emp => {
+                    const isOnboarding = onboardingProcesses.some(
+                      p => p.employeeId === emp.id && p.status === 'In Progress'
+                    );
+                    return (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.firstName} {emp.lastName}
+                        {isOnboarding ? ' (Onboarding)' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
               </div>

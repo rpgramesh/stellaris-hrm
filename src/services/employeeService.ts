@@ -25,11 +25,12 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     salary: parseFloat(dbRecord.salary) || 0,
     salaryEffectiveDate: dbRecord.salary_effective_date || dbRecord.start_date, 
     superRate: 11.5,
-    payCycle: dbRecord.pay_cycle || 'Monthly',
+    payCycle: (dbRecord.pay_cycle as any) || 'Monthly',
     paymentMethod: dbRecord.payment_method || 'Bank',
     currency: dbRecord.currency || 'AUD',
     bankName: dbRecord.bank_name || '',
     bankAccount: dbRecord.bank_account_number || '',
+    bankBsb: dbRecord.bank_bsb || '',
     avatarUrl: dbRecord.avatar_url,
     address: dbRecord.address || '',
     // Map other fields as best as possible or leave as defaults
@@ -63,6 +64,10 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     officePhone: dbRecord.office_phone || '',
     mobilePhone: dbRecord.mobile_phone || '',
     homePhone: dbRecord.home_phone || '',
+    emergencyContactName: dbRecord.emergency_contact_name || '',
+    emergencyContactRelationship: dbRecord.emergency_contact_relationship || '',
+    emergencyContactPhone: dbRecord.emergency_contact_phone || '',
+    emergencyContactAddress: dbRecord.emergency_contact_address || '',
     remark: dbRecord.remark || '',
     systemAccessRole: dbRecord.system_access_role || 'Employee',
     privacySettings: dbRecord.privacy_settings || {},
@@ -210,6 +215,7 @@ export const employeeService = {
         next_review_date: employee.nextReviewDate || null,
         bank_name: employee.bankName,
         bank_account_number: employee.bankAccount,
+        bank_bsb: employee.bankBsb,
         role: employee.role,
         avatar_url: employee.avatarUrl,
         
@@ -232,6 +238,10 @@ export const employeeService = {
         office_phone: employee.officePhone,
         mobile_phone: employee.mobilePhone,
         home_phone: employee.homePhone,
+        emergency_contact_name: employee.emergencyContactName,
+        emergency_contact_relationship: employee.emergencyContactRelationship,
+        emergency_contact_phone: employee.emergencyContactPhone,
+        emergency_contact_address: employee.emergencyContactAddress,
         
         // Others
         middle_name: employee.middleName,
@@ -297,6 +307,7 @@ export const employeeService = {
       if (updates.nextReviewDate !== undefined) dbPayload.next_review_date = updates.nextReviewDate || null;
       if (updates.bankName) dbPayload.bank_name = updates.bankName;
       if (updates.bankAccount) dbPayload.bank_account_number = updates.bankAccount;
+      if (updates.bankBsb !== undefined) dbPayload.bank_bsb = updates.bankBsb;
       if (updates.role) dbPayload.role = updates.role;
       if (updates.avatarUrl) dbPayload.avatar_url = updates.avatarUrl;
       if (updates.userId) dbPayload.user_id = updates.userId;
@@ -322,6 +333,10 @@ export const employeeService = {
        if (updates.officePhone) dbPayload.office_phone = updates.officePhone;
        if (updates.mobilePhone) dbPayload.mobile_phone = updates.mobilePhone;
        if (updates.homePhone) dbPayload.home_phone = updates.homePhone;
+       if (updates.emergencyContactName !== undefined) dbPayload.emergency_contact_name = updates.emergencyContactName;
+       if (updates.emergencyContactRelationship !== undefined) dbPayload.emergency_contact_relationship = updates.emergencyContactRelationship;
+       if (updates.emergencyContactPhone !== undefined) dbPayload.emergency_contact_phone = updates.emergencyContactPhone;
+       if (updates.emergencyContactAddress !== undefined) dbPayload.emergency_contact_address = updates.emergencyContactAddress;
        
        // Others
        if (updates.middleName) dbPayload.middle_name = updates.middleName;

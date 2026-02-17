@@ -8,6 +8,7 @@ import { leaveService } from '@/services/leaveService';
 import { payrollService } from '@/services/payrollService';
 import { attendanceService } from '@/services/attendanceService';
 import { holidayService } from '@/services/holidayService';
+import { notificationService, type Notification } from '@/services/notificationService';
 import { calculateWorkingDays } from '@/utils/workDayCalculations';
 import { Employee, LeaveRequest, Payslip, AttendanceRecord } from '@/types';
 
@@ -19,7 +20,8 @@ export default function ESSDashboardPage() {
   const [isPayDateConfirmed, setIsPayDateConfirmed] = useState<boolean>(false);
   const [nextShift, setNextShift] = useState<string>('No shift scheduled');
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [unreadMessages, setUnreadMessages] = useState(0); // Placeholder
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  const [idCheckNotification, setIdCheckNotification] = useState<Notification | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -52,13 +54,14 @@ export default function ESSDashboardPage() {
 
         // 2. Fetch related data
         const currentYear = new Date().getFullYear();
-        const [leaves, payslips, attendance, entitlements, thisYearHolidays, nextYearHolidays] = await Promise.all([
+        const [leaves, payslips, attendance, entitlements, thisYearHolidays, nextYearHolidays, notifications] = await Promise.all([
           leaveService.getByEmployeeId(currentEmployee.id!),
           payrollService.getPayslipsByEmployee(currentEmployee.id!),
           attendanceService.getAll(undefined, undefined, currentEmployee.id!),
           leaveService.getEntitlements(currentEmployee.id!, currentYear),
           holidayService.getByYear(currentYear),
-          holidayService.getByYear(currentYear + 1)
+          holidayService.getByYear(currentYear + 1),
+          notificationService.getMyNotifications()
         ]);
 
         const allHolidays = [...thisYearHolidays, ...nextYearHolidays].map(h => new Date(h.date));
@@ -142,6 +145,15 @@ export default function ESSDashboardPage() {
         activities.sort((a, b) => b.timestamp - a.timestamp);
         setRecentActivity(activities.slice(0, 5));
 
+        const unread = notifications.filter((n: Notification) => !n.isRead);
+        setUnreadMessages(unread.length);
+        const idCheck = unread.find(
+          (n: Notification) =>
+            n.title === 'Complete 100-Point ID Check' ||
+            n.title === 'Update 100-Point ID Documents'
+        );
+        setIdCheckNotification(idCheck || null);
+
       } catch (error) {
         console.error("Error fetching ESS data:", error);
       } finally {
@@ -171,6 +183,34 @@ export default function ESSDashboardPage() {
           {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
         </div>
       </div>
+
+      {idCheckNotification && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 4h.01M9.26 5.5l-5.2 9A1 1 0 004.92 16h14.16a1 1 0 00.86-1.5l-5.2-9a1 1 0 00-1.72 0z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-900">
+                {idCheckNotification.title}
+              </p>
+              <p className="text-xs text-amber-800 mt-1">
+                {idCheckNotification.message}
+              </p>
+            </div>
+          </div>
+          <div className="flex-shrink-0">
+            <Link
+              href="/self-service/id-check"
+              className="inline-flex items-center justify-center rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+            >
+              Complete 100-Point ID Check
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -254,6 +294,30 @@ export default function ESSDashboardPage() {
             </div>
             <h3 className="font-bold text-gray-900 mb-1">Bank Details</h3>
             <p className="text-sm text-gray-500">Update your payment information.</p>
+          </div>
+        </Link>
+
+        <Link href="/self-service/client-onboarding" className="block group">
+          <div className="bg-white p-6 rounded-xl border border-gray-200 hover:border-indigo-400 hover:shadow-md transition-all h-full">
+            <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600 mb-4 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+            <h3 className="font-bold text-gray-900 mb-1">Client Onboarding</h3>
+            <p className="text-sm text-gray-500">Enter client name, manager email and documents.</p>
+          </div>
+        </Link>
+
+        <Link href="/self-service/hardware-onboarding" className="block group">
+          <div className="bg-white p-6 rounded-xl border border-gray-200 hover:border-amber-400 hover:shadow-md transition-all h-full">
+            <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center text-amber-600 mb-4 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 7h12M6 12h12M6 17h12" />
+              </svg>
+            </div>
+            <h3 className="font-bold text-gray-900 mb-1">Hardware Onboarding</h3>
+            <p className="text-sm text-gray-500">List laptops, phones and other hardware for your client work.</p>
           </div>
         </Link>
 

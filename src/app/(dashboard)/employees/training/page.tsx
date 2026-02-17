@@ -23,6 +23,17 @@ export default function TrainingPage() {
   // New Item State
   const [addingItemType, setAddingItemType] = useState<'course' | 'trainer' | null>(null);
   const [newItemName, setNewItemName] = useState('');
+  const [newItemMandatory, setNewItemMandatory] = useState(false);
+
+  const isCourseMandatory = (course?: Course) => {
+    if (!course) return false;
+    const name = course.name?.toLowerCase() || '';
+    const desc = course.description?.toLowerCase() || '';
+    return (
+      name.includes('induction') ||
+      desc.includes('[mandatory_onboarding]')
+    );
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -81,6 +92,7 @@ export default function TrainingPage() {
   const handleAddItem = (type: 'course' | 'trainer') => {
     setAddingItemType(type);
     setNewItemName('');
+    setNewItemMandatory(false);
   };
 
   const removeSelectedFile = (index: number) => {
@@ -98,7 +110,11 @@ export default function TrainingPage() {
     if (!newItemName.trim() || !addingItemType) return;
     try {
       if (addingItemType === 'course') {
-        const newCourse = await courseService.create({ name: newItemName });
+        const description = newItemMandatory ? '[MANDATORY_ONBOARDING]' : '';
+        const newCourse = await courseService.create({
+          name: newItemName,
+          description
+        });
         setCourses(prev => [...prev, newCourse]);
         setFormData(prev => ({ ...prev, course: newCourse.name, courseId: newCourse.id }));
       } else {
@@ -107,6 +123,7 @@ export default function TrainingPage() {
         setFormData(prev => ({ ...prev, trainer: newTrainer.name, trainerId: newTrainer.id }));
       }
       setAddingItemType(null);
+      setNewItemMandatory(false);
     } catch (error) {
       console.error(`Error adding ${addingItemType}:`, error);
       alert(`Failed to add ${addingItemType}`);
@@ -261,10 +278,12 @@ export default function TrainingPage() {
                       });
                     }}
                   >
-                    <option value="">Select Course</option>
-                    {courses.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                  <option value="">Select Course</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{isCourseMandatory(c) ? ' (Mandatory)' : ''}
+                    </option>
+                  ))}
                   </select>
                   {!isViewing && (
                     <button
@@ -455,6 +474,19 @@ export default function TrainingPage() {
               onChange={(e) => setNewItemName(e.target.value)}
               autoFocus
             />
+            {addingItemType === 'course' && (
+              <label className="flex items-center gap-2 mb-3">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300"
+                  checked={newItemMandatory}
+                  onChange={(e) => setNewItemMandatory(e.target.checked)}
+                />
+                <span className="text-sm text-gray-700">
+                  Mark as mandatory for onboarding
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setAddingItemType(null)}
@@ -487,11 +519,21 @@ export default function TrainingPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {trainings.map((training) => (
+            {trainings.map((training) => {
+              const courseMeta = courses.find(c => c.id === training.courseId);
+              const isMandatory = isCourseMandatory(courseMeta);
+              return (
               <tr key={training.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{training.employeeName}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{training.date}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{training.course}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {training.course}
+                  {isMandatory && (
+                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                      Mandatory
+                    </span>
+                  )}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{training.trainer}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{training.result || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -527,7 +569,7 @@ export default function TrainingPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>

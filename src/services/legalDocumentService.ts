@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { LegalDocument } from '@/types';
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const legalDocumentService = {
   async getAll(): Promise<LegalDocument[]> {
     const { data, error } = await supabase
@@ -60,8 +62,8 @@ export const legalDocumentService = {
         employee_id: document.employeeId,
         document_type: document.documentType,
         document_number: document.documentNumber,
-        issue_date: document.issueDate,
-        expiry_date: document.expiryDate,
+        issue_date: document.issueDate || null,
+        expiry_date: document.expiryDate || null,
         issuing_authority: document.issuingAuthority,
         attachment: document.attachment,
         remark: document.remark
@@ -134,26 +136,33 @@ export const legalDocumentService = {
   },
 
   async uploadAttachments(files: File[]): Promise<string[]> {
-    const uploadPromises = files.map(async (file) => {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
-      const filePath = `legal-documents/${fileName}`;
+    const uploadWithRetry = async (file: File, attempts = 3): Promise<string> => {
+      let lastError: any;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+        const filePath = `legal-documents/${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file);
+        const { error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(filePath, file);
 
-      if (uploadError) {
-        throw uploadError;
+        if (!uploadError) {
+          const { data } = supabase.storage
+            .from('documents')
+            .getPublicUrl(filePath);
+          return data.publicUrl;
+        }
+
+        lastError = uploadError;
+        if (attempt < attempts) {
+          await delay(300 * attempt);
+        }
       }
+      throw lastError;
+    };
 
-      const { data } = supabase.storage
-        .from('documents')
-        .getPublicUrl(filePath);
-
-      return data.publicUrl;
-    });
-
+    const uploadPromises = files.map(file => uploadWithRetry(file));
     return Promise.all(uploadPromises);
   }
 };

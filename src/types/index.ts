@@ -42,6 +42,10 @@ export interface Employee {
   mobilePhone?: string;
   homePhone?: string;
   address?: string;
+  emergencyContactName?: string;
+  emergencyContactRelationship?: string;
+  emergencyContactPhone?: string;
+  emergencyContactAddress?: string;
 
   gender: 'Male' | 'Female' | 'Other';
   birthDate: string;
@@ -79,10 +83,11 @@ export interface Employee {
   salaryEffectiveDate?: string;
   currency?: string;
   nextReviewDate?: string;
-  paymentMethod?: 'Cash' | 'Bank';
+  paymentMethod?: 'Bank';
   bankName?: string;
   bankAccount?: string;
-  payCycle?: 'Monthly' | 'Weekly' | 'Fortnightly';
+  bankBsb?: string;
+  payCycle?: 'Weekly' | 'Fortnightly' | 'Monthly' | 'Annually';
   superRate?: number; // Percentage (e.g., 11.5)
   
   // Family
@@ -259,6 +264,7 @@ export interface Course {
   id: string;
   name: string;
   description?: string;
+  type?: CourseType;
 }
 
 export interface DocumentCategory {
@@ -1016,5 +1022,3 @@ export interface CourseAssignment {
   instructions?: string;
   priority: 'Low' | 'Medium' | 'High';
 }
-
-
