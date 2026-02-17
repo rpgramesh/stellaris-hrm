@@ -100,19 +100,27 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4 font-sans relative">
-      {/* Logo Top-Left */}
-      <div className="absolute top-8 left-8">
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 font-sans relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950" />
+      <div className="pointer-events-none absolute -top-40 -right-32 w-80 h-80 bg-blue-500/25 rounded-full blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -left-32 w-80 h-80 bg-cyan-500/20 rounded-full blur-3xl" />
+
+      <div className="absolute top-8 left-8 z-10">
         <Link href="/">
-          <img 
-            src="/logo.png" 
-            alt="Stellaris Logo" 
-            className="h-12 w-auto object-contain" 
-          />
+          <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md border border-white/20 rounded-full px-4 py-2 shadow-lg">
+            <img 
+              src="/logo.png" 
+              alt="Stellaris Logo" 
+              className="h-10 w-auto object-contain drop-shadow" 
+            />
+            <span className="text-sm font-semibold tracking-wide text-white/90">
+              Stellaris HRM
+            </span>
+          </div>
         </Link>
       </div>
 
-      <div className="w-full max-w-md bg-white shadow-xl rounded-sm overflow-hidden">
+      <div className="relative w-full max-w-md bg-white shadow-2xl rounded-2xl overflow-hidden z-10">
         {/* Tabs */}
         <div className="flex text-sm font-bold uppercase tracking-wide">
           <button

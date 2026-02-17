@@ -288,20 +288,28 @@ export default function Sidebar() {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className={`p-6 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
+      <div className={`p-4 border-b border-gray-200 bg-white flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <Link href="/dashboard" className="flex items-center overflow-hidden">
-            <img 
-                src="/logo.png" 
-                alt="Stellaris HRM" 
-                className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
+          <img 
+            src="/logo.png" 
+            alt="Stellaris HRM" 
+            className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
+          />
+          <div
+            className={`flex items-center justify-center rounded-full border border-gray-200 bg-white transition-opacity duration-300 ${isExpanded ? 'opacity-0 absolute' : 'opacity-100 block'}`}
+          >
+            <img
+              src="/logo-icon.png"
+              alt="Stellaris HRM"
+              className="h-8 w-8 object-contain"
             />
-            <span className={`text-2xl font-bold text-blue-400 ${isExpanded ? 'hidden' : 'block'}`}>S</span>
+          </div>
         </Link>
         
         {isExpanded && (
             <button 
                 onClick={() => setIsLocked(!isLocked)}
-                className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-gray-800 ml-2"
+                className="text-gray-400 hover:text-gray-700 transition-colors p-1 rounded-md hover:bg-gray-100 ml-2"
                 title={isLocked ? "Unlock Sidebar" : "Lock Sidebar"}
             >
                 {isLocked ? (
