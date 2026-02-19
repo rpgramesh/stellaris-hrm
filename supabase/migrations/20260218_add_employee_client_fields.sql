@@ -1,0 +1,4 @@
+ALTER TABLE employees
+ADD COLUMN IF NOT EXISTS client_name TEXT,
+ADD COLUMN IF NOT EXISTS client_email TEXT;
+

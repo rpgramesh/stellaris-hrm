@@ -303,7 +303,7 @@ export default function DocumentsPage() {
                     required
                     disabled={isViewing}
                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 disabled:bg-gray-100"
-                    value={formData.issueDate}
+                    value={formData.issueDate || ''}
                     onChange={(e) => setFormData({...formData, issueDate: e.target.value})}
                   />
                 </div>
@@ -314,7 +314,7 @@ export default function DocumentsPage() {
                     required
                     disabled={isViewing}
                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 disabled:bg-gray-100"
-                    value={formData.expiryDate}
+                    value={formData.expiryDate || ''}
                     onChange={(e) => setFormData({...formData, expiryDate: e.target.value})}
                   />
                 </div>

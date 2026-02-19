@@ -483,30 +483,48 @@ export const recruitmentService = {
     if (updates.notes) dbUpdates.notes = updates.notes;
     // Add other fields as needed
 
-    const { data, error } = await supabase
-      .from('applicants')
-      .update(dbUpdates)
-      .eq('id', id)
-      .select(`
-        *,
-        jobs (title),
-        referrer:employees!applicants_referrer_id_fkey (first_name, last_name),
-        interviews (
+    try {
+      const { data, error } = await supabase
+        .from('applicants')
+        .update(dbUpdates)
+        .eq('id', id)
+        .select(`
           *,
-          interviewer:employees!interviews_interviewer_id_fkey (first_name, last_name)
-        ),
-        assessments (*),
-        job_offers (
+          jobs (title),
+          referrer:employees!applicants_referrer_id_fkey (first_name, last_name),
+          interviews (
             *,
-            jobs (title),
-            applicants (first_name, last_name),
-            creator:employees!job_offers_created_by_fkey (first_name, last_name)
-        )
-      `)
-      .single();
+            interviewer:employees!interviews_interviewer_id_fkey (first_name, last_name)
+          ),
+          assessments (*),
+          job_offers (
+              *,
+              jobs (title),
+              applicants (first_name, last_name),
+              creator:employees!job_offers_created_by_fkey (first_name, last_name)
+          )
+        `)
+        .single();
 
-    if (error) throw error;
-    return mapApplicantFromDb(data);
+      if (error) throw error;
+      return mapApplicantFromDb(data);
+    } catch (error) {
+      console.warn('Detailed updateApplicant failed, falling back to basic query:', error);
+
+      const { data, error: fallbackError } = await supabase
+        .from('applicants')
+        .update(dbUpdates)
+        .eq('id', id)
+        .select(`
+          *,
+          jobs (title),
+          referrer:employees!applicants_referrer_id_fkey (first_name, last_name)
+        `)
+        .single();
+
+      if (fallbackError) throw fallbackError;
+      return mapApplicantFromDb(data);
+    }
   },
 
   async deleteApplicant(id: string): Promise<void> {

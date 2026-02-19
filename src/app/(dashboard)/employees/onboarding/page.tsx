@@ -184,6 +184,11 @@ export default function OnboardingPage() {
   } | null>(null);
   const [idCheckLoading, setIdCheckLoading] = useState(false);
   const [idCheckComment, setIdCheckComment] = useState('');
+  const [idCheckDocModal, setIdCheckDocModal] = useState<{
+    doc: HRIdCheckDoc;
+    action: IDStatus;
+    comment: string;
+  } | null>(null);
   const [documentSubmissionStatus, setDocumentSubmissionStatus] = useState<
     Record<string, DocumentSubmissionStage>
   >({});
@@ -350,8 +355,17 @@ export default function OnboardingPage() {
     }
   };
 
-  const updateIdCheckDocStatus = async (doc: HRIdCheckDoc, status: IDStatus): Promise<HRIdCheckDoc> => {
-    const newRemark = upsertIdCheckStatusTag(doc.remark, status);
+  const updateIdCheckDocStatus = async (
+    doc: HRIdCheckDoc,
+    status: IDStatus,
+    comment?: string
+  ): Promise<HRIdCheckDoc> => {
+    let newRemark = upsertIdCheckStatusTag(doc.remark, status);
+    const trimmedComment = comment?.trim();
+    if (trimmedComment) {
+      const withoutOldReason = newRemark.replace(/\s*Reason from HR:.*$/s, '');
+      newRemark = `${withoutOldReason} Reason from HR: ${trimmedComment}`;
+    }
     const updated = await legalDocumentService.update(doc.id, { remark: newRemark });
     const meta = parseIdCheckMetadata(updated.remark);
     const url =
@@ -822,16 +836,31 @@ export default function OnboardingPage() {
                             >
                               {doc.status}
                             </span>
-                            {doc.url && (
-                              <a
-                                href={doc.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs text-indigo-600 hover:text-indigo-800"
+                            <div className="flex items-center gap-2">
+                              {doc.url && (
+                                <a
+                                  href={doc.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-indigo-600 hover:text-indigo-800"
+                                >
+                                  View
+                                </a>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setIdCheckDocModal({
+                                    doc,
+                                    action: doc.status,
+                                    comment: ''
+                                  })
+                                }
+                                className="text-xs px-2 py-1 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50"
                               >
-                                View document
-                              </a>
-                            )}
+                                Review
+                              </button>
+                            </div>
                           </div>
                         </li>
                       ))}
@@ -869,7 +898,7 @@ export default function OnboardingPage() {
                       setIdCheckLoading(true);
                       const updatedDocs: HRIdCheckDoc[] = [];
                       for (const doc of idCheckModal.docs) {
-                        const updated = await updateIdCheckDocStatus(doc, 'Rejected');
+                        const updated = await updateIdCheckDocStatus(doc, 'Rejected', idCheckComment);
                         updatedDocs.push(updated);
                       }
                       if (employee && employee.userId) {
@@ -999,6 +1028,169 @@ export default function OnboardingPage() {
                   className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-300"
                 >
                   Approve Documents
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {idCheckDocModal && idCheckModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-[520px] shadow-lg rounded-md bg-white">
+            <div className="mt-1">
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
+                Review ID Document
+              </h3>
+              <p className="text-sm text-gray-500 mb-3">
+                Set the status for this document and optionally add a message to the employee.
+              </p>
+              <div className="mb-3">
+                <p className="text-sm font-medium text-gray-900">
+                  {idCheckDocModal.doc.typeLabel}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {(idCheckDocModal.doc.category || 'Uncategorized')}{' '}
+                  {typeof idCheckDocModal.doc.points === 'number' &&
+                    `• ${idCheckDocModal.doc.points} points`}
+                  {idCheckDocModal.doc.uploadedDate &&
+                    ` • Uploaded ${new Date(
+                      idCheckDocModal.doc.uploadedDate
+                    ).toLocaleDateString()}`}
+                </p>
+                {idCheckDocModal.doc.url && (
+                  <a
+                    href={idCheckDocModal.doc.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex text-xs text-indigo-600 hover:text-indigo-800 underline"
+                  >
+                    View attachment
+                  </a>
+                )}
+              </div>
+              <div className="mb-3">
+                <p className="text-xs font-semibold text-gray-600 mb-1">
+                  Status
+                </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIdCheckDocModal(prev =>
+                        prev ? { ...prev, action: 'Approved' } : prev
+                      )
+                    }
+                    className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                      idCheckDocModal.action === 'Approved'
+                        ? 'bg-green-100 text-green-800 border-green-300'
+                        : 'bg-white text-gray-700 border-gray-300'
+                    }`}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIdCheckDocModal(prev =>
+                        prev ? { ...prev, action: 'Rejected' } : prev
+                      )
+                    }
+                    className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                      idCheckDocModal.action === 'Rejected'
+                        ? 'bg-red-100 text-red-800 border-red-300'
+                        : 'bg-white text-gray-700 border-gray-300'
+                    }`}
+                  >
+                    Send Back
+                  </button>
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="block text-xs font-semibold text-gray-600 mb-1">
+                  Message to employee (optional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={idCheckDocModal.comment}
+                  onChange={e =>
+                    setIdCheckDocModal(prev =>
+                      prev ? { ...prev, comment: e.target.value } : prev
+                    )
+                  }
+                  className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Explain what needs to be updated or confirm the document is approved."
+                />
+              </div>
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300 focus:outline-none"
+                  onClick={() => setIdCheckDocModal(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  disabled={idCheckLoading}
+                  onClick={async () => {
+                    if (!idCheckModal || !idCheckDocModal) return;
+                    const employee = getEmployee(idCheckModal.employeeId);
+                    try {
+                      setIdCheckLoading(true);
+                      const updated = await updateIdCheckDocStatus(
+                        idCheckDocModal.doc,
+                        idCheckDocModal.action,
+                        idCheckDocModal.comment
+                      );
+                      const updatedDocs = idCheckModal.docs.map(d =>
+                        d.id === updated.id ? updated : d
+                      );
+                      setDocumentSubmissionStatus(prev => ({
+                        ...prev,
+                        [idCheckModal.processId]: deriveDocumentSubmissionStage(
+                          updatedDocs,
+                          updatedDocs.reduce(
+                            (sum, item) => sum + (item.points || 0),
+                            0
+                          )
+                        )
+                      }));
+                      if (
+                        employee &&
+                        employee.userId &&
+                        idCheckDocModal.action === 'Rejected'
+                      ) {
+                        const reason =
+                          idCheckDocModal.comment.trim() ||
+                          'HR has requested changes to one of your 100-point ID documents. Please review and upload an updated document.';
+                        const message = `The document "${updated.typeLabel}" needs updates. Reason: ${reason}`;
+                        await notificationService.createNotification(
+                          employee.userId,
+                          'Update 100-Point ID Documents',
+                          message,
+                          'warning'
+                        );
+                      }
+                      setIdCheckModal({
+                        ...idCheckModal,
+                        docs: updatedDocs,
+                        totalPoints: updatedDocs.reduce(
+                          (sum, item) => sum + (item.points || 0),
+                          0
+                        )
+                      });
+                      setIdCheckDocModal(null);
+                    } catch (error) {
+                      console.error('Failed to update ID document status:', error);
+                      alert('Failed to update document. Please try again.');
+                    } finally {
+                      setIdCheckLoading(false);
+                    }
+                  }}
+                >
+                  Save
                 </button>
               </div>
             </div>
@@ -1600,34 +1792,43 @@ export default function OnboardingPage() {
                           pillTitle = getDocumentSubmissionTitle(documentStage);
                           pillLabel = `Document Submission${getDocumentSubmissionLabelSuffix(documentStage)}`;
                         } else if (isClientOnboardingTask) {
-                          const clientClasses =
-                            task.completed
-                              ? 'bg-green-100 text-green-800 cursor-default'
-                              : clientStage === 'updated'
-                              ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
-                              : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
-                          pillClasses = `${commonClasses} ${clientClasses}`;
-                          pillTitle =
-                            clientStage === 'updated'
-                              ? 'Employee has provided client details. Review and complete this task.'
-                              : 'Client details not provided yet.';
-                          const suffix = clientStage === 'updated' ? ' (Updated)' : ' (Requested)';
-                          pillLabel = `${task.name}${suffix}`;
+                          if (task.completed) {
+                            pillClasses = `${commonClasses} bg-green-100 text-green-800 cursor-default`;
+                            pillTitle = 'Client onboarding documents verified and approved.';
+                            pillLabel = 'Client Onboarding Documents (Approved)';
+                          } else {
+                            const clientClasses =
+                              clientStage === 'updated'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
+                                : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
+                            pillClasses = `${commonClasses} ${clientClasses}`;
+                            pillTitle =
+                              clientStage === 'updated'
+                                ? 'Employee has provided client details. Review and complete this task.'
+                                : 'Client details not provided yet.';
+                            const suffix =
+                              clientStage === 'updated' ? ' (Updated)' : ' (Requested)';
+                            pillLabel = `${task.name}${suffix}`;
+                          }
                         } else if (isHardwareTask) {
-                          const hardwareClasses =
-                            task.completed
-                              ? 'bg-green-100 text-green-800 cursor-default'
-                              : hardwareStage === 'updated'
-                              ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
-                              : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
-                          pillClasses = `${commonClasses} ${hardwareClasses}`;
-                          pillTitle =
-                            hardwareStage === 'updated'
-                              ? 'Employee has provided hardware onboarding details. Review and complete this task.'
-                              : 'Hardware onboarding details not provided yet.';
-                          const suffix =
-                            hardwareStage === 'updated' ? ' (Updated)' : ' (Requested)';
-                          pillLabel = `${task.name}${suffix}`;
+                          if (task.completed) {
+                            pillClasses = `${commonClasses} bg-green-100 text-green-800 cursor-default`;
+                            pillTitle = 'Hardware setup completed.';
+                            pillLabel = 'Hardware Setup';
+                          } else {
+                            const hardwareClasses =
+                              hardwareStage === 'updated'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
+                                : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
+                            pillClasses = `${commonClasses} ${hardwareClasses}`;
+                            pillTitle =
+                              hardwareStage === 'updated'
+                                ? 'Employee has provided hardware onboarding details. Review and complete this task.'
+                                : 'Hardware onboarding details not provided yet.';
+                            const suffix =
+                              hardwareStage === 'updated' ? ' (Updated)' : ' (Requested)';
+                            pillLabel = `${task.name}${suffix}`;
+                          }
                         } else {
                           pillClasses = `${commonClasses} ${
                             task.completed

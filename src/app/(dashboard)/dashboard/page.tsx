@@ -9,7 +9,8 @@ import { attendanceService } from '@/services/attendanceService';
 import { payrollService } from '@/services/payrollService';
 import { holidayService } from '@/services/holidayService';
 import { learningService } from '@/services/learningService';
-import { CourseEnrollment } from '@/types';
+import { recruitmentService } from '@/services/recruitmentService';
+import { CourseEnrollment, Job, Applicant, Offer } from '@/types';
 import { calculateWorkingDays } from '@/utils/workDayCalculations';
 
 export default function DashboardPage() {
@@ -30,6 +31,16 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [mandatoryLearning, setMandatoryLearning] = useState<CourseEnrollment[]>([]);
   const [mandatoryError, setMandatoryError] = useState<string | null>(null);
+  const [recruitmentStats, setRecruitmentStats] = useState({
+    openJobs: 0,
+    totalApplicants: 0,
+    inInterview: 0,
+    offersPending: 0,
+  });
+  const [openJobsList, setOpenJobsList] = useState<Job[]>([]);
+  const [applicantsList, setApplicantsList] = useState<Applicant[]>([]);
+  const [inInterviewList, setInInterviewList] = useState<Applicant[]>([]);
+  const [pendingOffersList, setPendingOffersList] = useState<Offer[]>([]);
 
   useEffect(() => {
     async function fetchData() {
@@ -47,15 +58,21 @@ export default function DashboardPage() {
           attendanceRes,
           payslipsRes,
           holidaysRes,
-          learningRes
+          learningRes,
+          jobsRes,
+          applicantsRes,
+          offersRes,
         ] = await Promise.allSettled([
           employeeService.getAll(),
           leaveService.getAll(),
           expensesService.getExpenses(),
-          attendanceService.getAll(), // We might want to limit this to current week
+          attendanceService.getAll(),
           payrollService.getAllPayslips(),
           holidayService.getByYear(currentYear),
-          learningService.getAllAssignments()
+          learningService.getAllAssignments(),
+          recruitmentService.getJobs(),
+          recruitmentService.getApplicants(),
+          recruitmentService.getOffers(),
         ]);
 
         // Process Employees
@@ -86,8 +103,8 @@ export default function DashboardPage() {
           
           const upcomingLeaves = leaves
             .filter(l => 
-              l.status === 'Approved' && 
-              l.startDate >= todayStr
+              l.status === 'Approved' &&
+              l.endDate >= todayStr
             )
             .sort((a, b) => a.startDate.localeCompare(b.startDate));
           onLeaveToday = upcomingLeaves.length;
@@ -169,7 +186,11 @@ export default function DashboardPage() {
           pendingLeave,
           pendingExpenses,
           upcomingPayrollDays: daysUntilPayroll,
-          upcomingPayrollDate: upcomingPayrollDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          upcomingPayrollDate: upcomingPayrollDate.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }),
         });
 
         // Process Mandatory Learning (non-completed assignments only)
@@ -205,6 +226,60 @@ export default function DashboardPage() {
           setMandatoryError('Unable to load mandatory learning at this time.');
         }
         setMandatoryLearning(mandatoryItems);
+
+        let openJobs = 0;
+        let totalApplicants = 0;
+        let inInterview = 0;
+        let offersPending = 0;
+
+        let openJobsItems: Job[] = [];
+        let applicantsItems: Applicant[] = [];
+        let inInterviewItems: Applicant[] = [];
+        let pendingOffersItems: Offer[] = [];
+
+        if (jobsRes.status === 'fulfilled') {
+          const jobs = jobsRes.value as Job[];
+          openJobsItems = jobs.filter(
+            job => job.status === 'Published' || job.status === 'Paused'
+          );
+          openJobs = openJobsItems.length;
+          totalApplicants = jobs.reduce(
+            (sum, job) => sum + (job.applicantsCount || 0),
+            0
+          );
+        }
+
+        if (applicantsRes.status === 'fulfilled') {
+          const applicants = applicantsRes.value as Applicant[];
+          applicantsItems = applicants;
+          inInterviewItems = applicants.filter(a => 
+            a.status === 'Interview' ||
+            (Array.isArray(a.interviews) && a.interviews.some(i => i.status === 'Scheduled'))
+          );
+          inInterview = inInterviewItems.length;
+        }
+
+        if (offersRes.status === 'fulfilled') {
+          const offers = offersRes.value as Offer[];
+          pendingOffersItems = offers.filter(
+            offer =>
+              offer.status === 'Draft' ||
+              offer.status === 'Sent' ||
+              offer.status === 'Pending Response'
+          );
+          offersPending = pendingOffersItems.length;
+        }
+
+        setRecruitmentStats({
+          openJobs,
+          totalApplicants,
+          inInterview,
+          offersPending,
+        });
+        setOpenJobsList(openJobsItems);
+        setApplicantsList(applicantsItems);
+        setInInterviewList(inInterviewItems);
+        setPendingOffersList(pendingOffersItems);
 
         // Process Recent Activity (Combine sources)
         const activities: any[] = [];
@@ -380,6 +455,131 @@ export default function DashboardPage() {
             </div>
           </div>
         </Link>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-gray-900">Hiring & Interviews</h2>
+          <Link
+            href="/talent/recruitment?tab=jobs"
+            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+          >
+            Open Recruitment
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Link href="/talent/recruitment?tab=jobs" className="block group relative">
+            {openJobsList.length > 0 && (
+              <div className="absolute inset-x-0 -top-2 transform -translate-y-full z-20 hidden group-hover:block">
+                <div className="bg-white shadow-lg border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
+                  {openJobsList.slice(0, 5).map(job => (
+                    <div key={job.id} className="flex justify-between gap-2">
+                      <span className="font-medium truncate">{job.title}</span>
+                      <span className="text-gray-500">{job.status}</span>
+                    </div>
+                  ))}
+                  {openJobsList.length > 5 && (
+                    <div className="text-gray-400">
+                      +{openJobsList.length - 5} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-indigo-500 transition-transform transform group-hover:-translate-y-1 h-full">
+              <h3 className="text-gray-500 text-sm font-medium">Open Positions</h3>
+              <p className="text-2xl font-bold text-gray-900 mt-2">
+                {recruitmentStats.openJobs}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Published or active roles</p>
+            </div>
+          </Link>
+
+          <Link href="/talent/recruitment?tab=applicants" className="block group relative">
+            {applicantsList.length > 0 && (
+              <div className="absolute inset-x-0 -top-2 transform -translate-y-full z-20 hidden group-hover:block">
+                <div className="bg-white shadow-lg border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
+                  {applicantsList.slice(0, 5).map(applicant => (
+                    <div key={applicant.id} className="flex justify-between gap-2">
+                      <span className="font-medium truncate">
+                        {applicant.firstName} {applicant.lastName}
+                      </span>
+                      <span className="text-gray-500">{applicant.status}</span>
+                    </div>
+                  ))}
+                  {applicantsList.length > 5 && (
+                    <div className="text-gray-400">
+                      +{applicantsList.length - 5} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-sky-500 transition-transform transform group-hover:-translate-y-1 h-full">
+              <h3 className="text-gray-500 text-sm font-medium">Total Applicants</h3>
+              <p className="text-2xl font-bold text-gray-900 mt-2">
+                {recruitmentStats.totalApplicants}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Across all active jobs</p>
+            </div>
+          </Link>
+
+          <Link href="/talent/recruitment?tab=applicants&stage=Interview" className="block group relative">
+            {inInterviewList.length > 0 && (
+              <div className="absolute inset-x-0 -top-2 transform -translate-y-full z-20 hidden group-hover:block">
+                <div className="bg-white shadow-lg border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
+                  {inInterviewList.slice(0, 5).map(applicant => (
+                    <div key={applicant.id} className="flex justify-between gap-2">
+                      <span className="font-medium truncate">
+                        {applicant.firstName} {applicant.lastName}
+                      </span>
+                      <span className="text-gray-500">{applicant.status}</span>
+                    </div>
+                  ))}
+                  {inInterviewList.length > 5 && (
+                    <div className="text-gray-400">
+                      +{inInterviewList.length - 5} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-emerald-500 transition-transform transform group-hover:-translate-y-1 h-full">
+              <h3 className="text-gray-500 text-sm font-medium">In Interview Stage</h3>
+              <p className="text-2xl font-bold text-gray-900 mt-2">
+                {recruitmentStats.inInterview}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Applicants tagged as Interview</p>
+            </div>
+          </Link>
+
+          <Link href="/talent/recruitment?tab=offers&offersFilter=pending" className="block group relative">
+            {pendingOffersList.length > 0 && (
+              <div className="absolute inset-x-0 -top-2 transform -translate-y-full z-20 hidden group-hover:block">
+                <div className="bg-white shadow-lg border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
+                  {pendingOffersList.slice(0, 5).map(offer => (
+                    <div key={offer.id} className="flex justify-between gap-2">
+                      <span className="font-medium truncate">{offer.applicantName}</span>
+                      <span className="text-gray-500">{offer.status}</span>
+                    </div>
+                  ))}
+                  {pendingOffersList.length > 5 && (
+                    <div className="text-gray-400">
+                      +{pendingOffersList.length - 5} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-orange-500 transition-transform transform group-hover:-translate-y-1 h-full">
+              <h3 className="text-gray-500 text-sm font-medium">Pending Offers</h3>
+              <p className="text-2xl font-bold text-gray-900 mt-2">
+                {recruitmentStats.offersPending}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Draft or sent offers needing action</p>
+            </div>
+          </Link>
+        </div>
       </div>
 
       {/* Mandatory Learning Section */}

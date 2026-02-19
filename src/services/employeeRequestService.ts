@@ -23,6 +23,21 @@ export const employeeRequestService = {
     return data ? data.map(mapRequestFromDb) : [];
   },
 
+  async create(input: { employeeId: string; type: EmployeeRequest['type']; description: string }): Promise<EmployeeRequest> {
+    const { data, error } = await supabase
+      .from('employee_requests')
+      .insert({
+        employee_id: input.employeeId,
+        type: input.type,
+        description: input.description,
+      })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return mapRequestFromDb(data);
+  },
+
   async updateStatus(id: string, status: 'Approved' | 'Rejected'): Promise<void> {
     const { error } = await supabase
       .from('employee_requests')

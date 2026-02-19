@@ -203,8 +203,19 @@ export default function LeaveReviewPage() {
                     <tr key={req.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-bold">
-                            {employee?.firstName[0]}{employee?.lastName[0]}
+                          <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-gray-600 font-bold">
+                            {employee?.avatarUrl ? (
+                              <img
+                                src={employee.avatarUrl}
+                                alt={`${employee.firstName} ${employee.lastName}`}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <>
+                                {employee?.firstName[0]}
+                                {employee?.lastName[0]}
+                              </>
+                            )}
                           </div>
                           <div className="ml-4">
                             <div className="text-sm font-medium text-gray-900">{employee?.firstName} {employee?.lastName}</div>
@@ -239,15 +250,23 @@ export default function LeaveReviewPage() {
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => handleAction(req.id, 'Approved')}
-                              className="text-green-600 hover:text-green-900 bg-green-50 px-3 py-1 rounded-md border border-green-200 hover:bg-green-100 transition-colors"
+                              className="text-green-600 hover:text-green-900 bg-green-50 p-1.5 rounded border border-green-200 hover:bg-green-100 transition-colors"
+                              title="Approve"
                             >
-                              Approve
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75l2.25 2.25L15 9.75" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
                             </button>
                             <button
                               onClick={() => handleAction(req.id, 'Rejected')}
-                              className="text-red-600 hover:text-red-900 bg-red-50 px-3 py-1 rounded-md border border-red-200 hover:bg-red-100 transition-colors"
+                              className="text-red-600 hover:text-red-900 bg-red-50 p-1.5 rounded border border-red-200 hover:bg-red-100 transition-colors"
+                              title="Reject"
                             >
-                              Reject
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
                             </button>
                           </div>
                         </td>

@@ -29,36 +29,41 @@ export default function LoginPage() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // Fetch employee role
+        // Fetch employee role and employment status
         // 1. Try by user_id
-        let { data: employee, error: empError } = await supabase
+        let { data: employee } = await supabase
           .from('employees')
-          .select('role, is_password_change_required')
+          .select('id, role, is_password_change_required, employment_status')
           .eq('user_id', authData.user.id)
           .single();
 
         // 2. Fallback to email if not found by user_id
         if (!employee) {
-             const { data: empByEmail, error: emailError } = await supabase
-               .from('employees')
-               .select('id, role, is_password_change_required')
-               .eq('email', authData.user.email)
-               .single();
-             
-             if (empByEmail) {
-                employee = empByEmail;
-                // Auto-link user_id for future logins
-                await supabase
-                  .from('employees')
-                  .update({ user_id: authData.user.id })
-                  .eq('id', empByEmail.id);
-             }
+          const { data: empByEmail } = await supabase
+            .from('employees')
+            .select('id, role, is_password_change_required, employment_status')
+            .eq('email', authData.user.email)
+            .single();
+          
+          if (empByEmail) {
+            employee = empByEmail;
+            // Auto-link user_id for future logins
+            await supabase
+              .from('employees')
+              .update({ user_id: authData.user.id })
+              .eq('id', empByEmail.id);
+          }
         }
         
+        // Block terminated employees from any portal
+        if (employee && employee.employment_status === 'Terminated') {
+          throw new Error('Access Denied: Your employment is terminated. Please contact HR.');
+        }
+
         // Check for forced password change
         if (employee?.is_password_change_required) {
-            router.push('/change-password');
-            return;
+          router.push('/change-password');
+          return;
         }
 
         const role = employee?.role;
@@ -213,28 +218,7 @@ export default function LoginPage() {
              </div>
           </div>
 
-          {/* HR Role Toggle - Only for Administrator */}
-          {activeTab === 'admin' && (
-            <div className="flex justify-end pt-2">
-              <div className="flex items-center space-x-3 border border-blue-400 rounded-full px-4 py-1">
-                <span className="text-blue-500 font-bold text-sm">HR Role</span>
-                <button
-                  type="button"
-                  onClick={() => setIsHrRole(!isHrRole)}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    isHrRole ? 'bg-blue-400' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      isHrRole ? 'translate-x-5' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-          )}
+          {/* HR Role Toggle - removed as not required */}
 
           {/* Forgot Password */}
           <div className="text-right">
@@ -256,11 +240,6 @@ export default function LoginPage() {
             >
               {loading ? 'Logging in...' : activeTab === 'admin' ? 'HR Login' : 'Employee Login'}
             </button>
-            <div className="mt-4 text-center">
-               <Link href="/register" className="text-sm text-blue-500 hover:text-blue-700">
-                 Need an account? Register here
-               </Link>
-             </div>
         </div>
       </div>
     </div>

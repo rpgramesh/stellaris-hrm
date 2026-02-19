@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { recruitmentService } from '@/services/recruitmentService';
-import { Job, Applicant } from '@/types';
+import { Job, Applicant, Employee } from '@/types';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
+import { employeeService } from '@/services/employeeService';
 
 export default function ApplyJobPage() {
   const params = useParams();
@@ -14,6 +16,7 @@ export default function ApplyJobPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [employee, setEmployee] = useState<Employee | null>(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -34,9 +37,43 @@ export default function ApplyJobPage() {
   });
 
   useEffect(() => {
-    if (id) {
-      fetchJob(id as string);
-    }
+    const fetchJobAndEmployee = async () => {
+      try {
+        if (id) {
+          await fetchJob(id as string);
+        }
+
+        const { data: { user } } = await supabase.auth.getUser();
+        let currentEmployee: Employee | undefined;
+
+        if (user?.email) {
+          const allEmployees = await employeeService.getAll();
+          currentEmployee = allEmployees.find(e => e.email === user.email);
+        }
+
+        if (!currentEmployee) {
+          const allEmployees = await employeeService.getAll();
+          if (allEmployees.length > 0) currentEmployee = allEmployees[0];
+        }
+
+        if (currentEmployee) {
+          setEmployee(currentEmployee);
+          setFormData(prev => ({
+            ...prev,
+            firstName: currentEmployee.firstName || '',
+            lastName: currentEmployee.lastName || '',
+            email: currentEmployee.email || '',
+            phone: currentEmployee.phone || ''
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to prefill employee details for job application:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchJobAndEmployee();
   }, [id]);
 
   const fetchJob = async (jobId: string) => {

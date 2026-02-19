@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { learningService } from '@/services/learningService';
+import { onboardingService } from '@/services/onboardingService';
 import { CourseEnrollment } from '@/types';
 import { Loader2, ArrowLeft, CheckCircle, PlayCircle, FileText, Video } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -71,11 +72,11 @@ export default function CoursePlayerPage() {
         try {
             if (id.startsWith('tr-')) {
                 // Legacy training record
-                 if (newProgress === 100) {
-                     await learningService.completeCourse(id);
-                 } else {
-                     await learningService.updateTrainingProgress(id, newProgress);
-                 }
+                if (newProgress === 100) {
+                  await learningService.completeCourse(id);
+                } else {
+                  await learningService.updateTrainingProgress(id, newProgress);
+                }
             } else {
                 const { error } = await supabase
                     .from('course_enrollments')
@@ -87,6 +88,10 @@ export default function CoursePlayerPage() {
                     .eq('id', id);
                 
                 if (error) throw error;
+            }
+
+            if (newProgress === 100 && enrollment.employeeId) {
+              await onboardingService.syncMandatoryLearningTask(enrollment.employeeId);
             }
             
             // Background refresh to ensure sync

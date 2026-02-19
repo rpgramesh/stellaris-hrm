@@ -113,12 +113,14 @@ export default function BranchesPage() {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{branch.address}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{branch.contactNumber}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <button onClick={() => handleOpenModal(branch)} className="text-blue-600 hover:text-blue-900 mr-4">
-                    <PencilIcon className="h-5 w-5" />
-                  </button>
-                  <button onClick={() => handleDelete(branch.id)} className="text-red-600 hover:text-red-900">
-                    <TrashIcon className="h-5 w-5" />
-                  </button>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => handleOpenModal(branch)} className="text-indigo-600 hover:text-indigo-900 bg-indigo-50 p-1.5 rounded" title="Edit">
+                      <PencilIcon className="h-5 w-5" />
+                    </button>
+                    <button onClick={() => handleDelete(branch.id)} className="text-red-600 hover:text-red-900 bg-red-50 p-1.5 rounded" title="Delete">
+                      <TrashIcon className="h-5 w-5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

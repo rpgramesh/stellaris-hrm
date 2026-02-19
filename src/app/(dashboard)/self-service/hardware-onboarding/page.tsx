@@ -113,6 +113,7 @@ const createEmptyRow = (): HardwareAssetRow => ({
 
 export default function HardwareOnboardingSelfServicePage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const [managerName, setManagerName] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +144,12 @@ export default function HardwareOnboardingSelfServicePage() {
           return;
         }
         setEmployee(emp);
+        if (emp.lineManagerId) {
+          const manager = employees.find(e => e.id === emp.lineManagerId);
+          if (manager) {
+            setManagerName(`${manager.firstName} ${manager.lastName}`);
+          }
+        }
 
         const existing = await hardwareOnboardingService.getLatestByEmployee(emp.id);
         if (existing) {
@@ -397,6 +404,12 @@ export default function HardwareOnboardingSelfServicePage() {
               {employee.firstName} {employee.lastName}
             </p>
             <p className="text-xs text-gray-500">{employee.email}</p>
+            <p className="text-xs text-gray-500">
+              Branch: {employee.branch || '-'}
+            </p>
+            <p className="text-xs text-gray-500">
+              Line Manager: {managerName || '-'}
+            </p>
           </div>
           <div className="md:col-span-1">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">

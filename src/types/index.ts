@@ -29,13 +29,16 @@ export type EmployeeStatus = 'Active' | 'On Leave' | 'Terminated' | 'Probation';
 
 export interface Employee {
   id: string;
+  employeeCode?: string;
   userId?: string; // Links to auth.users
   isPasswordChangeRequired?: boolean;
   firstName: string;
   middleName?: string;
   lastName: string;
+  fullName?: string;
   email: string;
   phone: string;
+  profilePhotoUrl?: string;
   // Extended Contact
   blogUrl?: string;
   officePhone?: string;
@@ -51,9 +54,26 @@ export interface Employee {
   birthDate: string;
   nationality: string;
   nationalId: string;
+  tfn?: string;
+  abn?: string;
   passport?: string;
   ethnicity?: string;
   religion?: string;
+  clientName?: string;
+  clientEmail?: string;
+  clientLineManager?: string;
+  clientDepartment?: string;
+  clientBranch?: string;
+  superannuationFundName?: string;
+  superannuationMemberNumber?: string;
+  medicareNumber?: string;
+  workRightsStatus?: string;
+  visaType?: string;
+  visaExpiryDate?: string;
+  policeClearanceStatus?: string;
+  wwccNumber?: string;
+  driversLicenseNumber?: string;
+  driversLicenseExpiry?: string;
   
   // Job / Placement
   role: Role;
@@ -304,6 +324,7 @@ export interface Experience {
   jobTitle: string;
   fromDate: string;
   toDate: string;
+  reasonForLeaving?: string;
   salary?: number;
   currency?: string;
   country?: string;

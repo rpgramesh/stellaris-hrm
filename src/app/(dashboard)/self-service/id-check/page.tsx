@@ -80,6 +80,7 @@ interface IDStoredDoc {
   category?: IDCategory;
   points?: number;
   status: IDStatus;
+  remark?: string | null;
 }
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
@@ -107,6 +108,15 @@ const parseIdMetadata = (remark?: string): { category?: IDCategory; points?: num
     status = statusMatch[1] as IDStatus;
   }
   return { category, points, status };
+};
+
+const extractHrReason = (remark?: string | null): string | null => {
+  if (!remark) return null;
+  const idx = remark.indexOf('Reason from HR:');
+  if (idx === -1) return null;
+  return remark
+    .slice(idx + 'Reason from HR:'.length)
+    .trim();
 };
 
 export default function IDCheckPage() {
@@ -152,7 +162,8 @@ export default function IDCheckPage() {
             doc,
             category: meta.category,
             points: meta.points,
-            status: meta.status
+            status: meta.status,
+            remark: doc.remark
           };
         });
         setIdDocs(mapped);
@@ -437,9 +448,22 @@ export default function IDCheckPage() {
       if (skippedMissingFile) {
         setError('Some drafts were missing files and were not submitted. Please re-attach those documents.');
       }
-      setIdDocs(prev => [...created, ...prev]);
-      const addedPoints = created.reduce((sum, item) => sum + (item.points || 0), 0);
-      setExistingPoints(prev => prev + addedPoints);
+      const refreshedDocs = await legalDocumentService.getByEmployeeId(employee.id);
+      const refreshedMapped: IDStoredDoc[] = refreshedDocs.map(doc => {
+        const meta = parseIdMetadata(doc.remark);
+        return {
+          doc,
+          category: meta.category,
+          points: meta.points,
+          status: meta.status,
+          remark: doc.remark
+        };
+      });
+      setIdDocs(refreshedMapped);
+      const basePoints = refreshedMapped
+        .filter(item => item.status !== 'Rejected')
+        .reduce((sum, item) => sum + (item.points || 0), 0);
+      setExistingPoints(basePoints);
       setDrafts([]);
       setSuccess('Documents submitted successfully for verification.');
 
@@ -795,6 +819,7 @@ export default function IDCheckPage() {
                   const url = item.doc.attachment && item.doc.attachment[0];
                   const label = item.doc.documentNumber || url?.split('/').pop() || 'Document';
                   const isRejected = item.status === 'Rejected';
+                  const hrReason = extractHrReason(item.remark);
                   return (
                     <div
                       key={item.doc.id}
@@ -807,6 +832,11 @@ export default function IDCheckPage() {
                         <p className="text-[11px] text-gray-500">
                           {item.category || 'Uncategorised'}{item.points ? ` • ${item.points} points` : ''} • Stored
                         </p>
+                        {hrReason && (
+                          <p className="text-[11px] text-red-600 mt-0.5">
+                            HR remark: {hrReason}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         {renderBadgeForStatus(item.status)}
@@ -869,6 +899,7 @@ export default function IDCheckPage() {
                 <ul className="space-y-3 pl-6">
                   {idDocs.map(item => {
                     const label = item.doc.documentNumber || 'ID document';
+                    const hrReason = extractHrReason(item.remark);
                     return (
                       <li key={item.doc.id} className="relative">
                         <div className="absolute -left-2 top-1 w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
@@ -879,6 +910,11 @@ export default function IDCheckPage() {
                           <p className="text-[11px] text-gray-500">
                             {item.category || 'Uncategorised'}{item.points ? ` • ${item.points} points` : ''} • {item.status}
                           </p>
+                          {hrReason && (
+                            <p className="text-[11px] text-red-600 mt-0.5">
+                              HR remark: {hrReason}
+                            </p>
+                          )}
                         </div>
                       </li>
                     );

@@ -255,13 +255,31 @@ function EmployeesContent() {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10">
-                        <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-bold">
-                          {employee.firstName[0]}{employee.lastName[0]}
+                        <div className="h-10 w-10 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-gray-600 font-bold">
+                          {employee.avatarUrl ? (
+                            <img
+                              src={employee.avatarUrl}
+                              alt={`${employee.firstName} ${employee.lastName}`}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <>
+                              {employee.firstName[0]}
+                              {employee.lastName[0]}
+                            </>
+                          )}
                         </div>
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{employee.firstName} {employee.lastName}</div>
-                        <div className="text-sm text-gray-500">{employee.email}</div>
+                        <div className="text-sm font-medium text-gray-900">
+                          {employee.employeeCode ? `${employee.employeeCode} - ` : ''}{employee.firstName} {employee.lastName}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {employee.phone ? `${employee.email} - ${employee.phone}` : employee.email}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          Branch: {employee.branch || '-'} • Line Manager: {getManagerName(employee.lineManagerId)}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -284,21 +302,36 @@ function EmployeesContent() {
                     {new Date(employee.joinDate).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <Link href={`/employees/edit/${employee.id}`} className="text-blue-600 hover:text-blue-900 mr-4">
-                      Edit
-                    </Link>
-                    <button 
-                      onClick={() => handleDelete(employee.id)}
-                      className="text-red-600 hover:text-red-900 mr-4"
-                    >
-                      Delete
-                    </button>
-                    <button 
-                      onClick={() => handleViewEmployee(employee.id)}
-                      className="text-gray-600 hover:text-gray-900"
-                    >
-                      View
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => handleViewEmployee(employee.id)}
+                        className="text-blue-600 hover:text-blue-900 bg-blue-50 p-1.5 rounded"
+                        title="View"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </button>
+                      <Link
+                        href={`/employees/edit/${employee.id}`}
+                        className="inline-flex items-center text-indigo-600 hover:text-indigo-900 bg-indigo-50 p-1.5 rounded"
+                        title="Edit"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(employee.id)}
+                        className="text-red-600 hover:text-red-900 bg-red-50 p-1.5 rounded"
+                        title="Delete"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -319,14 +352,28 @@ function EmployeesContent() {
               </button>
             </div>
             
-            <div className="space-y-6">
+              <div className="space-y-6">
               {/* Header Section */}
               <div className="flex items-center space-x-4 border-b pb-4">
-                <div className="h-20 w-20 rounded-full bg-gray-200 flex items-center justify-center text-2xl text-gray-600 font-bold">
-                  {selectedEmployee.firstName[0]}{selectedEmployee.lastName[0]}
+                <div className="h-20 w-20 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-2xl text-gray-600 font-bold">
+                  {selectedEmployee.avatarUrl ? (
+                    <img
+                      src={selectedEmployee.avatarUrl}
+                      alt={`${selectedEmployee.firstName} ${selectedEmployee.lastName}`}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      {selectedEmployee.firstName[0]}
+                      {selectedEmployee.lastName[0]}
+                    </>
+                  )}
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold">{selectedEmployee.firstName} {selectedEmployee.lastName}</h2>
+                  <h2 className="text-2xl font-bold">
+                    {selectedEmployee.employeeCode ? `${selectedEmployee.employeeCode} - ` : ''}
+                    {selectedEmployee.firstName} {selectedEmployee.lastName}
+                  </h2>
                   <p className="text-gray-500">{selectedEmployee.role} - {selectedEmployee.department}</p>
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full mt-2
                     ${selectedEmployee.status === 'Active' ? 'bg-green-100 text-green-800' : 
@@ -336,6 +383,18 @@ function EmployeesContent() {
                   </span>
                 </div>
               </div>
+
+              {selectedEmployee.status === 'Terminated' && (
+                <div className="border border-red-200 bg-red-50 text-red-800 text-sm rounded-md px-4 py-3 flex items-start gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mt-0.5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.75-11.5a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5zm.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                  </svg>
+                  <div>
+                    <p className="font-semibold">Login disabled</p>
+                    <p>This employee cannot log in to the HR or Self Service portal because their status is set to Terminated.</p>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-6">
                 {/* Personal Information */}
@@ -370,6 +429,10 @@ function EmployeesContent() {
                   <h4 className="font-semibold text-gray-900 mb-2 border-b pb-1">Employment Details</h4>
                   <dl className="space-y-2 text-sm">
                     <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Employee Code:</dt>
+                      <dd className="col-span-2">{selectedEmployee.employeeCode || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
                       <dt className="text-gray-500">Position:</dt>
                       <dd className="col-span-2">{selectedEmployee.position}</dd>
                     </div>
@@ -395,8 +458,11 @@ function EmployeesContent() {
                     <div className="grid grid-cols-3">
                       <dt className="text-gray-500">Salary:</dt>
                       <dd className="col-span-2">
-                        {selectedEmployee.salary ? 
-                          new Intl.NumberFormat('en-US', { style: 'currency', currency: selectedEmployee.currency || 'USD' }).format(selectedEmployee.salary) 
+                        {selectedEmployee.salary
+                          ? new Intl.NumberFormat('en-AU', {
+                              style: 'currency',
+                              currency: selectedEmployee.currency || 'AUD',
+                            }).format(selectedEmployee.salary)
                           : '-'}
                       </dd>
                     </div>
@@ -407,6 +473,123 @@ function EmployeesContent() {
                     <div className="grid grid-cols-3">
                       <dt className="text-gray-500">Account:</dt>
                       <dd className="col-span-2">{selectedEmployee.bankAccount || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">TFN:</dt>
+                      <dd className="col-span-2">{selectedEmployee.tfn || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">ABN:</dt>
+                      <dd className="col-span-2">{selectedEmployee.abn || '-'}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                {/* Compliance & Work Rights */}
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2 border-b pb-1">Compliance &amp; Work Rights</h4>
+                  <dl className="space-y-2 text-sm">
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Superannuation Fund Name:</dt>
+                      <dd className="col-span-2">{selectedEmployee.superannuationFundName || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Superannuation Member Number:</dt>
+                      <dd className="col-span-2">{selectedEmployee.superannuationMemberNumber || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Medicare Number:</dt>
+                      <dd className="col-span-2">{selectedEmployee.medicareNumber || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Work Rights Status:</dt>
+                      <dd className="col-span-2">{selectedEmployee.workRightsStatus || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Visa Type:</dt>
+                      <dd className="col-span-2">{selectedEmployee.visaType || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Visa Expiry Date:</dt>
+                      <dd className="col-span-2">
+                        {selectedEmployee.visaExpiryDate
+                          ? new Date(selectedEmployee.visaExpiryDate).toLocaleDateString()
+                          : '-'}
+                      </dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Police Clearance Status:</dt>
+                      <dd className="col-span-2">{selectedEmployee.policeClearanceStatus || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">WWCC Number:</dt>
+                      <dd className="col-span-2">{selectedEmployee.wwccNumber || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Driver's Licence Number:</dt>
+                      <dd className="col-span-2">{selectedEmployee.driversLicenseNumber || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Driver's Licence Expiry:</dt>
+                      <dd className="col-span-2">
+                        {selectedEmployee.driversLicenseExpiry
+                          ? new Date(selectedEmployee.driversLicenseExpiry).toLocaleDateString()
+                          : '-'}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+
+                {/* Emergency Contact */}
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2 border-b pb-1">Emergency Contact</h4>
+                  <dl className="space-y-2 text-sm">
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Contact Name:</dt>
+                      <dd className="col-span-2">{selectedEmployee.emergencyContactName || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Relationship:</dt>
+                      <dd className="col-span-2">{selectedEmployee.emergencyContactRelationship || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Contact Phone:</dt>
+                      <dd className="col-span-2">{selectedEmployee.emergencyContactPhone || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Contact Address:</dt>
+                      <dd className="col-span-2 break-words">{selectedEmployee.emergencyContactAddress || '-'}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                {/* Client Details */}
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2 border-b pb-1">Client Details</h4>
+                  <dl className="space-y-2 text-sm">
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Client Name:</dt>
+                      <dd className="col-span-2">{selectedEmployee.clientName || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Client Email:</dt>
+                      <dd className="col-span-2 break-words">{selectedEmployee.clientEmail || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Client Line Manager:</dt>
+                      <dd className="col-span-2">
+                        {selectedEmployee.clientLineManager ||
+                          selectedEmployee.lineManager ||
+                          getManagerName(selectedEmployee.lineManagerId)}
+                      </dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Client Department:</dt>
+                      <dd className="col-span-2">{selectedEmployee.clientDepartment || '-'}</dd>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <dt className="text-gray-500">Client Branch:</dt>
+                      <dd className="col-span-2">{selectedEmployee.clientBranch || '-'}</dd>
                     </div>
                   </dl>
                 </div>

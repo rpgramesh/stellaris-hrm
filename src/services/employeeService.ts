@@ -6,9 +6,11 @@ import { Employee } from '@/types';
 const mapEmployeeFromDb = (dbRecord: any): Employee => {
   return {
     id: dbRecord.id,
+    employeeCode: dbRecord.employee_code || '',
     firstName: dbRecord.first_name,
     isPasswordChangeRequired: dbRecord.is_password_change_required,
     lastName: dbRecord.last_name,
+    fullName: `${dbRecord.first_name} ${dbRecord.last_name}`.trim(),
     email: dbRecord.email,
     phone: dbRecord.phone || '',
     role: dbRecord.role,
@@ -22,6 +24,8 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     birthDate: dbRecord.date_of_birth,
     nationality: dbRecord.nationality || 'Australian',
     nationalId: dbRecord.national_id || '',
+    tfn: dbRecord.tfn || '',
+    abn: dbRecord.abn || '',
     salary: parseFloat(dbRecord.salary) || 0,
     salaryEffectiveDate: dbRecord.salary_effective_date || dbRecord.start_date, 
     superRate: 11.5,
@@ -31,13 +35,28 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     bankName: dbRecord.bank_name || '',
     bankAccount: dbRecord.bank_account_number || '',
     bankBsb: dbRecord.bank_bsb || '',
-    avatarUrl: dbRecord.avatar_url,
+    avatarUrl: dbRecord.avatar_url || dbRecord.profile_photo_url || '',
     address: dbRecord.address || '',
     // Map other fields as best as possible or leave as defaults
     middleName: dbRecord.middle_name || '', 
     passport: dbRecord.passport || '',
     ethnicity: dbRecord.ethnicity || '',
     religion: dbRecord.religion || '',
+    clientName: dbRecord.client_name || '',
+    clientEmail: dbRecord.client_email || '',
+    clientLineManager: dbRecord.client_line_manager || '',
+    clientDepartment: dbRecord.client_department || '',
+    clientBranch: dbRecord.client_branch || '',
+    superannuationFundName: dbRecord.superannuation_fund_name || '',
+    superannuationMemberNumber: dbRecord.superannuation_member_number || '',
+    medicareNumber: dbRecord.medicare_number || '',
+    workRightsStatus: dbRecord.work_rights_status || '',
+    visaType: dbRecord.visa_type || '',
+    visaExpiryDate: dbRecord.visa_expiry_date || '',
+    policeClearanceStatus: dbRecord.police_clearance_status || '',
+    wwccNumber: dbRecord.wwcc_number || '',
+    driversLicenseNumber: dbRecord.drivers_license_number || '',
+    driversLicenseExpiry: dbRecord.drivers_license_expiry || '',
     endOfProbation: dbRecord.probation_end_date || '',
     placementEffectiveDate: dbRecord.start_date,
     lineManager: '', // specific logic needed to fetch manager name if needed
@@ -190,7 +209,7 @@ export const employeeService = {
       const deptId = employee.departmentId || await getDepartmentId(employee.department);
       const posId = await getPositionId(employee.position, deptId);
 
-      const dbPayload = {
+      const dbPayload: any = {
         first_name: employee.firstName,
         last_name: employee.lastName,
         email: employee.email,
@@ -199,6 +218,8 @@ export const employeeService = {
         gender: employee.gender,
         nationality: employee.nationality,
         national_id: employee.nationalId,
+        tfn: employee.tfn,
+        abn: employee.abn,
         address: employee.address,
         department_id: deptId,
         position_id: posId,
@@ -218,6 +239,7 @@ export const employeeService = {
         bank_bsb: employee.bankBsb,
         role: employee.role,
         avatar_url: employee.avatarUrl,
+        profile_photo_url: employee.avatarUrl,
         
         // Family
         marital_status: employee.maritalStatus,
@@ -248,6 +270,21 @@ export const employeeService = {
         passport: employee.passport,
         ethnicity: employee.ethnicity,
         religion: employee.religion,
+        client_name: employee.clientName,
+        client_email: employee.clientEmail,
+        client_line_manager: employee.clientLineManager,
+        client_department: employee.clientDepartment,
+        client_branch: employee.clientBranch,
+        superannuation_fund_name: employee.superannuationFundName,
+        superannuation_member_number: employee.superannuationMemberNumber,
+        medicare_number: employee.medicareNumber,
+        work_rights_status: employee.workRightsStatus,
+        visa_type: employee.visaType,
+        visa_expiry_date: employee.visaExpiryDate || null,
+        police_clearance_status: employee.policeClearanceStatus,
+        wwcc_number: employee.wwccNumber,
+        drivers_license_number: employee.driversLicenseNumber,
+        drivers_license_expiry: employee.driversLicenseExpiry || null,
         remark: employee.remark,
         
         health_data: employee.health,
@@ -256,6 +293,10 @@ export const employeeService = {
         is_password_change_required: employee.isPasswordChangeRequired || false,
         user_id: employee.userId || null
       };
+
+      if (employee.employeeCode) {
+        dbPayload.employee_code = employee.employeeCode;
+      }
 
       const { data, error } = await supabase
         .from('employees')
@@ -281,6 +322,7 @@ export const employeeService = {
       const posId = updates.position ? await getPositionId(updates.position, deptId || null) : undefined;
 
       const dbPayload: any = {};
+      if (updates.employeeCode) dbPayload.employee_code = updates.employeeCode;
       if (updates.firstName) dbPayload.first_name = updates.firstName;
       if (updates.lastName) dbPayload.last_name = updates.lastName;
       if (updates.email) dbPayload.email = updates.email;
@@ -309,12 +351,17 @@ export const employeeService = {
       if (updates.bankAccount) dbPayload.bank_account_number = updates.bankAccount;
       if (updates.bankBsb !== undefined) dbPayload.bank_bsb = updates.bankBsb;
       if (updates.role) dbPayload.role = updates.role;
-      if (updates.avatarUrl) dbPayload.avatar_url = updates.avatarUrl;
+      if (updates.avatarUrl) {
+        dbPayload.avatar_url = updates.avatarUrl;
+        dbPayload.profile_photo_url = updates.avatarUrl;
+      }
       if (updates.userId) dbPayload.user_id = updates.userId;
       
       // Family
       if (updates.maritalStatus) dbPayload.marital_status = updates.maritalStatus;
       if (updates.childrenCount !== undefined) dbPayload.children_count = updates.childrenCount;
+      if (updates.tfn !== undefined) dbPayload.tfn = updates.tfn;
+      if (updates.abn !== undefined) dbPayload.abn = updates.abn;
       if (updates.spouse) {
          if (updates.spouse.firstName) dbPayload.spouse_first_name = updates.spouse.firstName;
          if (updates.spouse.lastName) dbPayload.spouse_last_name = updates.spouse.lastName;
@@ -338,12 +385,27 @@ export const employeeService = {
        if (updates.emergencyContactPhone !== undefined) dbPayload.emergency_contact_phone = updates.emergencyContactPhone;
        if (updates.emergencyContactAddress !== undefined) dbPayload.emergency_contact_address = updates.emergencyContactAddress;
        
-       // Others
-       if (updates.middleName) dbPayload.middle_name = updates.middleName;
-       if (updates.passport) dbPayload.passport = updates.passport;
-       if (updates.ethnicity) dbPayload.ethnicity = updates.ethnicity;
-       if (updates.religion) dbPayload.religion = updates.religion;
-       if (updates.remark) dbPayload.remark = updates.remark;
+      // Others
+      if (updates.middleName) dbPayload.middle_name = updates.middleName;
+      if (updates.passport) dbPayload.passport = updates.passport;
+      if (updates.ethnicity) dbPayload.ethnicity = updates.ethnicity;
+      if (updates.religion) dbPayload.religion = updates.religion;
+      if (updates.clientName !== undefined) dbPayload.client_name = updates.clientName;
+      if (updates.clientEmail !== undefined) dbPayload.client_email = updates.clientEmail;
+      if (updates.clientLineManager !== undefined) dbPayload.client_line_manager = updates.clientLineManager;
+      if (updates.clientDepartment !== undefined) dbPayload.client_department = updates.clientDepartment;
+      if (updates.clientBranch !== undefined) dbPayload.client_branch = updates.clientBranch;
+      if (updates.superannuationFundName !== undefined) dbPayload.superannuation_fund_name = updates.superannuationFundName;
+      if (updates.superannuationMemberNumber !== undefined) dbPayload.superannuation_member_number = updates.superannuationMemberNumber;
+      if (updates.medicareNumber !== undefined) dbPayload.medicare_number = updates.medicareNumber;
+      if (updates.workRightsStatus !== undefined) dbPayload.work_rights_status = updates.workRightsStatus;
+      if (updates.visaType !== undefined) dbPayload.visa_type = updates.visaType;
+      if (updates.visaExpiryDate !== undefined) dbPayload.visa_expiry_date = updates.visaExpiryDate || null;
+      if (updates.policeClearanceStatus !== undefined) dbPayload.police_clearance_status = updates.policeClearanceStatus;
+      if (updates.wwccNumber !== undefined) dbPayload.wwcc_number = updates.wwccNumber;
+      if (updates.driversLicenseNumber !== undefined) dbPayload.drivers_license_number = updates.driversLicenseNumber;
+      if (updates.driversLicenseExpiry !== undefined) dbPayload.drivers_license_expiry = updates.driversLicenseExpiry || null;
+      if (updates.remark) dbPayload.remark = updates.remark;
        
        if (updates.health) dbPayload.health_data = updates.health;
        if (updates.privacySettings) dbPayload.privacy_settings = updates.privacySettings;

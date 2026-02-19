@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { createUser } from '@/app/actions/auth';
 import { Employee } from '@/types';
 import { organizationService, Department, Manager } from '@/services/organizationService';
+import { supabase } from '@/lib/supabase';
 
 interface EmployeeFormProps {
   initialData?: Employee;
@@ -17,13 +18,14 @@ interface EmployeeFormProps {
 
 export default function EmployeeForm({ initialData, managers = [], onSubmit, title, backUrl }: EmployeeFormProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'contact' | 'directory' | 'others'>('quick');
+  const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'contact' | 'client' | 'directory' | 'others'>('quick');
   const [password, setPassword] = useState('');
   
   // Hierarchy State
   const [departments, setDepartments] = useState<Department[]>([]);
   const [filteredManagers, setFilteredManagers] = useState<Manager[]>([]);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
+  const [profileUploading, setProfileUploading] = useState(false);
 
   // Load Departments on mount
   useEffect(() => {
@@ -41,10 +43,50 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     loadDepartments();
   }, []);
 
+  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setProfileUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const fileName = `${formData.id || 'new'}_${Date.now()}.${ext}`;
+      const filePath = `profile-photos/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        console.error('Error uploading profile photo:', uploadError);
+        alert('Failed to upload profile photo.');
+        return;
+      }
+
+      const { data } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      const publicUrl = data.publicUrl;
+
+      setFormData(prev => ({
+        ...prev,
+        avatarUrl: publicUrl
+      }));
+    } catch (error) {
+      console.error('Unexpected error uploading profile photo:', error);
+      alert('Failed to upload profile photo.');
+    } finally {
+      setProfileUploading(false);
+      e.target.value = '';
+    }
+  };
+
   // Default form state
   const defaultFormData = {
     // Personal / Quick
     id: '',
+    employeeCode: '',
     firstName: '',
     middleName: '',
     lastName: '',
@@ -53,6 +95,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     nationality: 'Australia',
     nationalId: '',
     passport: '',
+    tfn: '',
+    abn: '',
     jobPosition: '',
     email: '',
     phone: '',
@@ -60,6 +104,18 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     profileUpdateDeadline: '2026-02-03',
     ethnicity: '',
     religion: '',
+    clientName: '',
+    clientEmail: '',
+    superannuationFundName: '',
+    superannuationMemberNumber: '',
+    medicareNumber: '',
+    workRightsStatus: '',
+    visaType: '',
+    visaExpiryDate: '',
+    policeClearanceStatus: '',
+    wwccNumber: '',
+    driversLicenseNumber: '',
+    driversLicenseExpiry: '',
     
     // Job
     dateJoined: '2026-01-01',
@@ -99,6 +155,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     spouseEthnicity: '',
     spouseReligion: '',
     childrenCount: 0,
+
+    avatarUrl: '',
 
     // Contact
     blogUrl: '',
@@ -150,6 +208,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       setFormData({
         // Personal
         id: initialData.id,
+        employeeCode: initialData.employeeCode || '',
         firstName: initialData.firstName,
         middleName: initialData.middleName || '',
         lastName: initialData.lastName,
@@ -158,6 +217,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         nationality: initialData.nationality,
         nationalId: initialData.nationalId,
         passport: initialData.passport || '',
+        tfn: initialData.tfn || '',
+        abn: initialData.abn || '',
         jobPosition: initialData.position,
         email: initialData.email,
         phone: initialData.phone,
@@ -165,6 +226,18 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         profileUpdateDeadline: initialData.profileUpdateDeadline || '',
         ethnicity: initialData.ethnicity || '',
         religion: initialData.religion || '',
+        clientName: initialData.clientName || '',
+        clientEmail: initialData.clientEmail || '',
+        superannuationFundName: initialData.superannuationFundName || '',
+        superannuationMemberNumber: initialData.superannuationMemberNumber || '',
+        medicareNumber: initialData.medicareNumber || '',
+        workRightsStatus: initialData.workRightsStatus || '',
+        visaType: initialData.visaType || '',
+        visaExpiryDate: initialData.visaExpiryDate || '',
+        policeClearanceStatus: initialData.policeClearanceStatus || '',
+        wwccNumber: initialData.wwccNumber || '',
+        driversLicenseNumber: initialData.driversLicenseNumber || '',
+        driversLicenseExpiry: initialData.driversLicenseExpiry || '',
         
         // Job
         dateJoined: initialData.joinDate,
@@ -204,6 +277,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         spouseEthnicity: initialData.spouse?.ethnicity || '',
         spouseReligion: initialData.spouse?.religion || '',
         childrenCount: initialData.childrenCount || 0,
+
+        avatarUrl: initialData.avatarUrl || '',
 
         // Contact
         blogUrl: initialData.blogUrl || '',
@@ -330,6 +405,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     // Map form data to Employee type
     const employeeData: Employee = {
       id: formData.id,
+      employeeCode: formData.employeeCode || undefined,
       firstName: formData.firstName,
       middleName: formData.middleName,
       lastName: formData.lastName,
@@ -342,6 +418,20 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       passport: formData.passport,
       ethnicity: formData.ethnicity,
       religion: formData.religion,
+      clientName: formData.clientName,
+      clientEmail: formData.clientEmail,
+      tfn: formData.tfn || undefined,
+      abn: formData.abn || undefined,
+      superannuationFundName: formData.superannuationFundName || undefined,
+      superannuationMemberNumber: formData.superannuationMemberNumber || undefined,
+      medicareNumber: formData.medicareNumber || undefined,
+      workRightsStatus: formData.workRightsStatus || undefined,
+      visaType: formData.visaType || undefined,
+      visaExpiryDate: formData.visaExpiryDate || undefined,
+      policeClearanceStatus: formData.policeClearanceStatus || undefined,
+      wwccNumber: formData.wwccNumber || undefined,
+      driversLicenseNumber: formData.driversLicenseNumber || undefined,
+      driversLicenseExpiry: formData.driversLicenseExpiry || undefined,
       
       role: (formData as any).role || 'Employee',
       department: formData.department,
@@ -459,7 +549,15 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     onSubmit(employeeData);
   };
 
-  const renderTextField = (name: string, label: string, required = false, type = 'text', placeholder = '', maxLength?: number) => {
+  const renderTextField = (
+    name: string,
+    label: string,
+    required = false,
+    type = 'text',
+    placeholder = '',
+    maxLength?: number,
+    autoFocus = false
+  ) => {
     const error = errors[name];
     const effectiveMaxLength =
       typeof maxLength === 'number'
@@ -477,7 +575,11 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
           value={(formData as any)[name] ?? ''}
           onChange={handleChange}
           maxLength={effectiveMaxLength}
-          className={`peer w-full border rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent ${error ? 'border-red-500' : 'border-gray-300'}`}
+          autoFocus={autoFocus}
+          readOnly={name === 'employeeCode'}
+          className={`peer w-full border rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent ${
+            name === 'employeeCode' ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''
+          } ${error ? 'border-red-500' : 'border-gray-300'}`}
           placeholder={placeholder || label}
         />
         <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
@@ -594,7 +696,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       {/* Tabs */}
       <div className="bg-white border-b border-gray-200 px-4 overflow-x-auto">
         <div className="flex space-x-6 text-sm">
-          {['quick', 'personal', 'job', 'salary', 'contact', 'directory', 'others'].map((tab) => (
+          {['quick', 'personal', 'job', 'salary', 'contact', 'client', 'directory', 'others'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab as any)}
@@ -625,9 +727,35 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
               </div>
 
               <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 space-y-4">
-                {renderTextField('id', 'ID', true)}
-                <div className="grid grid-cols-2 gap-4">
-                  {renderTextField('firstName', 'First Name', true)}
+                <div className="flex items-center gap-4">
+                  <div className="h-16 w-16 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-gray-600 font-bold">
+                    {formData.avatarUrl ? (
+                      <img src={formData.avatarUrl} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <>
+                        {(formData.firstName || '').charAt(0)}
+                        {(formData.lastName || '').charAt(0)}
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 uppercase">Profile Photo</p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfilePhotoChange}
+                      disabled={profileUploading}
+                      className="mt-1 text-xs"
+                    />
+                    {profileUploading && (
+                      <p className="text-xs text-gray-500 mt-1">Uploading...</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  {renderTextField('employeeCode', 'Employee Code')}
+                  {renderTextField('firstName', 'First Name', true, 'text', '', undefined, !initialData)}
                   {renderTextField('lastName', 'Last Name', true)}
                 </div>
                 {renderSelectField('gender', 'Gender', ['Female', 'Male', 'Other'], true)}
@@ -637,28 +765,12 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                   {renderTextField('nationalId', 'National ID', true)}
                   {renderTextField('passport', 'Passport')}
                 </div>
-                {renderSelectField('jobPosition', 'Job Position', ['Manager', 'Developer', 'Designer'], true)}
                 <div className="grid grid-cols-2 gap-4">
-                  {renderTextField('phone', 'Phone', false, 'tel')}
-                  {renderTextField('email', 'Email (Web Account)', false, 'email')}
+                  {renderTextField('tfn', 'TFN')}
+                  {renderTextField('abn', 'ABN')}
                 </div>
-                {!initialData && (
-                   <div className="mt-4">
-                     <div className="relative">
-                       <input
-                         type="text"
-                         value={password}
-                         onChange={(e) => setPassword(e.target.value)}
-                         className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent"
-                         placeholder="Default Password"
-                       />
-                       <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
-                         Default Password (for User Account)
-                       </label>
-                     </div>
-                     <p className="text-xs text-gray-500 mt-1">Leave empty to skip account creation. Employee can register later.</p>
-                   </div>
-                )}
+                {renderSelectField('jobPosition', 'Job Position', ['Manager', 'Developer', 'Designer'], true)}
+                {renderTextField('phone', 'Phone', false, 'tel')}
               </div>
             </div>
           )}
@@ -671,6 +783,19 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderTextField('ethnicity', 'Ethnicity')}
                     {renderTextField('religion', 'Religion')}
                 </div>
+                <h3 className="font-medium text-lg border-b pb-2 mt-6 mb-4">Compliance & Work Rights</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {renderTextField('superannuationFundName', 'Superannuation Fund Name')}
+                  {renderTextField('superannuationMemberNumber', 'Superannuation Member Number')}
+                  {renderTextField('medicareNumber', 'Medicare Number')}
+                  {renderTextField('workRightsStatus', 'Work Rights Status')}
+                  {renderTextField('visaType', 'Visa Type')}
+                  {renderTextField('visaExpiryDate', 'Visa Expiry Date', false, 'date')}
+                  {renderTextField('policeClearanceStatus', 'Police Clearance Status')}
+                  {renderTextField('wwccNumber', 'WWCC Number')}
+                  {renderTextField('driversLicenseNumber', 'Driver\'s Licence Number')}
+                  {renderTextField('driversLicenseExpiry', 'Driver\'s Licence Expiry', false, 'date')}
+                </div>
              </div>
           )}
 
@@ -680,31 +805,20 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                  <div className="grid grid-cols-2 gap-4">
                     {renderTextField('dateJoined', 'Date Joined', false, 'date')}
                     {renderDepartmentSelect()}
-                    <div className="relative">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">
+                        Branch (Auto-filled)
+                      </label>
                       <input
                         type="text"
                         name="branch"
                         value={formData.branch}
                         readOnly
-                        className="peer w-full border border-gray-300 rounded px-3 pt-4 pb-2 bg-gray-50 text-gray-500 focus:outline-none"
-                        placeholder="Branch"
+                        className="w-full border border-gray-300 rounded px-3 py-2 bg-gray-50 text-gray-500 focus:outline-none"
                       />
-                      <label className="absolute left-3 top-0 text-xs text-gray-500 transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-base peer-placeholder-shown:text-gray-400 peer-focus:top-0 peer-focus:text-xs peer-focus:text-blue-500">
-                        Branch (Auto-filled)
-                      </label>
                     </div>
                     {renderManagerSelect()}
                     {renderSelectField('status', 'Employment Status', ['Active', 'On Leave', 'Terminated', 'Probation'], true)}
-                    <div className="flex items-center gap-3">
-                         <input 
-                            type="checkbox" 
-                            name="timeClockNeeded" 
-                            checked={formData.timeClockNeeded}
-                            onChange={handleChange}
-                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                         />
-                         <label className="text-sm text-gray-700">Time Clock Needed</label>
-                    </div>
                  </div>
             </div>
           )}
@@ -749,6 +863,16 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderTextField('emergencyContactPhone', 'Contact Phone', true, 'tel')}
                     {renderTextField('emergencyContactAddress', 'Contact Address', false)}
                  </div>
+            </div>
+          )}
+
+          {activeTab === 'client' && (
+            <div className="space-y-4 animate-fade-in bg-white p-4 rounded-md shadow-sm border border-gray-200">
+              <h3 className="font-medium text-lg border-b pb-2 mb-4">Client Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {renderTextField('clientName', 'Client Name')}
+                {renderTextField('clientEmail', 'Client Email', false, 'email')}
+              </div>
             </div>
           )}
 

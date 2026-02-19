@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { recruitmentService } from '@/services/recruitmentService';
-import { Applicant } from '@/types';
+import { supabase } from '@/lib/supabase';
+import { Applicant, Interview, OfferStatus } from '@/types';
 
 export default function ApplicantDetailsPage() {
   const params = useParams();
@@ -12,23 +13,204 @@ export default function ApplicantDetailsPage() {
   const id = params?.id as string;
 
   const [applicant, setApplicant] = useState<Applicant | null>(null);
+  const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
+  const [savingInterview, setSavingInterview] = useState(false);
+  const [interviewError, setInterviewError] = useState<string | null>(null);
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(null);
+  const [newInterviewType, setNewInterviewType] = useState<Interview['type']>('Phone');
+  const [newInterviewDate, setNewInterviewDate] = useState('');
+  const [newInterviewDuration, setNewInterviewDuration] = useState('30');
+  const [newInterviewLocation, setNewInterviewLocation] = useState('');
+  const [newInterviewNotes, setNewInterviewNotes] = useState('');
 
   useEffect(() => {
     if (id) {
-      loadData();
+      loadData(id);
     }
   }, [id]);
 
-  const loadData = async () => {
+  useEffect(() => {
+    const fetchCurrentEmployee = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.email) {
+          const { data } = await supabase
+            .from('employees')
+            .select('id')
+            .eq('email', user.email)
+            .single();
+          if (data) {
+            setCurrentEmployeeId(data.id);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load current employee for offers:', error);
+      }
+    };
+
+    fetchCurrentEmployee();
+  }, []);
+
+  useEffect(() => {
+    if (!id) return;
+
+    const channel = supabase
+      .channel(`recruitment-interviews-applicant-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'interviews',
+          filter: `applicant_id=eq.${id}`,
+        },
+        payload => {
+          const record: any = payload.new ?? payload.old;
+          const mapped: Interview = {
+            id: record.id,
+            applicantId: record.applicant_id,
+            type: record.type,
+            scheduledDate: record.scheduled_date,
+            duration: record.duration,
+            interviewerId: record.interviewer_id,
+            interviewerName: '',
+            interviewerRole: 'Interviewer',
+            location: record.location,
+            meetingLink: record.meeting_link,
+            status: record.status,
+            feedback: record.feedback,
+            rating: record.rating,
+            recommendation: record.recommendation,
+            notes: record.notes,
+          };
+
+          if (payload.eventType === 'INSERT') {
+            setInterviews(prev => {
+              if (prev.some(i => i.id === mapped.id)) return prev;
+              return [...prev, mapped];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setInterviews(prev =>
+              prev.map(i => (i.id === mapped.id ? { ...i, ...mapped } : i))
+            );
+          } else if (payload.eventType === 'DELETE') {
+            setInterviews(prev => prev.filter(i => i.id !== mapped.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
+
+  const loadData = async (applicantId: string) => {
     try {
       setLoading(true);
-      const data = await recruitmentService.getApplicantById(id);
+      const data = await recruitmentService.getApplicantById(applicantId);
       setApplicant(data);
+      setInterviews(data?.interviews || []);
     } catch (error) {
       console.error('Failed to load applicant details:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleScheduleInterview = async () => {
+    if (!applicant) return;
+    if (!newInterviewDate) {
+      setInterviewError('Please select a date and time for the interview.');
+      return;
+    }
+
+    try {
+      setSavingInterview(true);
+      setInterviewError(null);
+
+      const created = await recruitmentService.createInterview({
+        applicantId: applicant.id,
+        type: newInterviewType,
+        scheduledDate: newInterviewDate,
+        duration: parseInt(newInterviewDuration || '30', 10),
+        location: newInterviewLocation || undefined,
+        status: 'Scheduled',
+        notes: newInterviewNotes || undefined,
+      });
+
+      setInterviews(prev => [...prev, created]);
+
+      if (applicant.status !== 'Interview') {
+        const updatedApplicant = await recruitmentService.updateApplicant(applicant.id, {
+          status: 'Interview',
+          currentStage: 'Interview',
+        });
+        setApplicant(updatedApplicant);
+      }
+
+      setNewInterviewDate('');
+      setNewInterviewDuration('30');
+      setNewInterviewLocation('');
+      setNewInterviewNotes('');
+    } catch (error: any) {
+      const message =
+        error?.message ||
+        (error && typeof error === 'object' ? JSON.stringify(error, null, 2) : String(error));
+      console.error('Failed to schedule interview:', message);
+      setInterviewError('Unable to schedule interview. Please try again.');
+    } finally {
+      setSavingInterview(false);
+    }
+  };
+
+  const handleUpdateInterviewStatus = async (interviewId: string, status: Interview['status']) => {
+    try {
+      const updated = await recruitmentService.updateInterview(interviewId, { status });
+      setInterviews(prev =>
+        prev.map(i => (i.id === interviewId ? updated : i))
+      );
+
+      if (
+        status === 'Completed' &&
+        applicant &&
+        applicant.jobId &&
+        currentEmployeeId &&
+        (!applicant.offers || applicant.offers.length === 0)
+      ) {
+        const today = new Date();
+        const start = new Date();
+        start.setMonth(start.getMonth() + 1);
+
+        await recruitmentService.createOffer({
+          applicantId: applicant.id,
+          jobId: applicant.jobId,
+          salary: {
+            base: applicant.expectedSalary || 0,
+            currency: 'AUD',
+            frequency: 'Annually'
+          },
+          benefits: [],
+          startDate: start.toISOString().split('T')[0],
+          probationPeriod: 6,
+          noticePeriod: 4,
+          status: 'Draft' as OfferStatus,
+          notes: `Draft offer created automatically after completed interview on ${today.toISOString().split('T')[0]}`,
+          createdBy: currentEmployeeId
+        });
+
+        const refreshed = await recruitmentService.getApplicantById(applicant.id);
+        if (refreshed) {
+          setApplicant(refreshed);
+          setInterviews(refreshed.interviews || []);
+        }
+
+        alert('Draft offer created for this applicant. You can review it in the Offers section.');
+      }
+    } catch (error) {
+      console.error('Failed to update interview status:', error);
+      setInterviewError('Unable to update interview status. Please try again.');
     }
   };
 
@@ -69,7 +251,6 @@ export default function ApplicantDetailsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Info */}
         <div className="lg:col-span-2 space-y-6">
-            {/* Experience & Details */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold mb-4">Application Details</h2>
                 <div className="space-y-4">
@@ -101,8 +282,183 @@ export default function ApplicantDetailsPage() {
                     </div>
                 </div>
             </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold">Interviews</h2>
+              </div>
+
+              {interviewError && (
+                <p className="text-sm text-red-600 mb-3">{interviewError}</p>
+              )}
+
+              {interviews.length > 0 ? (
+                <div className="space-y-4 mb-6">
+                  {interviews.map(interview => {
+                    const dateLabel = interview.scheduledDate
+                      ? new Date(interview.scheduledDate).toLocaleString()
+                      : 'Not scheduled';
+                    const statusColor =
+                      interview.status === 'Scheduled'
+                        ? 'bg-blue-100 text-blue-800'
+                        : interview.status === 'Completed'
+                        ? 'bg-green-100 text-green-800'
+                        : interview.status === 'Cancelled'
+                        ? 'bg-red-100 text-red-800'
+                        : 'bg-gray-100 text-gray-800';
+
+                    return (
+                      <div
+                        key={interview.id}
+                        className="border border-gray-200 rounded-lg p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-medium text-gray-900">
+                              {interview.type} Interview
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 text-xs rounded-full ${statusColor}`}
+                            >
+                              {interview.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-500">
+                            {dateLabel}
+                            {interview.duration
+                              ? ` • ${interview.duration} mins`
+                              : ''}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            {interview.interviewerName
+                              ? `Interviewer: ${interview.interviewerName}`
+                              : ''}
+                            {interview.location
+                              ? `${interview.interviewerName ? ' • ' : ''}${interview.location}`
+                              : ''}
+                          </p>
+                        </div>
+                        {interview.status === 'Scheduled' && (
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdateInterviewStatus(
+                                  interview.id,
+                                  'Completed'
+                                )
+                              }
+                              className="px-3 py-1 rounded-md text-xs font-medium bg-green-600 text-white hover:bg-green-700"
+                            >
+                              Mark Completed
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdateInterviewStatus(
+                                  interview.id,
+                                  'Cancelled'
+                                )
+                              }
+                              className="px-3 py-1 rounded-md text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="mb-6 text-sm text-gray-500">
+                  No interviews scheduled yet.
+                </div>
+              )}
+
+              <div className="border-t border-gray-200 pt-4 mt-2">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  Schedule New Interview
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Type
+                    </label>
+                    <select
+                      value={newInterviewType}
+                      onChange={e =>
+                        setNewInterviewType(e.target.value as Interview['type'])
+                      }
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="Phone">Phone</option>
+                      <option value="Video">Video</option>
+                      <option value="In-person">In-person</option>
+                      <option value="Panel">Panel</option>
+                      <option value="Technical">Technical</option>
+                      <option value="HR">HR</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={newInterviewDate}
+                      onChange={e => setNewInterviewDate(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Duration (mins)
+                    </label>
+                    <input
+                      type="number"
+                      min={15}
+                      step={15}
+                      value={newInterviewDuration}
+                      onChange={e => setNewInterviewDuration(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Location / Link
+                    </label>
+                    <input
+                      type="text"
+                      value={newInterviewLocation}
+                      onChange={e => setNewInterviewLocation(e.target.value)}
+                      placeholder="Meeting room or video link"
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                    Notes (optional)
+                  </label>
+                  <textarea
+                    value={newInterviewNotes}
+                    onChange={e => setNewInterviewNotes(e.target.value)}
+                    rows={3}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleScheduleInterview}
+                  disabled={savingInterview}
+                  className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {savingInterview ? 'Scheduling...' : 'Schedule Interview'}
+                </button>
+              </div>
+            </div>
             
-            {/* Notes */}
             {applicant.notes && (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <h2 className="text-lg font-semibold mb-4">Notes</h2>

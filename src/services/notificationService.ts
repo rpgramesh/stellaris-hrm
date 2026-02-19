@@ -11,59 +11,101 @@ export interface Notification {
   createdAt: string;
 }
 
+const formatError = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+};
+
 export const notificationService = {
-  // Fetch notifications for the current user
   getMyNotifications: async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
+    try {
+      const { data, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error getting current user for notifications:', formatError(userError));
+        return [];
+      }
 
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
+      const user = data?.user;
+      if (!user) {
+        return [];
+      }
 
-    if (error) {
-      console.error('Error fetching notifications:', error);
+      const { data: rows, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        console.error('Error fetching notifications:', formatError(error));
+        return [];
+      }
+
+      if (!rows) {
+        return [];
+      }
+
+      return rows.map((n: any) => ({
+        id: n.id,
+        userId: n.user_id,
+        title: n.title,
+        message: n.message,
+        type: n.type,
+        isRead: n.is_read,
+        createdAt: n.created_at,
+      }));
+    } catch (err) {
+      console.error('Unexpected error in getMyNotifications:', formatError(err));
       return [];
     }
-
-    return data.map((n: any) => ({
-      id: n.id,
-      userId: n.user_id,
-      title: n.title,
-      message: n.message,
-      type: n.type,
-      isRead: n.is_read,
-      createdAt: n.created_at,
-    }));
   },
 
-  // Mark a notification as read
   markAsRead: async (id: string) => {
     const { error } = await supabase
       .from('notifications')
       .update({ is_read: true })
       .eq('id', id);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error marking notification as read:', formatError(error));
+      throw error;
+    }
   },
 
-  // Mark all as read
   markAllAsRead: async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const { data, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error getting current user for markAllAsRead:', formatError(userError));
+        return;
+      }
 
-    const { error } = await supabase
-      .from('notifications')
-      .update({ is_read: true })
-      .eq('user_id', user.id);
+      const user = data?.user;
+      if (!user) {
+        return;
+      }
 
-    if (error) throw error;
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('Error marking all notifications as read:', formatError(error));
+        throw error;
+      }
+    } catch (err) {
+      console.error('Unexpected error in markAllAsRead:', formatError(err));
+    }
   },
 
-  // Create a notification (system use)
   createNotification: async (userId: string, title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const { error } = await supabase
       .from('notifications')
@@ -74,6 +116,8 @@ export const notificationService = {
         type,
       });
 
-    if (error) console.error('Error creating notification:', error);
+    if (error) {
+      console.error('Error creating notification:', formatError(error));
+    }
   }
 };

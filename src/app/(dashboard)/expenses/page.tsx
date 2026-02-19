@@ -219,15 +219,23 @@ export default function ExpensesPage() {
                           <div className="flex gap-2">
                             <button 
                               onClick={() => handleStatusChange(exp.id, 'Approved')}
-                              className="text-green-600 hover:text-green-900 font-medium"
+                              className="text-green-600 hover:text-green-900 bg-green-50 p-1.5 rounded"
+                              title="Approve"
                             >
-                              Approve
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75l2.25 2.25L15 9.75" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
                             </button>
                             <button 
                               onClick={() => handleStatusChange(exp.id, 'Rejected')}
-                              className="text-red-600 hover:text-red-900 font-medium"
+                              className="text-red-600 hover:text-red-900 bg-red-50 p-1.5 rounded"
+                              title="Reject"
                             >
-                              Reject
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
                             </button>
                           </div>
                         )}

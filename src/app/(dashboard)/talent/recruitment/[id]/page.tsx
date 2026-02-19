@@ -52,6 +52,55 @@ export default function JobDetailsPage() {
   if (loading) return <div className="p-8 text-center">Loading job details...</div>;
   if (!job) return <div className="p-8 text-center">Job not found.</div>;
 
+  const now = new Date();
+  let effectiveStatus = job.status;
+  if (job.closingDate) {
+    const closing = new Date(job.closingDate);
+    if (closing < now && (job.status === 'Published' || job.status === 'Paused')) {
+      effectiveStatus = 'Closed';
+    }
+  }
+
+  let displayStatus: string = effectiveStatus;
+  if (effectiveStatus !== 'Closed' && applicants.length > 0) {
+    const statuses = applicants.map(a => a.status);
+    const hasHired = statuses.includes('Hired');
+    const hasOffer = statuses.includes('Offer');
+    const hasInterviewStage =
+      statuses.includes('Interview') ||
+      applicants.some(a => Array.isArray(a.interviews) && a.interviews.length > 0);
+    const hasScreening = statuses.includes('Screening');
+
+    if (hasHired) {
+      displayStatus = 'Filled';
+    } else if (hasOffer) {
+      displayStatus = 'Offer';
+    } else if (hasInterviewStage) {
+      displayStatus = 'Interview';
+    } else if (hasScreening) {
+      displayStatus = 'Screening';
+    }
+  }
+
+  const statusColor =
+    displayStatus === 'Published'
+      ? 'bg-green-100 text-green-800'
+      : displayStatus === 'Draft'
+      ? 'bg-gray-100 text-gray-800'
+      : displayStatus === 'Paused'
+      ? 'bg-yellow-100 text-yellow-800'
+      : displayStatus === 'Filled'
+      ? 'bg-blue-100 text-blue-800'
+      : displayStatus === 'Closed'
+      ? 'bg-red-100 text-red-800'
+      : displayStatus === 'Offer'
+      ? 'bg-purple-100 text-purple-800'
+      : displayStatus === 'Interview'
+      ? 'bg-blue-100 text-blue-800'
+      : displayStatus === 'Screening'
+      ? 'bg-yellow-100 text-yellow-800'
+      : 'bg-gray-100 text-gray-800';
+
   return (
     <div className="max-w-6xl mx-auto py-8 px-4">
       <div className="mb-6 flex justify-between items-start">
@@ -61,10 +110,8 @@ export default function JobDetailsPage() {
           </Link>
           <div className="flex items-center gap-4">
             <h1 className="text-3xl font-bold text-gray-900">{job.title}</h1>
-            <span className={`px-3 py-1 rounded-full text-sm font-medium
-              ${job.status === 'Published' ? 'bg-green-100 text-green-800' : 
-                job.status === 'Draft' ? 'bg-gray-100 text-gray-800' : 'bg-yellow-100 text-yellow-800'}`}>
-              {job.status}
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColor}`}>
+              {displayStatus}
             </span>
           </div>
           <p className="text-gray-500 mt-1">{job.department} • {job.location} ({job.locationType})</p>

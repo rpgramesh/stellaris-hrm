@@ -117,7 +117,11 @@ export default function HolidayPage() {
                     {holiday.isRecurring ? 'Yes' : 'No'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button onClick={() => handleDelete(holiday.id)} className="text-red-600 hover:text-red-900">
+                    <button
+                      onClick={() => handleDelete(holiday.id)}
+                      className="text-red-600 hover:text-red-900 bg-red-50 p-1.5 rounded"
+                      title="Delete"
+                    >
                       <TrashIcon className="h-5 w-5" />
                     </button>
                   </td>

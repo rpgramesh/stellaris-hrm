@@ -34,16 +34,10 @@ const menuItems = [
       { name: 'Offboarding', href: '/employees/offboarding' },
       { name: 'Request', href: '/employees/requests' },
       { type: 'divider' },
-      { name: 'Placement', href: '/employees/placements' },
       { name: 'Employment Terms', href: '/employees/terms' },
       { name: 'Education', href: '/employees/education' },
       { name: 'Experience', href: '/employees/experience' },
-      { name: 'Training', href: '/employees/training' },
       { name: 'Identification Documents', href: '/employees/documents' },
-      { type: 'divider' },
-      { name: 'Custom Role', href: '/employees/custom-roles' },
-      { type: 'divider' },
-      { name: 'Web Account', href: '/employees/web-accounts' },
     ]
   },
   {
@@ -52,7 +46,6 @@ const menuItems = [
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     subItems: [
       { name: 'Recruitment (ATS)', href: '/talent/recruitment' },
-      { name: 'Performance', href: '/talent/performance' },
       { name: 'L&D / Training', href: '/talent/learning' },
     ]
   },
@@ -98,9 +91,6 @@ const menuItems = [
     href: '/attendance', 
     icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
     subItems: [
-      { name: 'Management', href: '/attendance/management' },
-      { name: 'Field Check-In', href: '/attendance/field-check-in' },
-      { name: 'Time Clock Report', href: '/attendance/time-clock-report' },
       { name: 'Projects & Approvers', href: '/attendance/projects' },
       { name: 'Workday', href: '/attendance/workday' },
       { name: 'Holiday', href: '/attendance/holiday' },
@@ -307,22 +297,24 @@ export default function Sidebar() {
         </Link>
         
         {isExpanded && (
-            <button 
-                onClick={() => setIsLocked(!isLocked)}
-                className="text-gray-400 hover:text-gray-700 transition-colors p-1 rounded-md hover:bg-gray-100 ml-2"
-                title={isLocked ? "Unlock Sidebar" : "Lock Sidebar"}
+          <button 
+            onClick={() => setIsLocked(!isLocked)}
+            className="flex items-center text-xs text-gray-500 hover:text-gray-700 transition-colors ml-3"
+            title={isLocked ? 'Sidebar pinned open' : 'Sidebar auto-hide'}
+            type="button"
+          >
+            <span
+              className={`w-9 h-5 flex items-center rounded-full transition-colors ${
+                isLocked ? 'bg-blue-500' : 'bg-gray-300'
+              }`}
             >
-                {isLocked ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <circle cx="12" cy="12" r="3"></circle>
-                    </svg>
-                ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                    </svg>
-                )}
-            </button>
+              <span
+                className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform ${
+                  isLocked ? 'translate-x-4' : 'translate-x-1'
+                }`}
+              />
+            </span>
+          </button>
         )}
       </div>
       <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden">
