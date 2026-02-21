@@ -3,18 +3,50 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { auditService } from '@/services/auditService';
 
 export default function ChangePasswordPage() {
   const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState(0);
+  const [blockedUntil, setBlockedUntil] = useState<number | null>(null);
+
+  const validatePassword = (value: string): string | null => {
+    if (value.length < 12) return 'Password must be at least 12 characters.';
+    if (!/[A-Z]/.test(value)) return 'Password must include at least one uppercase letter.';
+    if (!/[a-z]/.test(value)) return 'Password must include at least one lowercase letter.';
+    if (!/[0-9]/.test(value)) return 'Password must include at least one number.';
+    if (!/[!@#$%^&*()[\]\-_=+{};:\'",.<>/?\\|`~]/.test(value)) {
+      return 'Password must include at least one special character.';
+    }
+    return null;
+  };
+
+  const hashPasswordForComparison = async (value: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(value);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const bytes = new Uint8Array(digest);
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    if (blockedUntil && Date.now() < blockedUntil) {
+      setLoading(false);
+      setError('Too many attempts. Please wait a few minutes before trying again.');
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError("Passwords do not match");
@@ -22,13 +54,72 @@ export default function ChangePasswordPage() {
       return;
     }
 
+    const policyError = validatePassword(password);
+    if (policyError) {
+      setError(policyError);
+      setLoading(false);
+      setAttempts((prev) => prev + 1);
+      if (attempts + 1 >= 5) {
+        setBlockedUntil(Date.now() + 5 * 60 * 1000);
+      }
+      return;
+    }
+
     try {
+      const {
+        data: { user: sessionUser },
+      } = await supabase.auth.getUser();
+
+      let user = sessionUser;
+
+      if (!user) {
+        if (!email || !currentPassword) {
+          setError('Email and current password are required.');
+          setLoading(false);
+          return;
+        }
+
+        const { data: signInData, error: signInError } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password: currentPassword,
+          });
+
+        if (signInError || !signInData.user) {
+          setError(
+            signInError?.message || 'Current password is incorrect.'
+          );
+          setAttempts((prev) => prev + 1);
+          if (attempts + 1 >= 5) {
+            setBlockedUntil(Date.now() + 5 * 60 * 1000);
+          }
+          setLoading(false);
+          return;
+        }
+
+        user = signInData.user;
+      }
+
+      const metadata = user?.user_metadata || {};
+      const existingHash = typeof metadata.initial_password_hash === 'string' ? metadata.initial_password_hash : null;
+
+      if (existingHash) {
+        const newHash = await hashPasswordForComparison(password);
+        if (newHash === existingHash) {
+          setError('New password cannot be the same as your initial temporary password.');
+          setLoading(false);
+          setAttempts((prev) => prev + 1);
+          if (attempts + 1 >= 5) {
+            setBlockedUntil(Date.now() + 5 * 60 * 1000);
+          }
+          return;
+        }
+      }
+
       // 1. Update Password
       const { error: authError } = await supabase.auth.updateUser({ password });
       if (authError) throw authError;
 
-      // 2. Update Employee Record
-      const { data: { user } } = await supabase.auth.getUser();
       if (user) {
           const { error: dbError } = await supabase
             .from('employees')
@@ -38,6 +129,17 @@ export default function ChangePasswordPage() {
           if (dbError) {
               console.error('Error updating employee record:', dbError);
           }
+
+          await auditService.logAction(
+            'auth',
+            user.id,
+            'SYSTEM_ACTION',
+            null,
+            {
+              event: 'PASSWORD_CHANGED',
+              occurred_at: new Date().toISOString(),
+            }
+          );
       }
 
       // Force reload or redirect to dashboard
@@ -45,6 +147,10 @@ export default function ChangePasswordPage() {
       router.refresh(); 
     } catch (err: any) {
       setError(err.message || 'Failed to change password');
+      setAttempts((prev) => prev + 1);
+      if (attempts + 1 >= 5) {
+        setBlockedUntil(Date.now() + 5 * 60 * 1000);
+      }
     } finally {
       setLoading(false);
     }
@@ -54,7 +160,9 @@ export default function ChangePasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="bg-white p-8 rounded-lg shadow-md w-96">
         <h1 className="text-2xl font-bold mb-6 text-center text-gray-900">Change Password</h1>
-        <p className="text-sm text-gray-600 mb-4 text-center">Please set a new password for your account.</p>
+        <p className="text-sm text-gray-600 mb-4 text-center">
+          Enter your email, current password, and a new password.
+        </p>
         
         {error && (
           <div className="bg-red-50 text-red-500 p-3 rounded mb-4 text-sm">
@@ -63,6 +171,26 @@ export default function ChangePasswordPage() {
         )}
 
         <form onSubmit={handleChangePassword} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Email (username)</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Current Password</label>
+            <input
+              type="password"
+              required
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900"
+            />
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">New Password</label>
             <input 
@@ -87,7 +215,7 @@ export default function ChangePasswordPage() {
           </div>
           <button 
             type="submit" 
-            disabled={loading}
+            disabled={loading || (blockedUntil !== null && Date.now() < blockedUntil)}
             className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
           >
             {loading ? 'Updating...' : 'Update Password'}

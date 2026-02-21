@@ -8,6 +8,7 @@ import { learningService } from '@/services/learningService';
 import { hardwareOnboardingService } from '@/services/hardwareOnboardingService';
 import { notificationService } from '@/services/notificationService';
 import { legalDocumentService } from '@/services/legalDocumentService';
+import { auditService } from '@/services/auditService';
 import {
   UserPlusIcon,
   CheckCircleIcon,
@@ -30,6 +31,7 @@ interface HRIdCheckDoc {
   url?: string;
   uploadedDate?: string;
   remark?: string | null;
+  isResubmission?: boolean;
 }
 
 const parseIdCheckMetadata = (remark?: string | null): {
@@ -37,6 +39,7 @@ const parseIdCheckMetadata = (remark?: string | null): {
   points?: number;
   status: IDStatus;
   typeLabel?: string;
+  isResubmission?: boolean;
 } => {
   if (!remark) {
     return { status: 'Pending' };
@@ -46,6 +49,7 @@ const parseIdCheckMetadata = (remark?: string | null): {
   let points: number | undefined;
   let status: IDStatus = 'Pending';
   let typeLabel: string | undefined;
+  let isResubmission: boolean | undefined;
 
   const categoryMatch = remark.match(/\[ID_CHECK_CATEGORY:(Primary|Secondary|Tertiary)\]/);
   if (categoryMatch) {
@@ -70,7 +74,12 @@ const parseIdCheckMetadata = (remark?: string | null): {
     typeLabel = typeMatch[1];
   }
 
-  return { category, points, status, typeLabel };
+  const resubMatch = remark.match(/\[ID_CHECK_RESUBMISSION:(true|false)\]/);
+  if (resubMatch) {
+    isResubmission = resubMatch[1] === 'true';
+  }
+
+  return { category, points, status, typeLabel, isResubmission };
 };
 
 const upsertIdCheckStatusTag = (remark: string | null | undefined, status: IDStatus): string => {
@@ -111,7 +120,7 @@ const getDocumentSubmissionClasses = (stage: DocumentSubmissionStage, completed:
   if (completed || stage === 'approved') {
     return 'bg-green-100 text-green-800 border border-green-200 cursor-default';
   }
-  if (stage === 'submitted') {
+  if (stage === 'submitted' || stage === 'requested') {
     return 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer';
   }
   if (stage === 'sent_back') {
@@ -189,6 +198,7 @@ export default function OnboardingPage() {
     action: IDStatus;
     comment: string;
   } | null>(null);
+  const [idCheckDocError, setIdCheckDocError] = useState<string | null>(null);
   const [documentSubmissionStatus, setDocumentSubmissionStatus] = useState<
     Record<string, DocumentSubmissionStage>
   >({});
@@ -242,7 +252,8 @@ export default function OnboardingPage() {
                     status: meta.status,
                     url,
                     uploadedDate: doc.issueDate || undefined,
-                    remark: doc.remark
+                    remark: doc.remark,
+                    isResubmission: meta.isResubmission
                   };
                 });
               const totalPoints = idDocs.reduce((sum, item) => sum + (item.points || 0), 0);
@@ -360,13 +371,21 @@ export default function OnboardingPage() {
     status: IDStatus,
     comment?: string
   ): Promise<HRIdCheckDoc> => {
-    let newRemark = upsertIdCheckStatusTag(doc.remark, status);
+    const oldRemark = doc.remark || '';
+    let newRemark = upsertIdCheckStatusTag(oldRemark, status);
     const trimmedComment = comment?.trim();
     if (trimmedComment) {
       const withoutOldReason = newRemark.replace(/\s*Reason from HR:.*$/s, '');
       newRemark = `${withoutOldReason} Reason from HR: ${trimmedComment}`;
     }
     const updated = await legalDocumentService.update(doc.id, { remark: newRemark });
+    await auditService.logAction(
+      'legal_documents',
+      doc.id,
+      'UPDATE',
+      { status: doc.status, remark: oldRemark },
+      { status, remark: newRemark }
+    );
     const meta = parseIdCheckMetadata(updated.remark);
     const url =
       Array.isArray(updated.attachment) && updated.attachment.length > 0
@@ -775,10 +794,20 @@ export default function OnboardingPage() {
               <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
                 100-Point ID Check
               </h3>
-              <p className="text-sm text-gray-500 mb-3">
+              <p className="text-sm text-gray-500 mb-2">
                 Uploaded documents for {idCheckModal.employeeName}. Review the points and send back
                 to the employee if changes are required.
               </p>
+              {(() => {
+                const resubCount = idCheckModal.docs.filter(doc => doc.isResubmission).length;
+                if (!resubCount) return null;
+                return (
+                  <p className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2">
+                    This is a resubmitted 100-point ID application. {resubCount} document
+                    {resubCount > 1 ? 's have' : ' has'} been uploaded as part of a resubmission.
+                  </p>
+                );
+              })()}
               {idCheckLoading ? (
                 <p className="text-sm text-gray-500">Loading ID documents...</p>
               ) : idCheckModal.docs.length === 0 ? (
@@ -822,6 +851,7 @@ export default function OnboardingPage() {
                               {typeof doc.points === 'number' && `• ${doc.points} points`}
                               {doc.uploadedDate &&
                                 ` • Uploaded ${new Date(doc.uploadedDate).toLocaleDateString()}`}
+                              {doc.isResubmission && ' • Resubmission'}
                             </p>
                           </div>
                           <div className="flex flex-col items-end gap-1">
@@ -1108,7 +1138,7 @@ export default function OnboardingPage() {
               </div>
               <div className="mb-3">
                 <label className="block text-xs font-semibold text-gray-600 mb-1">
-                  Message to employee (optional)
+                  Message to employee (required, minimum 10 characters)
                 </label>
                 <textarea
                   rows={3}
@@ -1121,6 +1151,16 @@ export default function OnboardingPage() {
                   className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="Explain what needs to be updated or confirm the document is approved."
                 />
+                <div className="mt-1 flex items-center justify-between">
+                  <p className="text-[11px] text-gray-500">
+                    {idCheckDocModal.comment.length} characters
+                  </p>
+                  {idCheckDocError && (
+                    <p className="text-[11px] text-red-600">
+                      {idCheckDocError}
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="flex justify-end gap-2 mt-3">
                 <button
@@ -1136,9 +1176,15 @@ export default function OnboardingPage() {
                   disabled={idCheckLoading}
                   onClick={async () => {
                     if (!idCheckModal || !idCheckDocModal) return;
+                    const trimmed = idCheckDocModal.comment.trim();
+                    if (trimmed.length < 10) {
+                      setIdCheckDocError('Remarks must be at least 10 characters.');
+                      return;
+                    }
                     const employee = getEmployee(idCheckModal.employeeId);
                     try {
                       setIdCheckLoading(true);
+                      setIdCheckDocError(null);
                       const updated = await updateIdCheckDocStatus(
                         idCheckDocModal.doc,
                         idCheckDocModal.action,
@@ -1157,20 +1203,24 @@ export default function OnboardingPage() {
                           )
                         )
                       }));
-                      if (
-                        employee &&
-                        employee.userId &&
-                        idCheckDocModal.action === 'Rejected'
-                      ) {
+                      if (employee && employee.userId) {
+                        const trimmed = idCheckDocModal.comment.trim();
                         const reason =
-                          idCheckDocModal.comment.trim() ||
-                          'HR has requested changes to one of your 100-point ID documents. Please review and upload an updated document.';
-                        const message = `The document "${updated.typeLabel}" needs updates. Reason: ${reason}`;
+                          trimmed ||
+                          (idCheckDocModal.action === 'Rejected'
+                            ? 'HR has requested changes to one of your 100-point ID documents. Please review and upload an updated document.'
+                            : 'HR has reviewed one of your 100-point ID documents.');
+                        const message =
+                          idCheckDocModal.action === 'Rejected'
+                            ? `The document "${updated.typeLabel}" needs updates. Reason: ${reason}`
+                            : `The document "${updated.typeLabel}" has been approved. Remarks: ${reason}`;
+                        const type =
+                          idCheckDocModal.action === 'Rejected' ? 'warning' : 'success';
                         await notificationService.createNotification(
                           employee.userId,
-                          'Update 100-Point ID Documents',
+                          '100-Point ID Documents',
                           message,
-                          'warning'
+                          type
                         );
                       }
                       setIdCheckModal({
@@ -1797,11 +1847,7 @@ export default function OnboardingPage() {
                             pillTitle = 'Client onboarding documents verified and approved.';
                             pillLabel = 'Client Onboarding Documents (Approved)';
                           } else {
-                            const clientClasses =
-                              clientStage === 'updated'
-                                ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
-                                : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
-                            pillClasses = `${commonClasses} ${clientClasses}`;
+                            pillClasses = `${commonClasses} bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer`;
                             pillTitle =
                               clientStage === 'updated'
                                 ? 'Employee has provided client details. Review and complete this task.'
@@ -1816,11 +1862,7 @@ export default function OnboardingPage() {
                             pillTitle = 'Hardware setup completed.';
                             pillLabel = 'Hardware Setup';
                           } else {
-                            const hardwareClasses =
-                              hardwareStage === 'updated'
-                                ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
-                                : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer';
-                            pillClasses = `${commonClasses} ${hardwareClasses}`;
+                            pillClasses = `${commonClasses} bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer`;
                             pillTitle =
                               hardwareStage === 'updated'
                                 ? 'Employee has provided hardware onboarding details. Review and complete this task.'
@@ -1835,6 +1877,8 @@ export default function OnboardingPage() {
                               ? 'bg-green-100 text-green-800 cursor-default'
                               : isAssignedMandatory
                               ? 'bg-blue-100 text-blue-800 border border-blue-200 hover:bg-blue-200 cursor-pointer'
+                              : isMandatoryTask
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 cursor-pointer'
                               : 'bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200 cursor-pointer'
                           }`;
                           pillTitle = undefined;

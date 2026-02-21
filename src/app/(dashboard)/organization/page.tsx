@@ -245,6 +245,7 @@ export default function OrganizationPage() {
               <option value="branches">Branches</option>
               <option value="departments">Departments</option>
               <option value="employees">Managers/Employees</option>
+              <option value="auth">Password/Security</option>
             </select>
           </div>
           <div className="flex-1 min-w-[200px]">
@@ -258,6 +259,7 @@ export default function OrganizationPage() {
               <option value="INSERT">Create (INSERT)</option>
               <option value="UPDATE">Update</option>
               <option value="DELETE">Delete</option>
+              <option value="SYSTEM_ACTION">Security Events</option>
             </select>
           </div>
           <div className="flex-none flex items-end">

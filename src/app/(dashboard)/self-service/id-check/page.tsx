@@ -8,6 +8,7 @@ import { legalDocumentService } from '@/services/legalDocumentService';
 import { auditService } from '@/services/auditService';
 import { notificationService } from '@/services/notificationService';
 import { saveEmployeeDrafts, loadEmployeeDrafts } from '@/utils/idCheckDraftStorage';
+import { validateIdCheckSubmission } from '@/utils/idCheckValidation';
 import type { Employee, LegalDocument } from '@/types';
 
 type IDCategory = 'Primary' | 'Secondary' | 'Tertiary';
@@ -200,8 +201,8 @@ export default function IDCheckPage() {
 
   useEffect(() => {
     const draftPoints = drafts.reduce((sum, d) => sum + d.points, 0);
-    setTotalPoints(existingPoints + draftPoints);
-  }, [existingPoints, drafts]);
+    setTotalPoints(draftPoints);
+  }, [drafts]);
 
   useEffect(() => {
     if (!employee) return;
@@ -311,6 +312,10 @@ export default function IDCheckPage() {
   const handleDrop = (category: IDCategory, e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    if (category === 'Secondary' && !primaryRequirementSatisfiedForSecondary) {
+      setError('At least one primary document must be uploaded before adding secondary documents.');
+      return;
+    }
     if (category === 'Tertiary') {
       handleFilesSelected(category, e.dataTransfer.files);
       return;
@@ -324,6 +329,10 @@ export default function IDCheckPage() {
   };
 
   const handleZoneClick = (category: IDCategory) => {
+    if (category === 'Secondary' && !primaryRequirementSatisfiedForSecondary) {
+      setError('At least one primary document must be uploaded before adding secondary documents.');
+      return;
+    }
     if (category === 'Tertiary') {
       const ref = tertiaryInputRef.current;
       ref?.click();
@@ -339,18 +348,37 @@ export default function IDCheckPage() {
     }
   };
 
+  const handlePreviewDraft = (draftId: string) => {
+    const draft = drafts.find(d => d.id === draftId);
+    if (!draft || !draft.file) return;
+    const url = URL.createObjectURL(draft.file);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 60000);
+  };
+
   const removeDraft = (id: string) => {
     setDrafts(prev => prev.filter(d => d.id !== id));
   };
 
   const categoryDrafts = (category: IDCategory) => drafts.filter(d => d.category === category);
 
+  const hasPrimaryDraft = drafts.some(d => d.category === 'Primary');
+  const hasAnyPrimaryUploaded = idDocs.some(
+    d => d.category === 'Primary' && d.status !== 'Rejected'
+  );
+  const primaryRequirementSatisfiedForSecondary = hasPrimaryDraft || hasAnyPrimaryUploaded;
+
   const hasUploadableDraft = drafts.some(d => d.file);
-  const canSubmit = totalPoints >= 100 && hasUploadableDraft && !uploading;
+  const canSubmit = totalPoints >= 100 && hasUploadableDraft && hasPrimaryDraft && !uploading;
 
   const validationMessage = () => {
+    if (!hasPrimaryDraft) {
+      return 'At least one primary document must be uploaded before submission';
+    }
     if (totalPoints < 100) {
-      return `You currently have ${totalPoints} points. You need at least 100 points to submit.`;
+      return `You currently have ${totalPoints} points. You need at least 100 points before submitting.`;
     }
     return '';
   };
@@ -398,14 +426,36 @@ export default function IDCheckPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!employee || drafts.length === 0 || totalPoints < 100) return;
+    if (!employee || drafts.length === 0) return;
     setUploading(true);
     setError(null);
     setSuccess(null);
     try {
+      const uploadableDrafts = drafts.filter(d => d.file);
+      const validation = validateIdCheckSubmission(uploadableDrafts);
+      if (!validation.valid) {
+        setError(validation.errors.join(' '));
+        setUploading(false);
+        return;
+      }
+
+      const isResubmission = existingPoints > 0;
+      if (isResubmission) {
+        await auditService.logAction(
+          'id_check_points',
+          employee.id,
+          'SYSTEM_ACTION',
+          { previousVerifiedPoints: existingPoints },
+          {
+            previousVerifiedPoints: existingPoints,
+            resetTo: 0,
+            reason: 'Resubmission of 100-point ID check'
+          }
+        );
+      }
+
       const created: IDStoredDoc[] = [];
       let skippedMissingFile = false;
-      const uploadableDrafts = drafts.filter(d => d.file);
       if (uploadableDrafts.length !== drafts.length) {
         skippedMissingFile = true;
       }
@@ -416,7 +466,7 @@ export default function IDCheckPage() {
         }
         const today = new Date().toISOString().split('T')[0];
         const logicalLabel = draft.documentTypeLabel || `${draft.category} document`;
-        const remark = `100-point ID check document. [ID_CHECK_CATEGORY:${draft.category}][ID_CHECK_POINTS:${draft.points}][ID_CHECK_STATUS:Pending][ID_CHECK_SCAN:Passed][ID_CHECK_TYPE:${logicalLabel}]`;
+        const remark = `100-point ID check document. [ID_CHECK_CATEGORY:${draft.category}][ID_CHECK_POINTS:${draft.points}][ID_CHECK_STATUS:Pending][ID_CHECK_SCAN:Passed][ID_CHECK_TYPE:${logicalLabel}][ID_CHECK_RESUBMISSION:${isResubmission ? 'true' : 'false'}]`;
         const newDoc = await legalDocumentService.create({
           employeeId: employee.id,
           documentType: logicalLabel,
@@ -537,11 +587,9 @@ export default function IDCheckPage() {
   }
 
   const categoryProgress = (category: IDCategory) => {
-    const existing = idDocs
-      .filter(d => d.category === category && d.status !== 'Rejected')
-      .reduce((sum, d) => sum + (d.points || 0), 0);
-    const pending = drafts.filter(d => d.category === category).reduce((sum, d) => sum + d.points, 0);
-    return existing + pending;
+    return drafts
+      .filter(d => d.category === category)
+      .reduce((sum, d) => sum + d.points, 0);
   };
 
   const renderBadgeForStatus = (status: IDStatus) => {
@@ -612,7 +660,10 @@ export default function IDCheckPage() {
       <form onSubmit={handleSubmit} className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
         <div className="xl:col-span-2 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(['Primary', 'Secondary', 'Tertiary'] as IDCategory[]).map(category => (
+            {(['Primary', 'Secondary', 'Tertiary'] as IDCategory[]).map(category => {
+              const isSecondary = category === 'Secondary';
+              const secondaryLocked = isSecondary && !primaryRequirementSatisfiedForSecondary;
+              return (
               <div
                 key={category}
                 className="bg-white rounded-lg shadow-sm border border-dashed border-gray-300 p-4 flex flex-col gap-3"
@@ -633,6 +684,20 @@ export default function IDCheckPage() {
                     </button>
                   </div>
                   <div className="text-right">
+                    {category === 'Primary' && (
+                      <p className="text-[11px] font-semibold text-amber-700">
+                        Required
+                      </p>
+                    )}
+                    {isSecondary && (
+                      <p
+                        className={`text-[11px] font-semibold ${
+                          secondaryLocked ? 'text-gray-400' : 'text-green-700'
+                        }`}
+                      >
+                        {secondaryLocked ? 'Locked until primary uploaded' : 'Enabled'}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500">Points from this category</p>
                     <p className="text-sm font-semibold text-gray-900">
                       {categoryProgress(category)}
@@ -647,7 +712,12 @@ export default function IDCheckPage() {
                   role="button"
                   tabIndex={0}
                   aria-label={`Upload ${category.toLowerCase()} identity documents`}
-                  className="flex-1 flex flex-col items-center justify-center rounded-md border border-gray-200 border-dashed bg-gray-50 px-3 py-6 text-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  aria-disabled={isSecondary && secondaryLocked}
+                  className={`flex-1 flex flex-col items-center justify-center rounded-md border border-gray-200 border-dashed px-3 py-6 text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                    isSecondary && secondaryLocked
+                      ? 'bg-gray-100 cursor-not-allowed opacity-70'
+                      : 'bg-gray-50 cursor-pointer'
+                  }`}
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -695,9 +765,14 @@ export default function IDCheckPage() {
                         className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5"
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-gray-800 truncate">
+                          <button
+                            type="button"
+                            onClick={() => handlePreviewDraft(draft.id)}
+                            className="text-xs text-gray-800 truncate text-left hover:underline"
+                            aria-label={`Preview ${draft.documentTypeLabel || draft.name}`}
+                          >
                             {draft.documentTypeLabel || draft.name}
-                          </p>
+                          </button>
                           <p className="text-[11px] text-gray-500">
                             {draft.points} points
                           </p>
@@ -728,7 +803,7 @@ export default function IDCheckPage() {
                   </div>
                 )}
               </div>
-            ))}
+            );})}
           </div>
 
           <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
@@ -742,9 +817,12 @@ export default function IDCheckPage() {
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-gray-500">Existing verified points</p>
+                <p className="text-xs text-gray-500">This submission</p>
                 <p className="text-sm font-semibold text-gray-900">
-                  {existingPoints}
+                  {totalPoints} points
+                </p>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Previous verified points: {existingPoints}
                 </p>
                 <p className="mt-1 text-[11px]">
                   {autoSaveStatus === 'saving' && (
@@ -803,9 +881,14 @@ export default function IDCheckPage() {
                     className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-gray-800 truncate">
+                      <button
+                        type="button"
+                        onClick={() => handlePreviewDraft(draft.id)}
+                        className="text-xs font-medium text-gray-800 truncate text-left hover:underline"
+                        aria-label={`Preview ${draft.documentTypeLabel || draft.name}`}
+                      >
                         {draft.documentTypeLabel || draft.name}
-                      </p>
+                      </button>
                       <p className="text-[11px] text-gray-500">
                         {draft.category} • {draft.points} points • Not yet submitted
                       </p>
@@ -960,6 +1043,9 @@ export default function IDCheckPage() {
                 if (!activeCategoryModal) return null;
                 const selectedIds = selectedOptionsByCategory[activeCategoryModal] || [];
                 const checked = selectedIds.includes(option.id);
+                const optionDrafts = drafts.filter(
+                  d => d.documentTypeId === option.id && d.category === activeCategoryModal
+                );
                 return (
                   <div
                     key={option.id}
@@ -995,19 +1081,59 @@ export default function IDCheckPage() {
                         {option.points} points
                       </p>
                       {checked && (
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
-                            onClick={() => {
-                              const input = optionFileInputRefs.current[option.id];
-                              if (input) {
-                                input.click();
-                              }
-                            }}
-                          >
-                            Upload for this document type
-                          </button>
+                        <div className="mt-2 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+                              onClick={() => {
+                                const input = optionFileInputRefs.current[option.id];
+                                if (input) {
+                                  input.click();
+                                }
+                              }}
+                            >
+                              Upload for this document type
+                            </button>
+                            {optionDrafts.length > 0 && (
+                              <span className="text-[11px] text-gray-500">
+                                {optionDrafts.length} file
+                                {optionDrafts.length > 1 ? 's' : ''} selected
+                              </span>
+                            )}
+                          </div>
+                          {optionDrafts.length > 0 && (
+                            <div className="border border-gray-100 rounded-md bg-gray-50 px-2 py-1 max-h-24 overflow-y-auto">
+                              <ul className="space-y-0.5">
+                                {optionDrafts.map(draft => (
+                                  <li
+                                    key={draft.id}
+                                    className="flex items-center justify-between gap-2"
+                                  >
+                                    <p className="text-[11px] text-gray-700 truncate">
+                                      {draft.name}
+                                    </p>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        className="text-[11px] text-blue-600 hover:text-blue-800 underline"
+                                        onClick={() => handlePreviewDraft(draft.id)}
+                                      >
+                                        Preview
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] text-red-600 hover:text-red-800"
+                                        onClick={() => removeDraft(draft.id)}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           <input
                             type="file"
                             multiple

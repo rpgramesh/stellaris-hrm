@@ -19,7 +19,6 @@ interface EmployeeFormProps {
 export default function EmployeeForm({ initialData, managers = [], onSubmit, title, backUrl }: EmployeeFormProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'quick' | 'personal' | 'job' | 'salary' | 'contact' | 'client' | 'directory' | 'others'>('quick');
-  const [password, setPassword] = useState('');
   
   // Hierarchy State
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -389,13 +388,12 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     e.preventDefault();
     
     const validationErrors: { [key: string]: string } = {};
-    const bsbRaw = formData.paymentBsb ? formData.paymentBsb.trim() : '';
-    const accountRaw = formData.paymentAccount ? formData.paymentAccount.trim() : '';
-    if (!/^\d{6}$/.test(bsbRaw)) {
-      validationErrors.paymentBsb = 'BSB must be exactly 6 digits';
-    }
-    if (!/^\d{6,10}$/.test(accountRaw)) {
-      validationErrors.paymentAccount = 'Account number must be 6 to 10 digits';
+    const emailRaw = formData.email ? formData.email.trim() : '';
+
+    if (!emailRaw) {
+      validationErrors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+      validationErrors.email = 'Enter a valid email address';
     }
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
@@ -409,7 +407,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       firstName: formData.firstName,
       middleName: formData.middleName,
       lastName: formData.lastName,
-      email: formData.email,
+      email: emailRaw,
       phone: formData.phone,
       gender: formData.gender as 'Male' | 'Female' | 'Other',
       birthDate: formData.birthDate,
@@ -529,19 +527,33 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       remark: formData.remark,
     };
 
-    if (password && !initialData) {
+    if (!initialData) {
       try {
-        const { userId, error } = await createUser(formData.email, password, `${formData.firstName} ${formData.lastName}`);
+        const { userId, error } = await createUser(
+          formData.email,
+          `${formData.firstName} ${formData.lastName}`.trim() || formData.email
+        );
         if (error) {
-          alert(`Failed to create user account: ${error}`);
+          const errorMessage =
+            typeof error === 'string'
+              ? error
+              : error && typeof error === 'object'
+              ? JSON.stringify(error)
+              : String(error);
+          alert(`Failed to create user account: ${errorMessage}`);
           return;
         }
         if (userId) {
-          (employeeData as any).userId = userId;
           (employeeData as any).isPasswordChangeRequired = true;
         }
       } catch (err: any) {
-        alert(`Error: ${err.message}`);
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === 'string'
+            ? err
+            : JSON.stringify(err);
+        alert(`Error creating user account: ${message}`);
         return;
       }
     }
@@ -770,7 +782,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                   {renderTextField('abn', 'ABN')}
                 </div>
                 {renderSelectField('jobPosition', 'Job Position', ['Manager', 'Developer', 'Designer'], true)}
-                {renderTextField('phone', 'Phone', false, 'tel')}
+                <div className="grid grid-cols-2 gap-4">
+                  {renderTextField('email', 'Email', true, 'email')}
+                  {renderTextField('phone', 'Phone', false, 'tel')}
+                </div>
               </div>
             </div>
           )}

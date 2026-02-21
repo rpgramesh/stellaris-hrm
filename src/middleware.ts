@@ -41,12 +41,10 @@ export async function middleware(request: NextRequest) {
     // This usually happens if the Supabase project is paused or network is unreachable
   }
 
-  // Protect dashboard routes
   if (
     !user &&
     (request.nextUrl.pathname.startsWith('/dashboard') || 
-     request.nextUrl.pathname.startsWith('/self-service') ||
-     request.nextUrl.pathname.startsWith('/change-password'))
+     request.nextUrl.pathname.startsWith('/self-service'))
   ) {
     return NextResponse.redirect(new URL('/', request.url))
   }

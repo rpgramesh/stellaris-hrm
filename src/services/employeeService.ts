@@ -290,8 +290,7 @@ export const employeeService = {
         health_data: employee.health,
         privacy_settings: employee.privacySettings,
         system_access_role: employee.systemAccessRole,
-        is_password_change_required: employee.isPasswordChangeRequired || false,
-        user_id: employee.userId || null
+        is_password_change_required: employee.isPasswordChangeRequired || false
       };
 
       if (employee.employeeCode) {
@@ -310,8 +309,20 @@ export const employeeService = {
 
       if (error) throw error;
       return mapEmployeeFromDb(data);
-    } catch (error) {
-      console.error('Error creating employee in Supabase:', error);
+    } catch (error: any) {
+      const normalized =
+        error && typeof error === 'object'
+          ? {
+              message: (error as any).message,
+              code: (error as any).code,
+              details: (error as any).details,
+              hint: (error as any).hint,
+            }
+          : error;
+      console.error(
+        'Error creating employee in Supabase:',
+        JSON.stringify(normalized, null, 2)
+      );
       throw error;
     }
   },
