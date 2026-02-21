@@ -375,7 +375,7 @@ export default function OnboardingPage() {
     let newRemark = upsertIdCheckStatusTag(oldRemark, status);
     const trimmedComment = comment?.trim();
     if (trimmedComment) {
-      const withoutOldReason = newRemark.replace(/\s*Reason from HR:.*$/s, '');
+      const withoutOldReason = newRemark.replace(/\s*Reason from HR:[\s\S]*$/, '');
       newRemark = `${withoutOldReason} Reason from HR: ${trimmedComment}`;
     }
     const updated = await legalDocumentService.update(doc.id, { remark: newRemark });
