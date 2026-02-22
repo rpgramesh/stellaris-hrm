@@ -13,6 +13,10 @@ node_modules
 # production
 /build
 
+# local build artefacts
+next
+stellaris-hrm@*
+
 # misc
 .DS_Store
 *.pem
