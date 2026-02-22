@@ -108,10 +108,10 @@ export default function ESSDashboardPage() {
           } else if (todayAttendance.clockIn) {
             setNextShift('Clocked In');
           } else {
-             setNextShift('Not Started');
+            setNextShift('Not Started');
           }
         } else {
-           setNextShift('No shift today');
+          setNextShift('TimeSheets');
         }
 
         // 6. Generate Recent Activity Feed

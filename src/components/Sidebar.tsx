@@ -201,6 +201,7 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('User');
   const [userPosition, setUserPosition] = useState('');
+  const [roleMenuPermissions, setRoleMenuPermissions] = useState<string[] | null>(null);
 
   useEffect(() => {
     async function fetchUser() {
@@ -209,9 +210,28 @@ export default function Sidebar() {
         if (user) {
           const employee = await employeeService.getByUserId(user.id);
           if (employee) {
-            setUserRole(employee.role);
+            const primaryRole = employee.role;
+            const accessRole = employee.systemAccessRole;
+            const adminRoles = ['Administrator', 'Super Admin', 'Employer Admin', 'HR Admin', 'HR Manager'];
+            const resolvedRole = adminRoles.includes(primaryRole)
+              ? primaryRole
+              : accessRole || primaryRole;
+            setUserRole(resolvedRole);
             setUserName(`${employee.firstName} ${employee.lastName}`);
             setUserPosition(employee.position || employee.role);
+
+            const { data: roleRow } = await supabase
+              .from('user_roles')
+              .select('permissions')
+              .eq('name', resolvedRole)
+              .eq('is_active', true)
+              .single();
+
+            if (roleRow) {
+              setRoleMenuPermissions(roleRow.permissions || []);
+            } else {
+              setRoleMenuPermissions(null);
+            }
           }
         }
       } catch (error) {
@@ -222,6 +242,30 @@ export default function Sidebar() {
     }
     fetchUser();
   }, []);
+
+  useEffect(() => {
+    if (!userRole) return;
+    const channel = supabase
+      .channel(`role-menu-${userRole}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_roles',
+          filter: `name=eq.${userRole}`
+        },
+        payload => {
+          const nextPermissions = (payload.new as any)?.permissions || [];
+          setRoleMenuPermissions(nextPermissions);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userRole]);
 
   const isExpanded = isLocked || isHovered;
 
@@ -236,21 +280,25 @@ export default function Sidebar() {
       if (loading) return false;
       if (!userRole) return false;
 
-      if (userRole === 'Employee') {
-        return ['Dashboard', 'Self Service (ESS)'].includes(item.name);
+      const hasMenuConfig =
+        roleMenuPermissions && roleMenuPermissions.some(p => typeof p === 'string' && p.startsWith('menu:'));
+
+      if (!hasMenuConfig) {
+        if (userRole === 'Employee') {
+          return ['Dashboard', 'Self Service (ESS)'].includes(item.name);
+        }
+        if (userRole === 'Manager') {
+          return ['Dashboard', 'Team', 'Leave'].includes(item.name);
+        }
+        if (['HR Admin', 'HR Manager'].includes(userRole)) {
+          return item.name !== 'Settings' && item.name !== 'Self Service (ESS)';
+        }
+        return item.name !== 'Self Service (ESS)';
       }
 
-      if (userRole === 'Manager') {
-        return ['Dashboard', 'Self Service (ESS)', 'Team', 'Leave'].includes(item.name);
-      }
-
-      if (['HR Admin', 'HR Manager'].includes(userRole)) {
-        // HR Admin cannot see Settings
-        return item.name !== 'Settings';
-      }
-
-      // Administrator sees all
-      return true;
+      const menuKey = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      const keyToken = `menu:${menuKey}`;
+      return roleMenuPermissions!.includes(keyToken);
     })
     .map(item => {
       if (userRole === 'Manager' && item.name === 'Leave' && item.subItems) {

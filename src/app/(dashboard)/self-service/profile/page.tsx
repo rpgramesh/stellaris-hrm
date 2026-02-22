@@ -218,13 +218,6 @@ export default function ProfilePage() {
                 <div className="font-medium">{employee.address || 'N/A'}</div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleOpenContactRequest}
-              className="mt-4 w-full text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg py-2 hover:bg-blue-50 transition-colors"
-            >
-              Request Update
-            </button>
           </div>
 
           {/* Client details */}
@@ -609,9 +602,8 @@ export default function ProfilePage() {
                     clipRule="evenodd"
                   />
                 </svg>
-                <p className="text-sm text-yellow-800">
-                  For security reasons, changing your bank details may require 2-factor authentication or manager
-                  approval. Updates made before Wednesday will be processed for the current pay cycle.
+                <p className="mt-2 text-xs text-gray-500">
+                  First time transaction to a new bank account might take 24 hours for salary credit.
                 </p>
               </div>
             </form>

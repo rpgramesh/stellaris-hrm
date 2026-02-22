@@ -184,6 +184,7 @@ export default function OnboardingPage() {
     }[];
   } | null>(null);
   const [hardwareLoading, setHardwareLoading] = useState(false);
+  const [idCheckPreview, setIdCheckPreview] = useState<{ url: string; label: string } | null>(null);
   const [idCheckModal, setIdCheckModal] = useState<{
     processId: string;
     employeeId: string;
@@ -510,6 +511,9 @@ export default function OnboardingPage() {
   };
 
   const [selectedTask, setSelectedTask] = useState<{processId: string, task: OnboardingTask} | null>(null);
+
+  const allIdCheckDocsApproved =
+    !!idCheckModal && idCheckModal.docs.length > 0 && idCheckModal.docs.every(d => d.status === 'Approved');
 
   const handleAssignMandatoryCourse = async (courseId: string) => {
     if (!mandatoryModal) return;
@@ -868,14 +872,18 @@ export default function OnboardingPage() {
                             </span>
                             <div className="flex items-center gap-2">
                               {doc.url && (
-                                <a
-                                  href={doc.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-xs text-indigo-600 hover:text-indigo-800"
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setIdCheckPreview({
+                                      url: doc.url as string,
+                                      label: doc.typeLabel || 'ID document'
+                                    })
+                                  }
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 underline"
                                 >
                                   View
-                                </a>
+                                </button>
                               )}
                               <button
                                 type="button"
@@ -980,7 +988,7 @@ export default function OnboardingPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={idCheckLoading || !idCheckModal}
+                  disabled={idCheckLoading || !idCheckModal || allIdCheckDocsApproved}
                   onClick={async () => {
                     if (!idCheckModal) return;
                     try {
@@ -1243,6 +1251,52 @@ export default function OnboardingPage() {
                   Save
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {idCheckPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full h-[80vh] mx-4 flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-gray-900 truncate">
+                {idCheckPreview.label}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIdCheckPreview(null)}
+                className="inline-flex items-center justify-center rounded-full p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                aria-label="Close preview"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 bg-gray-100">
+              {idCheckPreview.url.toLowerCase().endsWith('.pdf') ? (
+                <iframe src={idCheckPreview.url} className="w-full h-full" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center overflow-auto">
+                  <img
+                    src={idCheckPreview.url}
+                    alt={idCheckPreview.label}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -6,7 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
-import { notificationService } from '@/services/notificationService';
+import { notificationService, type Notification } from '@/services/notificationService';
 import GlobalSearch from './GlobalSearch';
 import { menuItems as sidebarMenuItems } from './Sidebar';
 
@@ -26,11 +26,14 @@ export default function Navbar() {
   const pathname = usePathname();
   const [userName, setUserName] = useState<string>('User');
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [notificationPreview, setNotificationPreview] = useState<Notification[]>([]);
+  const [showNotificationPreview, setShowNotificationPreview] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileExpandedMenus, setMobileExpandedMenus] = useState<string[]>([]);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [roleMenuPermissions, setRoleMenuPermissions] = useState<string[] | null>(null);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -44,10 +47,29 @@ export default function Navbar() {
         if (user) {
           const employee = await employeeService.getByUserId(user.id);
           if (employee) {
+            const primaryRole = employee.role;
+            const accessRole = employee.systemAccessRole;
+            const adminRoles = ['Administrator', 'Super Admin', 'Employer Admin', 'HR Admin', 'HR Manager'];
+            const resolvedRole = adminRoles.includes(primaryRole)
+              ? primaryRole
+              : accessRole || primaryRole;
             setUserName(`${employee.firstName} ${employee.lastName}`);
-            setUserRole(employee.role);
+            setUserRole(resolvedRole);
             if (employee.avatarUrl) {
               setAvatarUrl(employee.avatarUrl);
+            }
+
+            const { data: roleRow } = await supabase
+              .from('user_roles')
+              .select('permissions')
+              .eq('name', resolvedRole)
+              .eq('is_active', true)
+              .single();
+
+            if (roleRow) {
+              setRoleMenuPermissions(roleRow.permissions || []);
+            } else {
+              setRoleMenuPermissions(null);
             }
           }
         }
@@ -61,6 +83,7 @@ export default function Navbar() {
         const notifications = await notificationService.getMyNotifications();
         const unread = notifications.filter(n => !n.isRead);
         setUnreadCount(unread.length);
+        setNotificationPreview(notifications.slice(0, 5));
       } catch (error) {
         console.error('Unexpected error fetching notifications:', formatError(error));
       }
@@ -71,6 +94,30 @@ export default function Navbar() {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!userRole) return;
+    const channel = supabase
+      .channel(`navbar-role-menu-${userRole}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_roles',
+          filter: `name=eq.${userRole}`
+        },
+        payload => {
+          const nextPermissions = (payload.new as any)?.permissions || [];
+          setRoleMenuPermissions(nextPermissions);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userRole]);
 
   const handleLogout = async () => {
     setProfileOpen(false);
@@ -86,19 +133,25 @@ export default function Navbar() {
     .filter(item => {
       if (!userRole) return false;
 
-      if (userRole === 'Employee') {
-        return ['Dashboard', 'Self Service (ESS)'].includes(item.name);
+      const hasMenuConfig =
+        roleMenuPermissions && roleMenuPermissions.some(p => typeof p === 'string' && p.startsWith('menu:'));
+
+      if (!hasMenuConfig) {
+        if (userRole === 'Employee') {
+          return ['Dashboard', 'Self Service (ESS)'].includes(item.name);
+        }
+        if (userRole === 'Manager') {
+          return ['Dashboard', 'Team', 'Leave'].includes(item.name);
+        }
+        if (['HR Admin', 'HR Manager'].includes(userRole)) {
+          return item.name !== 'Settings' && item.name !== 'Self Service (ESS)';
+        }
+        return item.name !== 'Self Service (ESS)';
       }
 
-      if (userRole === 'Manager') {
-        return ['Dashboard', 'Self Service (ESS)', 'Team', 'Leave'].includes(item.name);
-      }
-
-      if (['HR Admin', 'HR Manager'].includes(userRole)) {
-        return item.name !== 'Settings';
-      }
-
-      return true;
+      const menuKey = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      const keyToken = `menu:${menuKey}`;
+      return roleMenuPermissions!.includes(keyToken);
     })
     .map(item => {
       if (userRole === 'Manager' && item.name === 'Leave' && item.subItems) {
@@ -153,17 +206,80 @@ export default function Navbar() {
           </div>
         </div>
         <div className="flex items-center space-x-3">
-          <button
-            type="button"
-            onClick={() => router.push('/notifications')}
-            className="p-2 hover:bg-gray-100 rounded-full relative"
-            aria-label="Open notifications"
+          <div
+            className="relative"
+            onMouseEnter={() => setShowNotificationPreview(true)}
+            onMouseLeave={() => setShowNotificationPreview(false)}
           >
-            <Bell className="w-6 h-6 text-gray-600" />
-            {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 min-w-[0.5rem] h-2 bg-red-500 rounded-full" />
+            <button
+              type="button"
+              onClick={() => router.push('/notifications')}
+              className="p-2 hover:bg-gray-100 rounded-full relative"
+              aria-label="Open notifications"
+            >
+              <Bell className="w-6 h-6 text-gray-600" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-5 px-1 bg-red-500 text-white text-[10px] leading-5 rounded-full flex items-center justify-center">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+            {showNotificationPreview && notificationPreview.length > 0 && (
+              <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-30">
+                <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-700">
+                    Notifications
+                  </span>
+                  <span className="text-[11px] text-gray-500">
+                    {unreadCount} unread
+                  </span>
+                </div>
+                <ul className="max-h-64 overflow-y-auto">
+                  {notificationPreview.map(notification => (
+                    <li
+                      key={notification.id}
+                      className="px-4 py-2 text-xs cursor-pointer hover:bg-gray-50"
+                      onClick={() => {
+                        setShowNotificationPreview(false);
+                        router.push('/notifications');
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            notification.isRead ? 'bg-gray-300' : 'bg-blue-500'
+                          }`}
+                        />
+                        <span
+                          className={`font-medium truncate ${
+                            notification.isRead ? 'text-gray-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {notification.title}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-500 line-clamp-2">
+                        {notification.message}
+                      </p>
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        {new Date(notification.createdAt).toLocaleString()}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="w-full text-[11px] text-blue-600 hover:text-blue-700 border-t border-gray-100 px-4 py-2 text-left"
+                  onClick={() => {
+                    setShowNotificationPreview(false);
+                    router.push('/notifications');
+                  }}
+                >
+                  View all notifications
+                </button>
+              </div>
             )}
-          </button>
+          </div>
           <div className="relative">
             <button
               type="button"

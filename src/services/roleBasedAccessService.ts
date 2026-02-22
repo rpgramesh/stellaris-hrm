@@ -79,6 +79,8 @@ export interface AuditLog {
 }
 
 export class RoleBasedAccessService {
+  private readonly menuPrefix = 'menu:';
+
   // Role Management
   async getRoles(): Promise<UserRole[]> {
     const { data, error } = await supabase
@@ -139,6 +141,56 @@ export class RoleBasedAccessService {
       .eq('id', roleId);
 
     if (error) throw error;
+  }
+
+  async getRoleMenuPermissions(roleId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('permissions')
+      .eq('id', roleId)
+      .single();
+
+    if (error) throw error;
+    const permissions: string[] = data?.permissions || [];
+    return permissions.filter(p => p.startsWith(this.menuPrefix));
+  }
+
+  async updateRoleMenuPermissions(roleId: string, menuKeys: string[], userId: string): Promise<void> {
+    const { data: existing, error: fetchError } = await supabase
+      .from('user_roles')
+      .select('permissions')
+      .eq('id', roleId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const currentPermissions: string[] = existing?.permissions || [];
+    const nonMenuPermissions = currentPermissions.filter(p => !p.startsWith(this.menuPrefix));
+    const nextMenuPermissions = Array.from(
+      new Set(menuKeys.map(key => `${this.menuPrefix}${key}`))
+    );
+    const updatedPermissions = [...nonMenuPermissions, ...nextMenuPermissions];
+
+    const { error: updateError } = await supabase
+      .from('user_roles')
+      .update({
+        permissions: updatedPermissions,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', roleId);
+
+    if (updateError) throw updateError;
+
+    await this.logAction(
+      userId,
+      'update_menu_permissions',
+      'menu_permissions',
+      roleId,
+      {
+        previousMenuPermissions: currentPermissions.filter(p => p.startsWith(this.menuPrefix)),
+        nextMenuPermissions
+      }
+    );
   }
 
   // Permission Management
@@ -508,13 +560,17 @@ export class RoleBasedAccessService {
       .from('audit_logs')
       .insert([{
         user_id: userId,
+        table_name: resource,
+        record_id: resourceId,
         action,
         resource,
         resource_id: resourceId,
+        old_data: null,
+        new_data: details || {},
         details: details || {},
-        ip_address: '', // Would need to get from request context
-        user_agent: '', // Would need to get from request context
-        created_at: new Date().toISOString()
+        performed_by: userId,
+        ip_address: null,
+        user_agent: null
       }]);
 
     if (error) throw error;

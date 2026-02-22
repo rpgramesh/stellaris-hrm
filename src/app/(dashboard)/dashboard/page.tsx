@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
 import { expensesService } from '@/services/expensesService';
@@ -14,6 +16,8 @@ import { CourseEnrollment, Job, Applicant, Offer } from '@/types';
 import { calculateWorkingDays } from '@/utils/workDayCalculations';
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [stats, setStats] = useState({
     totalEmployees: 0,
     newEmployees: 0,
@@ -41,6 +45,31 @@ export default function DashboardPage() {
   const [applicantsList, setApplicantsList] = useState<Applicant[]>([]);
   const [inInterviewList, setInInterviewList] = useState<Applicant[]>([]);
   const [pendingOffersList, setPendingOffersList] = useState<Offer[]>([]);
+
+  useEffect(() => {
+    async function enforceEmployeeRedirect() {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const user = auth.user;
+        if (!user) return;
+
+        const employee = await employeeService.getByUserId(user.id);
+        if (!employee) return;
+
+        const role = employee.role;
+        const systemAccessRole = (employee as any).systemAccessRole as string | undefined;
+        const primaryRole = role || systemAccessRole || '';
+        const normalizedRole = primaryRole.trim();
+
+        if (normalizedRole === 'Employee') {
+          router.replace('/self-service');
+        }
+      } catch (error) {
+      }
+    }
+
+    enforceEmployeeRedirect();
+  }, [router]);
 
   useEffect(() => {
     async function fetchData() {

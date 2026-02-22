@@ -348,14 +348,21 @@ export default function IDCheckPage() {
     }
   };
 
+  const [preview, setPreview] = useState<{ url: string; label: string; revokeOnClose?: boolean } | null>(null);
+
   const handlePreviewDraft = (draftId: string) => {
     const draft = drafts.find(d => d.id === draftId);
     if (!draft || !draft.file) return;
     const url = URL.createObjectURL(draft.file);
-    window.open(url, '_blank', 'noopener,noreferrer');
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 60000);
+    const label = draft.documentTypeLabel || draft.name;
+    setPreview({ url, label, revokeOnClose: true });
+  };
+
+  const closePreview = () => {
+    if (preview?.revokeOnClose) {
+      URL.revokeObjectURL(preview.url);
+    }
+    setPreview(null);
   };
 
   const removeDraft = (id: string) => {
@@ -924,14 +931,19 @@ export default function IDCheckPage() {
                       <div className="flex items-center gap-2">
                         {renderBadgeForStatus(item.status)}
                         {url && (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreview({
+                                url,
+                                label,
+                                revokeOnClose: false
+                              })
+                            }
                             className="text-xs text-blue-600 hover:text-blue-800 underline"
                           >
                             View
-                          </a>
+                          </button>
                         )}
                         {isRejected && item.category && (
                           <>
@@ -1008,6 +1020,52 @@ export default function IDCheckPage() {
           </div>
         </div>
       </form>
+
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full h-[80vh] mx-4 flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-gray-900 truncate">
+                {preview.label}
+              </h2>
+              <button
+                type="button"
+                onClick={closePreview}
+                className="inline-flex items-center justify-center rounded-full p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                aria-label="Close preview"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 bg-gray-100">
+              {preview.url.toLowerCase().endsWith('.pdf') ? (
+                <iframe src={preview.url} className="w-full h-full" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center overflow-auto">
+                  <img
+                    src={preview.url}
+                    alt={preview.label}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeCategoryModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">

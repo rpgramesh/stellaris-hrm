@@ -143,7 +143,7 @@ export default function ChangePasswordPage() {
       }
 
       // Force reload or redirect to dashboard
-      router.push('/dashboard');
+      router.push('/self-service');
       router.refresh(); 
     } catch (err: any) {
       setError(err.message || 'Failed to change password');
