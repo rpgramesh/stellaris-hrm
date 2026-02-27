@@ -61,7 +61,7 @@ function ChangePasswordContent() {
       }
 
       console.log('Password changed successfully, redirecting...');
-      router.push('/self-service');
+      router.push('/');
       router.refresh();
     } catch (err: any) {
       console.error('Password change error details:', err);
