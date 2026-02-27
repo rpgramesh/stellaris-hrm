@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers();
     if (listError) throw listError;
     
-    const user = users.find(u => u.email === email);
+    const user = (users as any[]).find(u => u.email === email);
     if (!user) {
       // Don't reveal that user doesn't exist for security
       return NextResponse.json({ success: true, message: 'If an account exists, a reset link has been sent.' });

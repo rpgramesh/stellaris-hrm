@@ -109,7 +109,7 @@ export async function POST(request: Request) {
       throw listError;
     }
 
-    const existingUser = users.find(u => u.email === email);
+    const existingUser = (users as any[]).find(u => u.email === email);
 
     const temporaryPassword = generateSecurePassword(14);
     const initialHash = hashPasswordForMetadata(temporaryPassword);

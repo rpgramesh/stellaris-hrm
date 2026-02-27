@@ -83,23 +83,30 @@ function ResetPasswordContent() {
 
       if (user) {
         // Log the action
-        await auditService.logAction(
-          'auth',
-          user.id,
-          'SYSTEM_ACTION',
-          null,
-          {
-            event: 'PASSWORD_RESET_SUCCESS',
-            occurred_at: new Date().toISOString(),
-          }
-        ).catch(e => console.error('Failed to log audit:', e));
+        try {
+          await auditService.logAction(
+            'auth',
+            user.id,
+            'SYSTEM_ACTION',
+            null,
+            {
+              event: 'PASSWORD_RESET_SUCCESS',
+              occurred_at: new Date().toISOString(),
+            }
+          );
+        } catch (e) {
+          console.error('Failed to log audit:', e);
+        }
 
         // Also update employee record if needed (e.g. clear password required flag)
-        await supabase
+        const { error: updateError } = await supabase
           .from('employees')
           .update({ is_password_change_required: false })
-          .eq('user_id', user.id)
-          .catch(e => console.error('Failed to update employee record:', e));
+          .eq('user_id', user.id);
+        
+        if (updateError) {
+          console.error('Failed to update employee record:', updateError);
+        }
       }
 
       setSuccess(true);

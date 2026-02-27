@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { statutoryTablesService } from '@/services/statutoryTablesService';
 import { StatutoryRate, StatutoryContributionType } from '@/types/statutory';
+import { supabase } from '@/lib/supabase';
 
 export default function StatutoryTablePage() {
   const [rates, setRates] = useState<StatutoryRate[]>([]);
