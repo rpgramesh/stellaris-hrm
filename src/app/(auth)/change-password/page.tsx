@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { auditService } from '@/services/auditService';
+import { changePasswordAction } from '@/app/actions/auth';
 
 function ChangePasswordContent() {
   const router = useRouter();
@@ -14,8 +15,6 @@ function ChangePasswordContent() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [attempts, setAttempts] = useState(0);
-  const [blockedUntil, setBlockedUntil] = useState<number | null>(null);
 
   useEffect(() => {
     const emailParam = searchParams?.get('email');
@@ -35,27 +34,10 @@ function ChangePasswordContent() {
     return null;
   };
 
-  const hashPasswordForComparison = async (value: string): Promise<string> => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(value);
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    const bytes = new Uint8Array(digest);
-    return Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Starting password change process...');
     setLoading(true);
     setError(null);
-
-    if (blockedUntil && Date.now() < blockedUntil) {
-      setLoading(false);
-      setError('Too many attempts. Please wait a few minutes before trying again.');
-      return;
-    }
 
     if (password !== confirmPassword) {
       setError("Passwords do not match");
@@ -67,144 +49,23 @@ function ChangePasswordContent() {
     if (policyError) {
       setError(policyError);
       setLoading(false);
-      setAttempts((prev) => prev + 1);
-      if (attempts + 1 >= 5) {
-        setBlockedUntil(Date.now() + 5 * 60 * 1000);
-      }
       return;
     }
 
     try {
-      const {
-        data: { user: sessionUser },
-      } = await supabase.auth.getUser();
+      console.log('Calling server action for password change...');
+      const result = await changePasswordAction(email, currentPassword, password);
 
-      let user = sessionUser;
-
-      if (!user || user.email !== email) {
-        if (!email || !currentPassword) {
-          setError('Email and current password are required.');
-          setLoading(false);
-          return;
-        }
-
-        console.log('Attempting sign in for password change...');
-        const { data: signInData, error: signInError } =
-          await supabase.auth.signInWithPassword({
-            email,
-            password: currentPassword,
-          });
-
-        if (signInError) {
-          console.error('Sign in error during password change:', signInError);
-          const msg = signInError?.message || 'Current password is incorrect.';
-          setError(msg === '{}' ? 'Authentication failed. Please check your credentials.' : msg);
-          setLoading(false);
-          return;
-        }
-        
-        user = signInData.user;
-        // Ensure session is fully active and synchronized
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      if (result.error) {
+        throw new Error(result.error);
       }
 
-      // Check if they are trying to set the same password as the temporary one
-      const metadata = user?.user_metadata || {};
-      const existingHash = metadata.initial_password_hash;
-
-      if (existingHash && typeof existingHash === 'string') {
-        const newHash = await hashPasswordForComparison(password);
-        if (newHash === existingHash) {
-          setError('New password cannot be the same as your initial temporary password.');
-          setLoading(false);
-          return;
-        }
-      }
-
-      // 1. Update Password
-      console.log('Attempting password update for user:', user?.id);
-      const { error: authError } = await supabase.auth.updateUser({ password });
-      if (authError) {
-        if (authError.message?.includes('Aborted')) {
-          // Retry once if aborted
-          const { error: retryError } = await supabase.auth.updateUser({ password });
-          if (retryError) throw retryError;
-        } else {
-          throw authError;
-        }
-      }
-
-      // Password changed successfully!
-      // Any failures after this point (DB updates, logging) should not block the redirect.
-      try {
-        if (user) {
-          const { error: dbError } = await supabase
-            .from('employees')
-            .update({ is_password_change_required: false })
-            .eq('user_id', user.id);
-            
-          if (dbError) {
-            console.error('Error updating employee record:', dbError);
-          }
-
-          await auditService.logAction(
-            'auth',
-            user.id,
-            'SYSTEM_ACTION',
-            null,
-            {
-              event: 'PASSWORD_CHANGED',
-              occurred_at: new Date().toISOString(),
-            }
-          ).catch(e => console.error('Failed to log password change audit:', e));
-        }
-      } catch (postError) {
-        console.error('Non-critical post-password-change error:', postError);
-      }
-
-      // Redirect to dashboard
       console.log('Password changed successfully, redirecting...');
       router.push('/self-service');
-      router.refresh(); 
+      router.refresh();
     } catch (err: any) {
       console.error('Password change error details:', err);
-      
-      let errorMessage = 'Failed to change password';
-      
-      if (typeof err === 'string') {
-        errorMessage = err;
-      } else if (err?.name === 'AuthRetryableFetchError' || err?.status === 504) {
-        errorMessage = 'Network timeout occurred. The server is taking too long to respond. Please wait a moment and try clicking "Update Password" again.';
-      } else if (err?.message && err.message !== '{}') {
-        errorMessage = err.message;
-      } else if (err?.error_description && err.error_description !== '{}') {
-        errorMessage = err.error_description;
-      } else {
-        // Try to extract from nested structures or name
-        const possibleMessage = err?.data?.message || err?.error?.message;
-        if (possibleMessage && possibleMessage !== '{}') {
-          errorMessage = possibleMessage;
-        } else if (err?.name && err.name !== 'Error') {
-          errorMessage = `${err.name}: ${err.message || 'Connection issue'}`;
-        } else {
-          try {
-            const stringified = JSON.stringify(err);
-            if (stringified !== '{}' && stringified !== 'undefined') {
-              errorMessage = stringified;
-            } else {
-              errorMessage = 'An unexpected error occurred. Please try again.';
-            }
-          } catch (e) {
-            errorMessage = 'An unexpected error occurred. Please check your connection.';
-          }
-        }
-      }
-      
-      setError(errorMessage);
-      setAttempts((prev) => prev + 1);
-      if (attempts + 1 >= 5) {
-        setBlockedUntil(Date.now() + 5 * 60 * 1000);
-      }
+      setError(err.message || 'An unexpected error occurred. Please check your credentials and try again.');
     } finally {
       setLoading(false);
     }
@@ -269,7 +130,7 @@ function ChangePasswordContent() {
           </div>
           <button 
             type="submit" 
-            disabled={loading || (blockedUntil !== null && Date.now() < blockedUntil)}
+            disabled={loading}
             className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
           >
             {loading ? 'Updating...' : 'Update Password'}

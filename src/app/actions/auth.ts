@@ -96,3 +96,66 @@ export async function createUser(email: string, fullName: string) {
     return { error: e.message || 'An unexpected error occurred' };
   }
 }
+
+export async function changePasswordAction(email: string, currentPass: string, newPass: string) {
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
+
+    // 1. Verify current credentials
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password: currentPass,
+    });
+
+    if (signInError) {
+      return { error: signInError.message || 'Current password is incorrect' };
+    }
+
+    if (!signInData.user) {
+      return { error: 'User not found' };
+    }
+
+    // 2. Update password
+    // We need to use the session from sign-in
+    const { error: updateError } = await supabase.auth.updateUser(
+      { password: newPass },
+      { 
+        // @ts-ignore - explicitly pass the token if needed for server actions
+        access_token: signInData.session?.access_token 
+      }
+    );
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    // 3. Update employee record using service role (for bypass RLS if needed)
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      const adminClient = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        serviceRoleKey,
+        { auth: { persistSession: false } }
+      );
+      
+      await adminClient
+        .from('employees')
+        .update({ is_password_change_required: false })
+        .eq('user_id', signInData.user.id);
+    }
+
+    return { success: true };
+  } catch (e: any) {
+    console.error('Server action error:', e);
+    return { error: e.message || 'An unexpected error occurred during password update' };
+  }
+}
