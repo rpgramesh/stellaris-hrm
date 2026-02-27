@@ -9,6 +9,7 @@ import { hardwareOnboardingService } from '@/services/hardwareOnboardingService'
 import { notificationService } from '@/services/notificationService';
 import { legalDocumentService } from '@/services/legalDocumentService';
 import { auditService } from '@/services/auditService';
+import { createUser } from '@/app/actions/auth';
 import {
   UserPlusIcon,
   CheckCircleIcon,
@@ -462,15 +463,46 @@ export default function OnboardingPage() {
     e.preventDefault();
     if (!formData.employeeId) return;
 
+    const inviteLater = (e.target as any)._inviteLater || false;
+
     try {
+      const employee = getEmployee(formData.employeeId);
+      if (!employee) return;
+
+      let userId = employee.userId;
+
+      // If not inviting later and user doesn't have a userId, create one
+      if (!inviteLater && !userId) {
+        try {
+          const res = await createUser(
+            employee.email,
+            `${employee.firstName} ${employee.lastName}`.trim() || employee.email
+          );
+          if (res.error) {
+            console.error('Failed to create user during onboarding:', res.error);
+          } else if (res.userId) {
+            userId = res.userId;
+            // Link the new userId to the employee in DB and local state
+            await employeeService.update(employee.id, { userId: res.userId });
+            setEmployees(prev => prev.map(emp => emp.id === employee.id ? { ...emp, userId: res.userId } : emp));
+            
+            if (res.temporaryPassword) {
+              alert(`User account created for ${employee.firstName}.\n\nUsername: ${employee.email}\nTemporary Password: ${res.temporaryPassword}\n\nShare these details with the employee.`);
+            }
+          }
+        } catch (err) {
+          console.error('Error in createUser during onboarding:', err);
+        }
+      }
+
       const newProcess = await onboardingService.create({
         employeeId: formData.employeeId,
         startDate: formData.startDate,
         status: 'In Progress',
-        progress: 0,
-        currentStage: formData.currentStage,
+        progress: userId ? 20 : 0, // Mark Account Creation as 20% if user is created
+        currentStage: userId ? 'Document Submission' : 'Account Creation',
         tasks: [
-          { id: 'T1', name: 'Account Creation', completed: false },
+          { id: 'T1', name: 'Account Creation', completed: !!userId },
           { id: 'T2', name: 'Document Submission', completed: false },
           { id: 'T3', name: 'Hardware Setup', completed: false },
           { id: 'T4', name: 'Client Onboarding Documents', completed: false },
@@ -478,17 +510,16 @@ export default function OnboardingPage() {
         ]
       });
 
-      const employee = getEmployee(formData.employeeId);
-      if (employee?.userId) {
+      if (userId) {
         await notificationService.createNotification(
-          employee.userId,
+          userId,
           'Complete 100-Point ID Check',
           'Please complete your 100-point ID document submission to finish onboarding.',
           'warning'
         );
 
         await notificationService.createNotification(
-          employee.userId,
+          userId,
           'Provide Client Onboarding Details',
           'Please enter your client name, manager email and upload any client onboarding documents in Self Service.',
           'info'
@@ -646,6 +677,75 @@ export default function OnboardingPage() {
       alert('Failed to load hardware onboarding details. Please try again.');
     } finally {
       setHardwareLoading(false);
+    }
+  };
+
+  const handleInviteNow = async (processId: string) => {
+    const process = onboardingList.find(p => p.id === processId);
+    if (!process) return;
+
+    const employee = getEmployee(process.employeeId);
+    if (!employee) return;
+
+    try {
+      const res = await createUser(
+        employee.email,
+        `${employee.firstName} ${employee.lastName}`.trim() || employee.email
+      );
+      if (res.error) {
+        alert(`Failed to create user: ${res.error}`);
+        return;
+      }
+
+      if (res.userId) {
+        // Link the new userId to the employee in DB and local state
+        await employeeService.update(employee.id, { userId: res.userId });
+        setEmployees(prev => prev.map(emp => emp.id === employee.id ? { ...emp, userId: res.userId } : emp));
+
+        // Mark Account Creation as completed
+        const updatedTasks = process.tasks.map(t =>
+          t.name.toLowerCase().includes('account creation') ? { ...t, completed: true } : t
+        );
+        const completedCount = updatedTasks.filter(t => t.completed).length;
+        const progress = Math.round((completedCount / updatedTasks.length) * 100);
+        const nextIncomplete = updatedTasks.find(t => !t.completed);
+        const currentStage = nextIncomplete ? nextIncomplete.name : 'Completed';
+        const status = progress === 100 ? 'Completed' : 'In Progress';
+
+        await onboardingService.updateWorkflow(process.id, {
+          progress,
+          currentStage,
+          status
+        });
+
+        setOnboardingList(prev =>
+          prev.map(p =>
+            p.id === process.id
+              ? {
+                  ...p,
+                  tasks: updatedTasks,
+                  progress,
+                  currentStage,
+                  status
+                }
+              : p
+          )
+        );
+
+        await notificationService.createNotification(
+          res.userId,
+          'Complete 100-Point ID Check',
+          'Please complete your 100-point ID document submission to finish onboarding.',
+          'warning'
+        );
+
+        if (res.temporaryPassword) {
+          alert(`User account created for ${employee.firstName}.\n\nUsername: ${employee.email}\nTemporary Password: ${res.temporaryPassword}\n\nShare these details with the employee.`);
+        }
+      }
+    } catch (err) {
+      console.error('Error in handleInviteNow:', err);
+      alert('Failed to send invitation. Please try again.');
     }
   };
 
@@ -1758,19 +1858,33 @@ export default function OnboardingPage() {
                     required
                   />
                 </div>
-                <div className="flex items-center justify-end mt-4">
+                <div className="flex items-center justify-end mt-4 gap-2">
                   <button
                     type="button"
-                    className="mr-2 px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none"
+                    className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none"
                     onClick={() => setIsAdding(false)}
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
+                    className="px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 focus:outline-none"
+                    onClick={(e) => {
+                      // Triggering form submit with inviteLater logic
+                      const form = (e.target as HTMLButtonElement).form;
+                      if (form) {
+                        (form as any)._inviteLater = true;
+                        form.requestSubmit();
+                      }
+                    }}
+                  >
+                    Invite Later
+                  </button>
+                  <button
                     type="submit"
                     className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none"
                   >
-                    Start
+                    Start & Invite
                   </button>
                 </div>
               </form>
@@ -1868,6 +1982,7 @@ export default function OnboardingPage() {
                     <div className="flex flex-wrap gap-2">
                       {process.tasks.map((task) => {
                         const isMandatoryTask = task.name.toLowerCase().includes('mandatory learning');
+                        const isAccountCreationTask = task.name.toLowerCase().includes('account creation');
                         const isAssignedMandatory =
                           isMandatoryTask &&
                           !task.completed &&
@@ -1890,6 +2005,19 @@ export default function OnboardingPage() {
                         let pillClasses: string;
                         let pillTitle: string | undefined;
                         let pillLabel: string;
+
+                        if (isAccountCreationTask && !task.completed) {
+                          return (
+                            <button
+                              key={task.id}
+                              onClick={() => handleInviteNow(process.id)}
+                              className={`${commonClasses} bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200 cursor-pointer`}
+                              title="Click to create user account and send welcome email"
+                            >
+                              Invite Now (Account Creation)
+                            </button>
+                          );
+                        }
 
                         if (isDocumentSubmissionTask) {
                           pillClasses = `${commonClasses} ${getDocumentSubmissionClasses(documentStage, task.completed)}`;

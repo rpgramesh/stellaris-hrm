@@ -1,8 +1,12 @@
-import { supabase } from '@/lib/supabase';
-import { PayrollRun, Payslip, PayComponent, PayrollCalculationResult, PayrollEmployee, TaxTable, StatutoryRate, Deduction, SuperannuationContribution } from '@/types/payroll';
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+import { PayrollRun, Payslip, PayComponent, PayrollCalculationResult, PayrollEmployee, TaxTable, Deduction, SuperannuationContribution, TimesheetEntry as PayrollTimesheetEntry } from '@/types/payroll';
 import { auditService } from './auditService';
-import { notificationService } from './notificationService';
-import { employeeService } from './employeeService';
+import { timesheetService } from './timesheetService';
+import { statutoryTablesService } from './statutoryTablesService';
+import { awardInterpretationEngine } from './awardInterpretationEngine';
+import { attendanceService } from './attendanceService';
+import { Timesheet } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 export const payrollProcessingEngine = {
   async processPayrollRun(payrollRunId: string, processedBy: string, selectedEmployeeIds?: string[]): Promise<PayrollCalculationResult[]> {
@@ -20,6 +24,9 @@ export const payrollProcessingEngine = {
 
     // Get all employees for this payroll run
     const employees = await this.getEmployeesForPayroll(payrollRun, selectedEmployeeIds);
+    if (employees.length === 0) {
+      throw new Error(`No active employees found with ${payrollRun.payFrequency} pay frequency matching the selected criteria.`);
+    }
     const results: PayrollCalculationResult[] = [];
 
     // Update payroll run status
@@ -27,11 +34,24 @@ export const payrollProcessingEngine = {
 
     try {
       for (const employee of employees) {
-        const result = await this.calculateEmployeePayroll(employee, payrollRun);
-        results.push(result);
-        
-        // Create payslip
-        await this.createPayslipFromCalculation(result, payrollRunId);
+        try {
+          const result = await this.calculateEmployeePayroll(employee, payrollRun);
+          results.push(result);
+          
+          // Create payslip
+          await this.createPayslipFromCalculation(result, payrollRunId);
+        } catch (calcError) {
+          console.error(`Error calculating payroll for employee ${employee.employeeId}:`, calcError);
+          // Add to errors table
+          await this.logPayrollError(
+            payrollRunId,
+            employee.employeeId,
+            'Calculation',
+            'CALC_ERR',
+            `Failed to calculate payroll: ${calcError instanceof Error ? calcError.message : 'Unknown error'}`,
+            { error: calcError }
+          );
+        }
       }
 
       // Update payroll run totals
@@ -48,6 +68,7 @@ export const payrollProcessingEngine = {
         processedBy
       );
 
+      console.log(`Payroll processing completed. Successfully calculated ${results.length} of ${employees.length} employees.`);
       return results;
     } catch (error) {
       console.error('Error in processPayrollRun:', error);
@@ -79,18 +100,25 @@ export const payrollProcessingEngine = {
     };
 
     try {
-      // 1. Calculate base salary
-      const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun);
-      result.components.earnings.push(baseSalaryComponent);
+      // 1. Process timesheet data for hourly employees or validate salary employees
+      const timesheetComponents = await this.processTimesheetData(employee, payrollRun);
+      result.components.earnings.push(...timesheetComponents.earnings);
+      result.components.superContributions.push(...timesheetComponents.superContributions);
+      
+      // 2. Calculate base salary (for salaried employees) or validate minimum wage
+      if (employee.employmentType === 'FullTime' || employee.employmentType === 'PartTime') {
+        const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun);
+        result.components.earnings.push(baseSalaryComponent);
+      }
 
-      // 2. Apply salary adjustments
+      // 3. Apply salary adjustments
       const adjustments = await this.getSalaryAdjustments(employee.employeeId, payrollRun);
       for (const adjustment of adjustments) {
         const adjustmentComponent = this.createAdjustmentComponent(adjustment, payrollRun);
         result.components.earnings.push(adjustmentComponent);
       }
 
-      // 3. Calculate gross pay
+      // 4. Calculate gross pay
       result.totals.grossPay = result.components.earnings.reduce((sum, comp) => sum + comp.amount, 0);
 
       // 4. Apply deductions (pre-tax)
@@ -114,7 +142,8 @@ export const payrollProcessingEngine = {
       const taxAmount = await this.calculateTaxWithholding(employee, result.totals.taxableIncome, payrollRun);
       result.totals.taxWithheld = taxAmount;
 
-      // 7. Calculate superannuation
+      // 7. Calculate superannuation (on OTE - Ordinary Time Earnings)
+      // In a real scenario, this would filter out non-OTE components like overtime
       const superContribution = await this.calculateSuperannuation(employee, result.totals.grossPay);
       if (superContribution > 0) {
         result.components.superContributions.push({
@@ -196,26 +225,116 @@ export const payrollProcessingEngine = {
     };
   },
 
-  calculateTaxWithholding(employee: PayrollEmployee, taxableIncome: number, payrollRun: PayrollRun): number {
-    // Default tax calculation - in a real implementation, this would use proper tax tables
-    // Simple progressive tax calculation for demonstration
-    const annualIncome = taxableIncome * this.getPayPeriodsPerYear(employee.payFrequency);
-    
-    if (annualIncome <= 18200) return 0;
-    if (annualIncome <= 45000) return (annualIncome - 18200) * 0.19 / this.getPayPeriodsPerYear(employee.payFrequency);
-    if (annualIncome <= 120000) return (5092 + (annualIncome - 45000) * 0.325) / this.getPayPeriodsPerYear(employee.payFrequency);
-    if (annualIncome <= 180000) return (29467 + (annualIncome - 120000) * 0.37) / this.getPayPeriodsPerYear(employee.payFrequency);
-    return (51667 + (annualIncome - 180000) * 0.45) / this.getPayPeriodsPerYear(employee.payFrequency);
+  async calculateTaxWithholding(employee: PayrollEmployee, taxableIncome: number, payrollRun: PayrollRun): Promise<number> {
+    try {
+      const payPeriodsPerYear = this.getPayPeriodsPerYear(employee.payFrequency);
+      const annualTaxableIncome = taxableIncome * payPeriodsPerYear;
+      
+      // Try to get actual tax tables from statutory service
+      const financialYear = this.getFinancialYear(payrollRun.payPeriodStart);
+      const taxRates = await statutoryTablesService.getStatutoryRates('payg-withholding', new Date(payrollRun.payPeriodStart));
+      
+      if (taxRates && taxRates.length > 0) {
+        // Sort rates by threshold
+        const sortedRates = [...taxRates].sort((a, b) => (a.threshold || 0) - (b.threshold || 0));
+        
+        let totalAnnualTax = 0;
+        let remainingIncome = annualTaxableIncome;
+        
+        for (let i = 0; i < sortedRates.length; i++) {
+          const currentRate = sortedRates[i];
+          const nextRate = sortedRates[i + 1];
+          const threshold = currentRate.threshold || 0;
+          const nextThreshold = nextRate ? nextRate.threshold : Infinity;
+          
+          if (annualTaxableIncome > threshold) {
+            const taxableInThisBracket = Math.min(annualTaxableIncome - threshold, (nextThreshold as number) - threshold);
+            totalAnnualTax += taxableInThisBracket * (currentRate.rate / 100);
+          }
+        }
+        
+        return totalAnnualTax / payPeriodsPerYear;
+      }
+
+      // Fallback to simple calculation if no rates found
+      if (annualTaxableIncome <= 18200) return 0;
+      if (annualTaxableIncome <= 45000) return (annualTaxableIncome - 18200) * 0.19 / payPeriodsPerYear;
+      if (annualTaxableIncome <= 120000) return (5092 + (annualTaxableIncome - 45000) * 0.325) / payPeriodsPerYear;
+      if (annualTaxableIncome <= 180000) return (29467 + (annualTaxableIncome - 120000) * 0.37) / payPeriodsPerYear;
+      return (51667 + (annualTaxableIncome - 180000) * 0.45) / payPeriodsPerYear;
+    } catch (error) {
+      console.error('Error calculating tax withholding:', error);
+      // Return 0 or fallback
+      return 0;
+    }
   },
 
-  calculateSuperannuation(employee: PayrollEmployee, grossPay: number): number {
-    // Get current superannuation guarantee rate
-    const superRate = this.getCurrentSuperRate();
-    return grossPay * superRate;
+  async calculateSuperannuation(employee: PayrollEmployee, grossPay: number): Promise<number> {
+    try {
+      // Get current superannuation guarantee rate from statutory service
+      const rates = await statutoryTablesService.getStatutoryRates('superannuation-guarantee', new Date());
+      const superRate = (rates && rates.length > 0) ? (rates[0].rate / 100) : 0.115;
+      
+      return grossPay * superRate;
+    } catch (error) {
+      console.error('Error calculating superannuation:', error);
+      return grossPay * 0.115; // Default fallback
+    }
+  },
+
+  async logPayrollError(
+    payrollRunId: string,
+    employeeId: string,
+    errorType: 'Validation' | 'Calculation' | 'Data' | 'System' | 'Compliance',
+    errorCode: string,
+    message: string,
+    details: any = {}
+  ): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('payroll_errors')
+        .insert({
+          payroll_run_id: payrollRunId,
+          employee_id: employeeId,
+          error_type: errorType,
+          error_code: errorCode,
+          message,
+          details,
+          severity: this.getSeverityFromType(errorType),
+          status: 'Open'
+        });
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error logging payroll error:', err);
+    }
+  },
+
+  getSeverityFromType(type: string): 'Low' | 'Medium' | 'High' | 'Critical' {
+    switch (type) {
+      case 'System': return 'Critical';
+      case 'Calculation': return 'High';
+      case 'Compliance': return 'High';
+      case 'Validation': return 'Medium';
+      case 'Data': return 'Medium';
+      default: return 'Low';
+    }
+  },
+
+  getFinancialYear(dateStr: string): string {
+    const date = new Date(dateStr);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    
+    if (month >= 6) { // July or later
+      return `${year}-${year + 1}`;
+    } else {
+      return `${year - 1}-${year}`;
+    }
   },
 
   getTaxTable(residencyStatus: string, payFrequency: string): TaxTable | null {
-    // Default tax table for demonstration - in a real implementation, this would be passed as parameter
+    // Default tax table for demonstration - updated with 2024-25 Stage 3 tax rates
     return {
       id: 'default',
       financialYear: '2024-25',
@@ -224,20 +343,15 @@ export const payrollProcessingEngine = {
       payFrequency: payFrequency as 'Weekly' | 'Fortnightly' | 'Monthly',
       incomeThresholds: [
         { from: 0, to: 18200, baseTax: 0, taxRate: 0 },
-        { from: 18201, to: 45000, baseTax: 0, taxRate: 19 },
-        { from: 45001, to: 120000, baseTax: 5092, taxRate: 32.5 },
-        { from: 120001, to: 180000, baseTax: 29467, taxRate: 37 },
-        { from: 180001, to: Infinity, baseTax: 51667, taxRate: 45 }
+        { from: 18201, to: 45000, baseTax: 0, taxRate: 16 },
+        { from: 45001, to: 135000, baseTax: 4288, taxRate: 30 },
+        { from: 135001, to: 190000, baseTax: 31288, taxRate: 37 },
+        { from: 190001, to: Infinity, baseTax: 51638, taxRate: 45 }
       ],
       effectiveFrom: '2024-07-01',
       effectiveTo: '2025-06-30',
       isActive: true
     };
-  },
-
-  getCurrentSuperRate(): number {
-    // Default to 11.5% - in a real implementation, this would be fetched from a cache or passed as parameter
-    return 0.115;
   },
 
   getPreTaxDeductions(employeeId: string): Deduction[] {
@@ -337,6 +451,14 @@ export const payrollProcessingEngine = {
     if (error) {
       console.error('Error fetching employees for payroll:', error);
       return [];
+    }
+
+    if (!data || data.length === 0) {
+      console.warn('No employees found in database matching criteria:', {
+        payFrequency: payrollRun.payFrequency,
+        selectedEmployeeIds,
+        activeOnly: true
+      });
     }
 
     return data.map(item => this.mapPayrollEmployeeFromDb(item));
@@ -488,8 +610,30 @@ export const payrollProcessingEngine = {
       processedAt: data.processed_at,
       stpSubmissionId: data.stp_submission_id,
       stpStatus: data.stp_status,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at
+      createdAt: data.created_at || new Date().toISOString(),
+      updatedAt: data.updated_at || new Date().toISOString()
+    };
+  },
+
+  mapPayslipFromDb(data: any): Payslip {
+    return {
+      id: data.id,
+      employeeId: data.employee_id,
+      periodStart: data.period_start,
+      periodEnd: data.period_end,
+      grossPay: Number(data.gross_pay) || 0,
+      netPay: Number(data.net_pay) || 0,
+      taxWithheld: Number(data.tax_withheld) || 0,
+      superannuation: Number(data.superannuation) || 0,
+      deductions: Number(data.deductions) || 0,
+      allowances: Number(data.allowances) || 0,
+      bonuses: Number(data.bonuses) || 0,
+      reimbursements: Number(data.reimbursements) || 0,
+      overtime: Number(data.overtime) || 0,
+      paymentDate: data.payment_date,
+      status: data.status,
+      createdAt: data.created_at || new Date().toISOString(),
+      updatedAt: data.updated_at || new Date().toISOString()
     };
   },
 
@@ -498,6 +642,7 @@ export const payrollProcessingEngine = {
       id: data.id,
       employeeId: data.employee_id,
       baseSalary: Number(data.base_salary) || 0,
+      hourlyRate: Number(data.hourly_rate) || 0,
       payFrequency: data.pay_frequency,
       taxFileNumber: data.tax_file_number,
       taxScale: data.tax_scale,
@@ -538,5 +683,277 @@ export const payrollProcessingEngine = {
       createdAt: data.created_at,
       updatedAt: data.updated_at
     };
+  },
+
+  async processTimesheetData(employee: PayrollEmployee, payrollRun: PayrollRun): Promise<{
+    earnings: PayComponent[];
+    superContributions: SuperannuationContribution[];
+  }> {
+    const earnings: PayComponent[] = [];
+    const superContributions: SuperannuationContribution[] = [];
+
+    try {
+      // 1. Get approved timesheets to verify the period is approved
+      const timesheets = await this.getTimesheetsForPeriod(employee.employeeId, payrollRun.payPeriodStart, payrollRun.payPeriodEnd);
+      
+      if (timesheets.length === 0) {
+        if (employee.employmentType === 'Casual' || employee.employmentType === 'Contractor') {
+          // No approved timesheets for hourly employee
+          return { earnings, superContributions };
+        }
+        return { earnings, superContributions };
+      }
+
+      // 2. Fetch detailed attendance records for the period to calculate penalty rates
+      const attendanceRecords = await attendanceService.getAll(
+        payrollRun.payPeriodStart,
+        payrollRun.payPeriodEnd,
+        employee.employeeId
+      );
+
+      if (attendanceRecords.length === 0) {
+        return { earnings, superContributions };
+      }
+
+      // 3. Map AttendanceRecord to TimesheetEntry for the award engine
+      const baseHourlyRate = await this.getHourlyRate(employee);
+      const timesheetEntries: PayrollTimesheetEntry[] = attendanceRecords
+        .filter(record => record.clockIn && record.clockOut)
+        .map(record => ({
+          id: record.id,
+          employeeId: employee.employeeId,
+          startTime: record.clockIn,
+          endTime: record.clockOut!,
+          hourlyRate: baseHourlyRate,
+          isBillable: true,
+          status: 'Approved',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+
+      // 4. Use AwardInterpretationEngine if employee has an award
+      if (employee.awardId) {
+        const interpretationResult = await awardInterpretationEngine.interpretTimesheet(
+          employee.employeeId,
+          timesheetEntries,
+          employee.awardId,
+          employee.awardClassification || 'Level 1',
+          employee.employmentType.toLowerCase()
+        );
+
+        // Map interpretation results to PayComponents
+        // Penalty Rates
+        interpretationResult.penaltyRates.forEach(penalty => {
+          earnings.push({
+            id: crypto.randomUUID(),
+            payslipId: '',
+            componentType: 'Allowance',
+            description: penalty.description,
+            units: penalty.applicableHours,
+            rate: penalty.penaltyRate,
+            amount: penalty.amount,
+            taxTreatment: 'Taxable',
+            stpCategory: 'ALW',
+            isYtd: false,
+            createdAt: new Date().toISOString()
+          });
+        });
+
+        // Overtime
+        interpretationResult.overtime.forEach(ot => {
+          earnings.push({
+            id: crypto.randomUUID(),
+            payslipId: '',
+            componentType: 'Overtime',
+            description: `Overtime (${ot.type})`,
+            units: ot.hours,
+            rate: ot.rate,
+            amount: ot.amount,
+            taxTreatment: 'Taxable',
+            stpCategory: 'OVT',
+            isYtd: false,
+            createdAt: new Date().toISOString()
+          });
+        });
+
+        // Allowances
+        interpretationResult.allowances.forEach(allowance => {
+          earnings.push({
+            id: crypto.randomUUID(),
+            payslipId: '',
+            componentType: 'Allowance',
+            description: allowance.description,
+            units: allowance.applicableHours,
+            rate: allowance.amount / (allowance.applicableHours || 1),
+            amount: allowance.amount,
+            taxTreatment: allowance.taxTreatment === 'taxable' ? 'Taxable' : 'NonTaxable',
+            stpCategory: 'ALW',
+            isYtd: false,
+            createdAt: new Date().toISOString()
+          });
+        });
+
+        // Base Pay (for hours covered by interpretation)
+        const totalInterpretedHours = timesheetEntries.reduce((sum, entry) => {
+          const start = new Date(entry.startTime);
+          const end = new Date(entry.endTime);
+          return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        }, 0);
+
+        if (totalInterpretedHours > 0) {
+          earnings.push({
+            id: crypto.randomUUID(),
+            payslipId: '',
+            componentType: 'BaseSalary',
+            description: 'Ordinary Hours',
+            units: totalInterpretedHours,
+            rate: baseHourlyRate,
+            amount: totalInterpretedHours * baseHourlyRate,
+            taxTreatment: 'Taxable',
+            stpCategory: 'SAW',
+            isYtd: false,
+            createdAt: new Date().toISOString()
+          });
+        }
+      } else {
+        // Fallback to simple calculation if no award
+        for (const record of attendanceRecords) {
+          if (!record.clockIn || !record.clockOut) continue;
+          
+          const start = new Date(record.clockIn);
+          const end = new Date(record.clockOut);
+          const hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+          
+          if (hours > 0) {
+            earnings.push({
+              id: crypto.randomUUID(),
+              payslipId: '',
+              componentType: 'BaseSalary',
+              description: `Hours Worked - ${record.date}`,
+              units: hours,
+              rate: baseHourlyRate,
+              amount: hours * baseHourlyRate,
+              taxTreatment: 'Taxable',
+              stpCategory: 'SAW',
+              isYtd: false,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+      }
+
+      return { earnings, superContributions };
+    } catch (error) {
+      console.error('Error processing timesheet data:', error);
+      throw error;
+    }
+  },
+
+  async getTimesheetsForPeriod(employeeId: string, periodStart: string, periodEnd: string): Promise<Timesheet[]> {
+    const timesheets: Timesheet[] = [];
+    const startDate = new Date(periodStart);
+    const endDate = new Date(periodEnd);
+    
+    // Get timesheets for each week in the period
+    let currentWeekStart = new Date(startDate);
+    currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay()); // Start from Sunday
+    
+    while (currentWeekStart <= endDate) {
+      const weekStartStr = currentWeekStart.toISOString().split('T')[0];
+      const timesheet = await timesheetService.getByWeek(employeeId, weekStartStr);
+      
+      if (timesheet && timesheet.status === 'Approved') {
+        timesheets.push(timesheet);
+      }
+      
+      // Move to next week
+      currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+    }
+    
+    return timesheets;
+  },
+
+  calculateHoursFromTimesheet(timesheet: Timesheet): { regularHours: number; overtimeHours: number; totalHours: number } {
+    let totalHours = 0;
+    
+    // Calculate total hours from all entries
+      timesheet.rows?.forEach((row: any) => {
+        row.entries?.forEach((entry: any) => {
+          totalHours += entry.hours || 0;
+        });
+      });
+    
+    // Standard 38-hour work week (Australia)
+    const regularHours = Math.min(totalHours, 38);
+    const overtimeHours = Math.max(0, totalHours - 38);
+    
+    return { regularHours, overtimeHours, totalHours };
+  },
+
+  async getHourlyRate(employee: PayrollEmployee): Promise<number> {
+    if (employee.hourlyRate && employee.hourlyRate > 0) {
+      return employee.hourlyRate;
+    }
+    
+    // Calculate from annual salary
+    const payPeriodsPerYear = this.getPayPeriodsPerYear(employee.payFrequency);
+    const weeklySalary = (employee.baseSalary || 0) / 52;
+    return weeklySalary / 38; // Standard 38-hour week
+  },
+
+  async applyAwardInterpretations(employee: PayrollEmployee, timesheet: Timesheet, baseHourlyRate: number): Promise<{
+    earnings: PayComponent[];
+    superContributions: SuperannuationContribution[];
+  }> {
+    const earnings: PayComponent[] = [];
+    const superContributions: SuperannuationContribution[] = [];
+    
+    try {
+      // This would integrate with the award interpretation engine
+      // For now, implement basic penalty rate calculations
+      
+      timesheet.rows?.forEach((row: any) => {
+         row.entries?.forEach((entry: any) => {
+           const entryDate = new Date(entry.date);
+           const dayOfWeek = entryDate.getDay();
+          
+          // Weekend penalty rates (Saturday and Sunday)
+          if (dayOfWeek === 0 || dayOfWeek === 6) {
+            const penaltyRate = dayOfWeek === 0 ? 2.0 : 1.5; // Sunday 200%, Saturday 150%
+            const penaltyAmount = (entry.hours * baseHourlyRate * penaltyRate) - (entry.hours * baseHourlyRate);
+            
+            if (penaltyAmount > 0) {
+              earnings.push({
+                id: crypto.randomUUID(),
+                payslipId: '',
+                componentType: 'Allowance',
+                description: `${dayOfWeek === 0 ? 'Sunday' : 'Saturday'} Penalty Rate`,
+                units: entry.hours,
+                rate: baseHourlyRate * (penaltyRate - 1),
+                amount: penaltyAmount,
+                taxTreatment: 'Taxable',
+                stpCategory: 'ALW',
+                isYtd: false,
+                createdAt: new Date().toISOString()
+              });
+            }
+          }
+          
+          // Public holiday penalty (would need to check against public holidays table)
+          // This is a simplified implementation
+        });
+      });
+      
+      return { earnings, superContributions };
+    } catch (error) {
+      console.error('Error applying award interpretations:', error);
+      return { earnings, superContributions };
+    }
+  },
+
+  calculateMinimumWage(hours: number, weekStartDate: string): number {
+    // Australian minimum wage as of 2024: $23.23 per hour
+    const minimumHourlyRate = 23.23;
+    return hours * minimumHourlyRate;
   }
 };

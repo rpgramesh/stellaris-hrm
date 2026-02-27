@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { auditService } from '@/services/auditService';
 
-export default function ChangePasswordPage() {
+function ChangePasswordContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
@@ -15,6 +16,13 @@ export default function ChangePasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [blockedUntil, setBlockedUntil] = useState<number | null>(null);
+
+  useEffect(() => {
+    const emailParam = searchParams?.get('email');
+    if (emailParam) {
+      setEmail(emailParam);
+    }
+  }, [searchParams]);
 
   const validatePassword = (value: string): string | null => {
     if (value.length < 12) return 'Password must be at least 12 characters.';
@@ -39,6 +47,7 @@ export default function ChangePasswordPage() {
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Starting password change process...');
     setLoading(true);
     setError(null);
 
@@ -85,19 +94,36 @@ export default function ChangePasswordPage() {
             password: currentPassword,
           });
 
-        if (signInError || !signInData.user) {
-          setError(
-            signInError?.message || 'Current password is incorrect.'
-          );
-          setAttempts((prev) => prev + 1);
-          if (attempts + 1 >= 5) {
-            setBlockedUntil(Date.now() + 5 * 60 * 1000);
+        if (signInError) {
+          if (signInError.message?.includes('Aborted')) {
+            // Retry once if aborted
+            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+              email,
+              password: currentPassword,
+            });
+            if (retryError) throw retryError;
+            if (retryData.user) user = retryData.user;
+          } else {
+            console.error('Sign in error during password change:', signInError);
+            const msg = signInError?.message || (signInError as any)?.error_description || (typeof signInError === 'string' ? signInError : 'Current password is incorrect.');
+            const finalMsg = msg === '{}' ? 'Authentication failed. Please check your credentials.' : msg;
+            setError(finalMsg);
+            setAttempts((prev) => prev + 1);
+            if (attempts + 1 >= 5) {
+              setBlockedUntil(Date.now() + 5 * 60 * 1000);
+            }
+            setLoading(false);
+            return;
           }
+        } else if (!signInData.user) {
+          setError('Authentication failed. User not found.');
           setLoading(false);
           return;
+        } else {
+          user = signInData.user;
         }
-
-        user = signInData.user;
+        // Small delay to ensure session is fully ready before next auth call
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
       const metadata = user?.user_metadata || {};
@@ -117,17 +143,29 @@ export default function ChangePasswordPage() {
       }
 
       // 1. Update Password
+      console.log('Attempting password update for user:', user?.id);
       const { error: authError } = await supabase.auth.updateUser({ password });
-      if (authError) throw authError;
+      if (authError) {
+        if (authError.message?.includes('Aborted')) {
+          // Retry once if aborted
+          const { error: retryError } = await supabase.auth.updateUser({ password });
+          if (retryError) throw retryError;
+        } else {
+          throw authError;
+        }
+      }
 
-      if (user) {
+      // Password changed successfully!
+      // Any failures after this point (DB updates, logging) should not block the redirect.
+      try {
+        if (user) {
           const { error: dbError } = await supabase
             .from('employees')
             .update({ is_password_change_required: false })
             .eq('user_id', user.id);
             
           if (dbError) {
-              console.error('Error updating employee record:', dbError);
+            console.error('Error updating employee record:', dbError);
           }
 
           await auditService.logAction(
@@ -139,14 +177,52 @@ export default function ChangePasswordPage() {
               event: 'PASSWORD_CHANGED',
               occurred_at: new Date().toISOString(),
             }
-          );
+          ).catch(e => console.error('Failed to log password change audit:', e));
+        }
+      } catch (postError) {
+        console.error('Non-critical post-password-change error:', postError);
       }
 
-      // Force reload or redirect to dashboard
+      // Redirect to dashboard
+      console.log('Password changed successfully, redirecting...');
       router.push('/self-service');
       router.refresh(); 
     } catch (err: any) {
-      setError(err.message || 'Failed to change password');
+      console.error('Password change error details:', err);
+      
+      let errorMessage = 'Failed to change password';
+      
+      if (typeof err === 'string') {
+        errorMessage = err;
+      } else if (err?.name === 'AbortError' || err?.message?.includes('Aborted')) {
+        errorMessage = 'The operation was interrupted. Please try clicking "Update Password" again.';
+      } else if (err?.message && err.message !== '{}') {
+        errorMessage = err.message;
+      } else if (err?.error_description && err.error_description !== '{}') {
+        errorMessage = err.error_description;
+      } else if (err?.error && typeof err.error === 'string') {
+        errorMessage = err.error;
+      } else {
+        // If it's still {} or something unhelpful, try to see if it's a Supabase error with a nested message
+        const possibleMessage = err?.data?.message || err?.error?.message;
+        if (possibleMessage && possibleMessage !== '{}') {
+          errorMessage = possibleMessage;
+        } else {
+          try {
+            const stringified = JSON.stringify(err);
+            if (stringified !== '{}' && stringified !== 'undefined') {
+              errorMessage = stringified;
+            } else {
+              // Last resort: check properties directly if it's an Error object
+              errorMessage = err.name ? `${err.name}: ${err.message || 'Unknown error'}` : 'An unexpected error occurred.';
+            }
+          } catch (e) {
+            errorMessage = 'An unexpected error occurred. Please check console for details.';
+          }
+        }
+      }
+      
+      setError(errorMessage);
       setAttempts((prev) => prev + 1);
       if (attempts + 1 >= 5) {
         setBlockedUntil(Date.now() + 5 * 60 * 1000);
@@ -223,5 +299,13 @@ export default function ChangePasswordPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function ChangePasswordPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>}>
+      <ChangePasswordContent />
+    </Suspense>
   );
 }

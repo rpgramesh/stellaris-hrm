@@ -128,7 +128,7 @@ export class StatutoryContributionsService {
     try {
       // Get PAYG withholding rates
       const paygRate = statutoryRates.find(rate => 
-        rate.contributionType === 'payg-withholding' && rate.isActive
+        rate.rateType === 'payg-withholding' && rate.isActive
       );
       
       if (!paygRate) {
@@ -191,7 +191,7 @@ export class StatutoryContributionsService {
     try {
       // Get superannuation guarantee rate
       const superRate = statutoryRates.find(rate => 
-        rate.contributionType === 'superannuation-guarantee' && rate.isActive
+        rate.rateType === 'superannuation-guarantee' && rate.isActive
       );
       
       if (!superRate) {
@@ -263,7 +263,7 @@ export class StatutoryContributionsService {
     try {
       // Get payroll tax rates for the state
       const payrollTaxRates = statutoryRates.filter(rate => 
-        rate.contributionType === 'payroll-tax' && 
+        rate.rateType === 'payroll-tax' && 
         rate.isActive &&
         rate.applicableStates?.includes(employee.state || '')
       );
@@ -339,7 +339,7 @@ export class StatutoryContributionsService {
     try {
       // Get workers compensation rates for the industry
       const workersCompRates = statutoryRates.filter(rate => 
-        rate.contributionType === 'workers-compensation' && 
+        rate.rateType === 'workers-compensation' && 
         rate.isActive &&
         rate.applicableIndustries?.includes(employee.industryCode || '')
       );
@@ -347,7 +347,7 @@ export class StatutoryContributionsService {
       if (!workersCompRates || workersCompRates.length === 0) {
         // Try to get default rate
         const defaultRate = statutoryRates.find(rate => 
-          rate.contributionType === 'workers-compensation' && 
+          rate.rateType === 'workers-compensation' && 
           rate.isActive &&
           !rate.applicableIndustries
         );
@@ -425,7 +425,7 @@ export class StatutoryContributionsService {
     
     for (const rateType of otherRateTypes) {
       const rates = statutoryRates.filter(rate => 
-        rate.contributionType === rateType && rate.isActive
+        rate.rateType === rateType && rate.isActive
       );
       
       if (rates.length > 0) {
@@ -460,7 +460,7 @@ export class StatutoryContributionsService {
       let amount = 0;
       let calculationBase = 0;
       
-      switch (rate.contributionType) {
+      switch (rate.rateType) {
         case 'help-debt':
           if (employee.hasHELPDebt) {
             calculationBase = taxableIncome;
@@ -499,7 +499,7 @@ export class StatutoryContributionsService {
         id: '',
         employeeId: employee.id,
         companyId: employee.companyId,
-        contributionType: rate.contributionType,
+        contributionType: rate.rateType,
         contributionName: rate.name,
         employerAmount: 0,
         employeeAmount: amount,
@@ -507,25 +507,25 @@ export class StatutoryContributionsService {
         rateApplied: rate.rate,
         periodStart: payPeriod.startDate,
         periodEnd: payPeriod.endDate,
-        paymentDueDate: this.getContributionPaymentDueDate(rate.contributionType, payPeriod.endDate),
+        paymentDueDate: this.getContributionPaymentDueDate(rate.rateType as any, payPeriod.endDate),
         liabilityAccount: rate.liabilityAccount,
         expenseAccount: rate.expenseAccount,
         status: 'calculated',
         calculationDetails: {
-          rateType: rate.contributionType,
+          rateType: rate.rateType,
           originalRate: rate.rate,
           applicableThresholds: rate.threshold,
           employeeCircumstances: this.getEmployeeCircumstances(employee)
         },
         isReportable: rate.isReportable,
-        stpCategory: this.getSTPCategory(rate.contributionType),
+        stpCategory: this.getSTPCategory(rate.rateType as any),
         createdAt: new Date(),
         updatedAt: new Date()
       };
       
     } catch (error) {
-      console.error(`Error calculating ${rate.contributionType}:`, error);
-      throw new Error(`Failed to calculate ${rate.contributionType}: ${error.message}`);
+      console.error(`Error calculating ${rate.rateType}:`, error);
+      throw new Error(`Failed to calculate ${rate.rateType}: ${error.message}`);
     }
   }
   

@@ -319,6 +319,16 @@ export default function Navbar() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setProfileOpen(false);
+                    router.push('/change-password');
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Change Password
+                </button>
+                <button
+                  type="button"
                   onClick={handleLogout}
                   className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 border-t border-gray-100"
                 >

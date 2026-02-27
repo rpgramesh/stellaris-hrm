@@ -100,7 +100,7 @@ export default function SuperannuationManagement() {
         employees!inner(first_name, last_name),
         super_funds!inner(fund_name, fund_abn)
       `)
-      .order('pay_period_end', { ascending: false });
+      .order('period_end', { ascending: false });
 
     // Apply filters
     if (filters.status) {
@@ -113,10 +113,10 @@ export default function SuperannuationManagement() {
       query = query.eq('employee_id', filters.employeeId);
     }
     if (filters.dateFrom) {
-      query = query.gte('pay_period_end', filters.dateFrom);
+      query = query.gte('period_end', filters.dateFrom);
     }
     if (filters.dateTo) {
-      query = query.lte('pay_period_end', filters.dateTo);
+      query = query.lte('period_end', filters.dateTo);
     }
 
     const { data, error } = await query;

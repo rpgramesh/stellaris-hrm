@@ -25,6 +25,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
   const [filteredManagers, setFilteredManagers] = useState<Manager[]>([]);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [profileUploading, setProfileUploading] = useState(false);
+  const [inviteLater, setInviteLater] = useState(false);
 
   // Load Departments on mount
   useEffect(() => {
@@ -355,6 +356,12 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     } else if (name === 'paymentAccount') {
       const digitsOnly = (value || '').replace(/\D/g, '');
       nextValue = digitsOnly.slice(0, 10);
+    } else if (name === 'tfn') {
+      const digitsOnly = (value || '').replace(/\D/g, '');
+      nextValue = digitsOnly.slice(0, 9);
+    } else if (name === 'abn') {
+      const digitsOnly = (value || '').replace(/\D/g, '');
+      nextValue = digitsOnly.slice(0, 11);
     }
     
     setFormData(prev => ({
@@ -395,6 +402,18 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
       validationErrors.email = 'Enter a valid email address';
     }
+    if (formData.tfn) {
+      const tfnDigits = (formData.tfn || '').replace(/\D/g, '');
+      if (!/^\d{9}$/.test(tfnDigits)) {
+        validationErrors.tfn = 'TFN must be exactly 9 digits';
+      }
+    }
+    if (formData.abn) {
+      const abnDigits = (formData.abn || '').replace(/\D/g, '');
+      if (!/^\d{11}$/.test(abnDigits)) {
+        validationErrors.abn = 'ABN must be exactly 11 digits';
+      }
+    }
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
       return;
@@ -418,8 +437,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       religion: formData.religion,
       clientName: formData.clientName,
       clientEmail: formData.clientEmail,
-      tfn: formData.tfn || undefined,
-      abn: formData.abn || undefined,
+      tfn: formData.tfn ? formData.tfn.replace(/\D/g, '') : undefined,
+      abn: formData.abn ? formData.abn.replace(/\D/g, '') : undefined,
       superannuationFundName: formData.superannuationFundName || undefined,
       superannuationMemberNumber: formData.superannuationMemberNumber || undefined,
       medicareNumber: formData.medicareNumber || undefined,
@@ -527,9 +546,9 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       remark: formData.remark,
     };
 
-    if (!initialData) {
+    if (!initialData && !inviteLater) {
       try {
-        const { userId, error } = await createUser(
+        const { userId, error, temporaryPassword } = await createUser(
           formData.email,
           `${formData.firstName} ${formData.lastName}`.trim() || formData.email
         );
@@ -538,13 +557,15 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
             typeof error === 'string'
               ? error
               : error && typeof error === 'object'
-              ? JSON.stringify(error)
+              ? String((error as any).message || '') || JSON.stringify(error)
               : String(error);
-          alert(`Failed to create user account: ${errorMessage}`);
-          return;
-        }
-        if (userId) {
+          console.error('Failed to create user account', error);
+          alert(`Could not create user account (${errorMessage || 'unknown error'}). The employee record will still be created; you can invite the user later.`);
+        } else if (userId) {
           (employeeData as any).isPasswordChangeRequired = true;
+          if (temporaryPassword) {
+            alert(`User account created.\n\nUsername: ${formData.email}\nTemporary Password: ${temporaryPassword}\n\nShare these details with the employee. They will be required to change the password at first login.`);
+          }
         }
       } catch (err: any) {
         const message =
@@ -553,8 +574,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
             : typeof err === 'string'
             ? err
             : JSON.stringify(err);
-        alert(`Error creating user account: ${message}`);
-        return;
+        console.error('Error creating user account:', message);
+        alert(`Could not create user account (${message}). The employee record will still be created; you can invite the user later.`);
       }
     }
 
@@ -579,6 +600,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         : name === 'paymentAccount'
         ? 10
         : undefined;
+    const numericOnly = name === 'tfn' || name === 'abn';
+    const numericPattern = name === 'tfn' ? '\\d{0,9}' : name === 'abn' ? '\\d{0,11}' : undefined;
     return (
       <div className="relative">
         <input
@@ -589,6 +612,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
           maxLength={effectiveMaxLength}
           autoFocus={autoFocus}
           readOnly={name === 'employeeCode'}
+          inputMode={numericOnly ? 'numeric' : undefined}
+          pattern={numericPattern}
           className={`peer w-full border rounded px-3 pt-4 pb-2 focus:border-blue-500 focus:outline-none placeholder-transparent ${
             name === 'employeeCode' ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''
           } ${error ? 'border-red-500' : 'border-gray-300'}`}
@@ -778,8 +803,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                   {renderTextField('passport', 'Passport')}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  {renderTextField('tfn', 'TFN')}
-                  {renderTextField('abn', 'ABN')}
+                  {renderTextField('tfn', 'TFN', false, 'text', '9 digits')}
+                  {renderTextField('abn', 'ABN', false, 'text', '11 digits')}
                 </div>
                 {renderSelectField('jobPosition', 'Job Position', ['Manager', 'Developer', 'Designer'], true)}
                 <div className="grid grid-cols-2 gap-4">
@@ -904,6 +929,27 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderSelectField('privacyMobilePhone', 'Mobile Visibility', ['Not Accessible', 'Employee', 'Manager'])}
                     {renderSelectField('privacyAddress', 'Address Visibility', ['Not Accessible', 'Employee', 'Manager'])}
                  </div>
+
+                 {!initialData && (
+                   <div className="mt-6 border-t pt-4">
+                     <h4 className="font-medium mb-3">Onboarding Invitation</h4>
+                     <div className="flex items-center">
+                       <input
+                         type="checkbox"
+                         id="inviteLater"
+                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                         checked={inviteLater}
+                         onChange={(e) => setInviteLater(e.target.checked)}
+                       />
+                       <label htmlFor="inviteLater" className="ml-2 block text-sm text-gray-900">
+                         Invite Later (Do not send welcome email now)
+                       </label>
+                     </div>
+                     <p className="mt-1 text-xs text-gray-500 ml-6">
+                       If checked, the employee record will be created but the welcome email with login details will not be sent immediately. You can trigger it later from the employee list or onboarding page.
+                     </p>
+                   </div>
+                 )}
             </div>
           )}
 

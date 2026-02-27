@@ -402,7 +402,7 @@ describe('BonusCalculationsService', () => {
     it('should approve pending bonus payment', async () => {
       // Mock existing bonus payment
       const mockSupabase = vi.mocked(supabase);
-      mockSupabase.from.mockImplementation((table: string) => {
+      mockSupabase.from.mockImplementation(((table: string) => {
         if (table === 'bonus_payments') {
           return {
             select: () => ({
@@ -434,7 +434,7 @@ describe('BonusCalculationsService', () => {
           };
         }
         return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
-      } as any);
+      }) as any);
 
       const result = await bonusCalculationsService.approveBonusPayment('bonus-123', 'manager-456');
 
@@ -446,7 +446,7 @@ describe('BonusCalculationsService', () => {
     it('should reject approval for non-pending bonus', async () => {
       // Mock already approved bonus payment
       const mockSupabase = vi.mocked(supabase);
-      mockSupabase.from.mockImplementation((table: string) => {
+      mockSupabase.from.mockImplementation(((table: string) => {
         if (table === 'bonus_payments') {
           return {
             select: () => ({
@@ -463,7 +463,7 @@ describe('BonusCalculationsService', () => {
           };
         }
         return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
-      } as any);
+      }) as any);
 
       await expect(
         bonusCalculationsService.approveBonusPayment('bonus-123', 'manager-456')

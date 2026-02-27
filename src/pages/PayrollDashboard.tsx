@@ -26,6 +26,7 @@ interface PayrollStats {
   stpSubmissions: number;
   superContributions: number;
   bonusPayments: number;
+  openErrors: number;
 }
 
 interface RecentActivity {
@@ -47,7 +48,8 @@ export default function PayrollDashboard() {
     upcomingPayRuns: 0,
     stpSubmissions: 0,
     superContributions: 0,
-    bonusPayments: 0
+    bonusPayments: 0,
+    openErrors: 0
   });
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
@@ -89,7 +91,8 @@ export default function PayrollDashboard() {
         upcomingRuns,
         stpCount,
         superCount,
-        bonusCount
+        bonusCount,
+        errorsCount
       ] = await Promise.all([
         supabase.from('employees').select('id', { count: 'exact', head: true }).eq('employment_status', 'Active'),
         supabase.from('payroll_runs')
@@ -112,7 +115,10 @@ export default function PayrollDashboard() {
           .select('id', { count: 'exact', head: true })
           .eq('is_paid', false),
         supabase.from('bonus_payments')
+          .select('id', { count: 'exact', head: true }),
+        supabase.from('payroll_errors')
           .select('id', { count: 'exact', head: true })
+          .eq('status', 'Open')
       ]);
 
       // Load recent activity
@@ -147,13 +153,14 @@ export default function PayrollDashboard() {
 
       setStats({
         totalEmployees: employeesCount.count || 0,
-        totalPayroll: payrollStats.data?.reduce((sum, run) => sum + (run.total_net_pay || 0), 0) || 0,
+        totalPayroll: payrollStats.data?.reduce((sum, run) => sum + (run.total_gross_pay || 0), 0) || 0,
         pendingAdjustments: adjustmentsCount.count || 0,
         pendingApprovals: approvalsCount.count || 0,
         upcomingPayRuns: upcomingRuns.count || 0,
         stpSubmissions: stpCount.count || 0,
         superContributions: superCount.count || 0,
-        bonusPayments: bonusCount.count || 0
+        bonusPayments: bonusCount.count || 0,
+        openErrors: errorsCount.count || 0
       });
 
       setRecentActivity(transformedActivity);
@@ -261,13 +268,33 @@ export default function PayrollDashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
+        <div 
+          onClick={() => router.push('/payroll/runs/new')}
+          className="bg-white p-6 rounded-lg shadow-sm border hover:bg-gray-50 cursor-pointer"
+        >
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Upcoming Pay Runs</p>
               <p className="text-2xl font-bold text-gray-900">{stats.upcomingPayRuns}</p>
             </div>
             <Calendar className="h-8 w-8 text-purple-600" />
+          </div>
+        </div>
+
+        <div 
+          onClick={() => router.push('/payroll/errors')}
+          className={`p-6 rounded-lg shadow-sm border cursor-pointer transition-colors ${
+            stats.openErrors > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100' : 'bg-white hover:bg-gray-50'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Open Errors</p>
+              <p className={`text-2xl font-bold ${stats.openErrors > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                {stats.openErrors}
+              </p>
+            </div>
+            <AlertTriangle className={`h-8 w-8 ${stats.openErrors > 0 ? 'text-red-600' : 'text-gray-400'}`} />
           </div>
         </div>
       </div>
@@ -306,6 +333,14 @@ export default function PayrollDashboard() {
           >
             <Award className="h-6 w-6 mx-auto text-orange-600 mb-2" />
             <span className="text-sm font-medium">Awards</span>
+          </Link>
+
+          <Link
+            href="/payroll/employees"
+            className="p-4 border rounded-lg hover:bg-gray-50 text-center"
+          >
+            <Users className="h-6 w-6 mx-auto text-indigo-600 mb-2" />
+            <span className="text-sm font-medium">Employee Config</span>
           </Link>
         </div>
       </div>

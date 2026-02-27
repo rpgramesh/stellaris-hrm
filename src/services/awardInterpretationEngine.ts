@@ -12,17 +12,18 @@ export class AwardInterpretationEngine {
 
   private async loadAwardsAndRules(): Promise<void> {
     try {
+      // is_active column might be missing in some environments
       const { data: awardsData, error: awardsError } = await supabase
         .from('awards')
-        .select('*')
-        .eq('is_active', true);
+        .select('*');
+        // .eq('is_active', true); // Removed temporarily due to schema mismatch
 
       if (awardsError) throw awardsError;
 
       const { data: rulesData, error: rulesError } = await supabase
         .from('award_rules')
         .select('*')
-        .eq('is_active', true)
+        // .eq('is_active', true) // Removed temporarily due to schema mismatch
         .order('priority', { ascending: false });
 
       if (rulesError) throw rulesError;
@@ -552,3 +553,5 @@ export class AwardInterpretationEngine {
     return this.awardRules.get(awardId) || [];
   }
 }
+
+export const awardInterpretationEngine = new AwardInterpretationEngine();

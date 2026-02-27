@@ -14,7 +14,7 @@ export class StatutoryTablesService {
    * Get all statutory rates for a specific contribution type and date
    */
   async getStatutoryRates(
-    contributionType: StatutoryContributionType,
+    rateType: StatutoryContributionType,
     effectiveDate: Date,
     filters?: {
       state?: string;
@@ -27,7 +27,7 @@ export class StatutoryTablesService {
       let query = supabase
         .from('statutory_rates')
         .select('*')
-        .eq('contribution_type', contributionType)
+        .eq('rate_type', rateType)
         .lte('effective_from', effectiveDate.toISOString())
         .or(`effective_to.is.null,effective_to.gte.${effectiveDate.toISOString()}`);
 
@@ -51,7 +51,7 @@ export class StatutoryTablesService {
         throw new Error(`Failed to fetch statutory rates: ${error.message}`);
       }
 
-      return data || [];
+      return (data || []).map(this.mapFromDb);
     } catch (error) {
       console.error('Error fetching statutory rates:', error);
       throw error;
@@ -76,7 +76,7 @@ export class StatutoryTablesService {
         throw new Error(`Failed to fetch statutory rate: ${error.message}`);
       }
 
-      return data;
+      return this.mapFromDb(data);
     } catch (error) {
       console.error('Error fetching statutory rate by ID:', error);
       throw error;
@@ -95,7 +95,7 @@ export class StatutoryTablesService {
       const { data, error } = await supabase
         .from('statutory_rates')
         .insert([{
-          ...rate,
+          ...this.mapToDb(rate),
           created_at: now,
           updated_at: now
         }])
@@ -115,7 +115,7 @@ export class StatutoryTablesService {
         'system'
       );
 
-      return data;
+      return this.mapFromDb(data);
     } catch (error) {
       console.error('Error creating statutory rate:', error);
       throw error;
@@ -139,7 +139,7 @@ export class StatutoryTablesService {
       const { data, error } = await supabase
         .from('statutory_rates')
         .update({
-          ...updates,
+          ...this.mapToDb(updates),
           updated_at: now
         })
         .eq('id', id)
@@ -159,7 +159,7 @@ export class StatutoryTablesService {
         'system'
       );
 
-      return data;
+      return this.mapFromDb(data);
     } catch (error) {
       console.error('Error updating statutory rate:', error);
       throw error;
@@ -560,14 +560,14 @@ export class StatutoryTablesService {
    * Validate statutory rate data
    */
   private validateStatutoryRate(rate: any): void {
-    if (!rate.contributionType) {
-      throw new Error('Contribution type is required');
+    if (!rate.rateType) {
+      throw new Error('Rate type is required');
     }
     if (!rate.name) {
       throw new Error('Rate name is required');
     }
     if (rate.rate === undefined || rate.rate === null) {
-      throw new Error('Rate value is required');
+      throw new Error('Rate is required');
     }
     if (rate.rate < 0) {
       throw new Error('Rate cannot be negative');
@@ -683,7 +683,7 @@ export class StatutoryTablesService {
    * Deactivate existing rates for the same period
    */
   private async deactivateExistingRates(
-    contributionType: StatutoryContributionType,
+    rateType: StatutoryContributionType,
     effectiveFrom: Date,
     effectiveTo?: Date
   ): Promise<void> {
@@ -691,7 +691,7 @@ export class StatutoryTablesService {
       const { error } = await supabase
         .from('statutory_rates')
         .update({ is_active: false })
-        .eq('contribution_type', contributionType)
+        .eq('rate_type', rateType)
         .eq('is_active', true)
         .gte('effective_from', effectiveFrom.toISOString())
         .or(`effective_to.is.null,effective_to.lte.${effectiveTo?.toISOString() || effectiveFrom.toISOString()}`);
@@ -716,6 +716,57 @@ export class StatutoryTablesService {
       payFrequency: payFrequency,
       description: rate.description || rate.name
     }));
+  }
+
+  /**
+   * Map database record to StatutoryRate interface
+   */
+  private mapFromDb(record: any): StatutoryRate {
+    return {
+      id: record.id,
+      rateType: record.rate_type,
+      name: record.name,
+      description: record.description,
+      rate: Number(record.rate),
+      calculationBase: record.calculation_base,
+      threshold: record.threshold,
+      maximumAmount: record.maximum_amount,
+      applicableStates: record.applicable_states,
+      applicableIndustries: record.applicable_industries,
+      applicableEmploymentTypes: record.applicable_employment_types,
+      effectiveFrom: new Date(record.effective_from),
+      effectiveTo: record.effective_to ? new Date(record.effective_to) : undefined,
+      isActive: record.is_active,
+      liabilityAccount: record.liability_account,
+      expenseAccount: record.expense_account,
+      isReportable: record.is_reportable,
+      createdAt: new Date(record.created_at),
+      updatedAt: new Date(record.updated_at)
+    };
+  }
+
+  /**
+   * Map StatutoryRate interface to database record
+   */
+  private mapToDb(rate: Partial<StatutoryRate>): any {
+    const record: any = {};
+    if (rate.rateType) record.rate_type = rate.rateType;
+    if (rate.name) record.name = rate.name;
+    if (rate.description !== undefined) record.description = rate.description;
+    if (rate.rate !== undefined) record.rate = rate.rate;
+    if (rate.calculationBase !== undefined) record.calculation_base = rate.calculationBase;
+    if (rate.threshold !== undefined) record.threshold = rate.threshold;
+    if (rate.maximumAmount !== undefined) record.maximum_amount = rate.maximumAmount;
+    if (rate.applicableStates) record.applicable_states = rate.applicableStates;
+    if (rate.applicableIndustries) record.applicable_industries = rate.applicableIndustries;
+    if (rate.applicableEmploymentTypes) record.applicable_employment_types = rate.applicableEmploymentTypes;
+    if (rate.effectiveFrom) record.effective_from = rate.effectiveFrom.toISOString();
+    if (rate.effectiveTo) record.effective_to = rate.effectiveTo.toISOString();
+    if (rate.isActive !== undefined) record.is_active = rate.isActive;
+    if (rate.liabilityAccount) record.liability_account = rate.liabilityAccount;
+    if (rate.expenseAccount) record.expense_account = rate.expenseAccount;
+    if (rate.isReportable !== undefined) record.is_reportable = rate.isReportable;
+    return record;
   }
 
   /**

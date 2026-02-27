@@ -26,7 +26,7 @@ export interface StatutoryContribution {
 
 export interface StatutoryRate {
   id: string;
-  contributionType: StatutoryContributionType;
+  rateType: StatutoryContributionType;
   name: string;
   description?: string;
   rate: number;

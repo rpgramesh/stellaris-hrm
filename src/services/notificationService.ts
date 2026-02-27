@@ -107,6 +107,13 @@ export const notificationService = {
   },
 
   createNotification: async (userId: string, title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    // Basic UUID validation to prevent database errors
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!userId || !uuidRegex.test(userId)) {
+      console.warn('Invalid userId for notification:', userId);
+      return;
+    }
+
     const { error } = await supabase
       .from('notifications')
       .insert({

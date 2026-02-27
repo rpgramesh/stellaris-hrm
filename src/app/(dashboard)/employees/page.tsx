@@ -14,6 +14,7 @@ function EmployeesContent() {
   const router = useRouter();
   const viewId = searchParams?.get('view');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [sendingInvite, setSendingInvite] = useState(false);
 
   useEffect(() => {
     if (viewId && employees.length > 0) {
@@ -25,6 +26,39 @@ function EmployeesContent() {
       setSelectedEmployee(null);
     }
   }, [viewId, employees]);
+
+  const handleResendInvite = async () => {
+    if (!selectedEmployee) return;
+    await handleResendInviteForEmployee(selectedEmployee);
+  };
+
+  const handleResendInviteForEmployee = async (employee: Employee) => {
+    if (!employee.email) {
+      alert('No email found for this employee.');
+      return;
+    }
+    try {
+      setSendingInvite(true);
+      const res = await fetch('/api/auth/resend-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: employee.email,
+          fullName: `${employee.firstName} ${employee.lastName}`.trim(),
+        }),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        alert(`Failed to resend invite: ${text}`);
+      } else {
+        alert('Invite email has been sent (or password reset email triggered).');
+      }
+    } catch (e: any) {
+      alert(`Failed to resend invite: ${e?.message || String(e)}`);
+    } finally {
+      setSendingInvite(false);
+    }
+  };
 
   const handleViewEmployee = (id: string) => {
     router.push(`/employees?view=${id}`, { scroll: false });
@@ -313,6 +347,23 @@ function EmployeesContent() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
                       </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleResendInviteForEmployee(employee);
+                        }}
+                        disabled={sendingInvite}
+                        className={`p-1.5 rounded transition-colors ${
+                          sendingInvite 
+                            ? 'bg-gray-50 text-gray-400' 
+                            : 'text-amber-600 hover:text-amber-900 bg-amber-50'
+                        }`}
+                        title="Resend Welcome Email"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                        </svg>
+                      </button>
                       <Link
                         href={`/employees/edit/${employee.id}`}
                         className="inline-flex items-center text-indigo-600 hover:text-indigo-900 bg-indigo-50 p-1.5 rounded"
@@ -449,6 +500,22 @@ function EmployeesContent() {
                       <dd className="col-span-2">{selectedEmployee.lineManager || getManagerName(selectedEmployee.lineManagerId)}</dd>
                     </div>
                   </dl>
+                </div>
+
+                {/* Account Actions */}
+                <div className="mt-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-gray-900 mb-2">Account Actions</h4>
+                    <button
+                      onClick={handleResendInvite}
+                      disabled={sendingInvite}
+                      className={`px-3 py-1.5 rounded text-sm font-medium ${
+                        sendingInvite ? 'bg-gray-300 text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                    >
+                      {sendingInvite ? 'Sending…' : 'Resend Welcome Email'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Financial Information */}

@@ -34,10 +34,13 @@ export const auditService = {
       action,
       old_data: oldData,
       new_data: newData,
-      performed_by: performedBy
+      performed_by: performedBy || null
     });
 
-    if (error) console.error('Error logging audit action:', JSON.stringify(error, null, 2));
+    if (error) {
+      console.warn('Audit log failed (likely foreign key constraint):', error.message);
+      // Don't throw - audit logging should not block the main operation
+    }
   },
 
   getAuditLogs: async (filters?: { tableName?: string; action?: string; limit?: number }) => {

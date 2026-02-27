@@ -274,7 +274,7 @@ describe('DeductionsProcessingService', () => {
 
       // Mock YTD amount
       const mockSupabase = vi.mocked(supabase);
-      mockSupabase.from.mockImplementation((table: string) => {
+      mockSupabase.from.mockImplementation(((table: string) => {
         if (table === 'deductions') {
           return {
             select: () => ({
@@ -291,9 +291,9 @@ describe('DeductionsProcessingService', () => {
             select: () => ({
               eq: () => ({
                 gte: () => ({
-                  lte: () => Promise.resolve({ 
+                  lte: () => Promise.resolve({
                     data: [{ amount: 2000 }], // Already used $2000 of cap
-                    error: null 
+                    error: null
                   })
                 })
               })
@@ -301,7 +301,7 @@ describe('DeductionsProcessingService', () => {
           };
         }
         return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
-      } as any);
+      }) as any);
 
       const grossPay = 3000;
       const taxableIncome = 3000;
@@ -480,13 +480,13 @@ describe('DeductionsProcessingService', () => {
     it('should update an existing deduction', async () => {
       // Mock existing deduction
       const mockSupabase = vi.mocked(supabase);
-      mockSupabase.from.mockImplementation((table: string) => {
+      mockSupabase.from.mockImplementation(((table: string) => {
         if (table === 'deductions') {
           return {
             select: () => ({
               eq: () => ({
-                single: () => Promise.resolve({ 
-                  data: { 
+                single: () => Promise.resolve({
+                  data: {
                     id: 'ded-123',
                     employee_id: 'emp-123',
                     name: 'Old Name',
@@ -500,15 +500,15 @@ describe('DeductionsProcessingService', () => {
                     end_date: null,
                     created_at: '2024-01-01',
                     updated_at: '2024-01-01'
-                  }, 
-                  error: null 
+                  },
+                  error: null
                 })
               })
             })
           };
         }
         return { select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) };
-      } as any);
+      }) as any);
 
       const updates = {
         name: 'Updated Name',

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { emailService } from '@/services/emailService';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,12 +14,49 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Please enter your email first');
+      return;
+    }
+    setResetLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      // Use our new API route that sends the templated email
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      if (!res.ok) {
+        // Fallback if the API route isn't ready or fails
+        const { error: supabaseError } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (supabaseError) throw supabaseError;
+      }
+
+      setMessage('Password reset instructions have been sent to your email.');
+    } catch (err: any) {
+      console.error('Forgot password error:', err);
+      const msg = err?.message || (typeof err === 'string' ? err : 'Error sending reset link');
+      setError(msg === '{}' ? 'Failed to send reset email. Please try again later.' : msg);
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    console.log('Attempting login for:', email, 'Tab:', activeTab);
 
     try {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -26,47 +64,73 @@ export default function LoginPage() {
         password,
       });
 
-      if (authError) throw authError;
+      if (authError) {
+        console.error('Auth error:', authError);
+        throw authError;
+      }
+
+      console.log('Auth successful, user ID:', authData.user?.id);
 
       if (authData.user) {
         // Fetch employee role and employment status
         // 1. Try by user_id
-        let { data: employee } = await supabase
+        console.log('Fetching employee record for user_id:', authData.user.id);
+        let { data: employee, error: empError } = await supabase
           .from('employees')
           .select('id, role, is_password_change_required, employment_status')
           .eq('user_id', authData.user.id)
-          .single();
+          .maybeSingle();
+
+        if (empError) {
+          console.warn('Non-critical: Error fetching employee by user_id:', empError.message || empError);
+        }
 
         // 2. Fallback to email if not found by user_id
         if (!employee) {
-          const { data: empByEmail } = await supabase
+          console.log('No employee record found by user_id (or error), trying by email:', authData.user.email);
+          const { data: empByEmail, error: emailError } = await supabase
             .from('employees')
             .select('id, role, is_password_change_required, employment_status')
             .eq('email', authData.user.email)
-            .single();
+            .maybeSingle();
+          
+          if (emailError) {
+            console.warn('Non-critical: Error fetching employee by email:', emailError.message || emailError);
+          }
           
           if (empByEmail) {
+            console.log('Found employee record by email, linking user_id...');
             employee = empByEmail;
-            // Auto-link user_id for future logins
-            await supabase
+            // Auto-link user_id for future logins - ignore error if RLS blocks it
+            supabase
               .from('employees')
               .update({ user_id: authData.user.id })
-              .eq('id', empByEmail.id);
+              .eq('id', empByEmail.id)
+              .then(({ error }) => {
+                if (error) console.warn('Failed to auto-link user_id:', error.message);
+              });
           }
         }
         
-        // Block terminated employees from any portal
-        if (employee && employee.employment_status === 'Terminated') {
-          throw new Error('Access Denied: Your employment is terminated. Please contact HR.');
+        console.log('Resolved employee record:', employee);
+
+        const metadata = authData.user.user_metadata || {};
+        const role = employee?.role || metadata.role;
+        const isPasswordChangeRequired = employee?.is_password_change_required || false;
+        const employmentStatus = employee?.employment_status || 'Active';
+
+        console.log('Resolved identity:', { role, isPasswordChangeRequired, employmentStatus });
+
+        // Block terminated employees
+        if (employmentStatus === 'Terminated') {
+          throw new Error('Access Denied: Your employment is terminated.');
         }
 
         // Check for forced password change
-        if (employee?.is_password_change_required) {
+        if (isPasswordChangeRequired) {
           router.push('/change-password');
           return;
         }
-
-        const role = employee?.role;
 
         // Define valid roles mapping
         const validAdminRoles = ['Super Admin', 'Employer Admin', 'Administrator', 'HR Admin'];
@@ -75,29 +139,38 @@ export default function LoginPage() {
         if (activeTab === 'admin') {
           // Administrator Tab Logic
           if (isHrRole) {
-            // HR Role Toggle is ON: Must be HR or Administrator with HR privileges
-            // Allowing Super Admin to access HR as well
+            console.log('Checking HR privileges...');
             if (!validHrRoles.includes(role) && !validAdminRoles.includes(role)) {
               throw new Error('Access Denied: You do not have HR privileges.');
             }
           } else {
-            // HR Role Toggle is OFF: Must be Administrator
+            console.log('Checking Administrator privileges...');
             if (!validAdminRoles.includes(role)) {
               throw new Error('Access Denied: You do not have Administrator privileges.');
             }
           }
+          console.log('Redirecting to dashboard...');
           router.push('/dashboard');
         } else {
           // Employee Tab Logic
-          // Require an employee record to exist
+          console.log('Employee login, checking employee record...');
           if (!employee) {
-             throw new Error('Access Denied: No employee record found for this user.');
+             const metadata = authData.user.user_metadata || {};
+             if (metadata.role === 'Administrator' || metadata.role === 'Super Admin') {
+               console.log('Admin user logging in via employee tab, redirecting to dashboard...');
+               router.push('/dashboard');
+               return;
+             }
+             throw new Error('Access Denied: No employee record found for this user. Please contact HR to set up your profile.');
           }
+          console.log('Redirecting to self-service...');
           router.push('/self-service');
         }
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred during login');
+      console.error('Login error:', err);
+      const msg = err?.message || (typeof err === 'string' ? err : 'An error occurred during login');
+      setError(msg === '{}' ? 'Authentication failed. Please check your credentials.' : msg);
       await supabase.auth.signOut();
     } finally {
       setLoading(false);
@@ -118,9 +191,6 @@ export default function LoginPage() {
               alt="Stellaris Logo" 
               className="h-10 w-auto object-contain drop-shadow" 
             />
-            <span className="text-sm font-semibold tracking-wide text-white/90">
-              Stellaris HRM
-            </span>
           </div>
         </Link>
       </div>
@@ -156,6 +226,12 @@ export default function LoginPage() {
           {error && (
             <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
               <p className="text-red-700 text-sm">{error}</p>
+            </div>
+          )}
+
+          {message && (
+            <div className="bg-green-50 border-l-4 border-green-500 p-4 mb-4">
+              <p className="text-green-700 text-sm">{message}</p>
             </div>
           )}
 
@@ -222,9 +298,14 @@ export default function LoginPage() {
 
           {/* Forgot Password */}
           <div className="text-right">
-            <a href="#" className="text-sm text-cyan-500 hover:text-cyan-700">
-              Forgot {activeTab === 'admin' ? 'Administrator' : 'Employee'} Password?
-            </a>
+            <button 
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={resetLoading}
+              className="text-sm text-cyan-500 hover:text-cyan-700 disabled:opacity-50"
+            >
+              {resetLoading ? 'Sending...' : `Forgot ${activeTab === 'admin' ? 'Administrator' : 'Employee'} Password?`}
+            </button>
           </div>
 
         </form>

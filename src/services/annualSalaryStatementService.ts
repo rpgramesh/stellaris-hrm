@@ -424,8 +424,8 @@ export class AnnualSalaryStatementService {
 
       // Get employer details
       const { data: company, error: companyError } = await supabase
-        .from('companies')
-        .select('name, abn, address')
+        .from('company_information')
+        .select('company_name, registration_number, address')
         .limit(1)
         .single();
 
@@ -437,8 +437,8 @@ export class AnnualSalaryStatementService {
         submissionType: 'PaygWithholdingAnnualReport',
         financialYear: statement.financialYear,
         employer: {
-          abn: company.abn,
-          name: company.name,
+          abn: company.registration_number,
+          name: company.company_name,
           address: company.address
         },
         employee: {
@@ -725,8 +725,8 @@ export class AnnualSalaryStatementService {
 
       // Get company details
       const { data: company, error: companyError } = await supabase
-        .from('companies')
-        .select('name, abn, address, phone, email')
+        .from('company_information')
+        .select('company_name, registration_number, address, phone, email')
         .limit(1)
         .single();
 
@@ -734,9 +734,18 @@ export class AnnualSalaryStatementService {
         throw new Error('Company details not found');
       }
 
+      // Map field names for internal consistency if needed, but let's just pass it to generateMockPDFContent
+      const mappedCompany = {
+        name: company.company_name,
+        abn: company.registration_number,
+        address: company.address,
+        phone: company.phone,
+        email: company.email
+      };
+
       // For demonstration, return a mock PDF buffer
       // In a real implementation, you would use a PDF generation library like pdf-lib or puppeteer
-      const mockPDFContent = this.generateMockPDFContent(statement, employee, company);
+      const mockPDFContent = this.generateMockPDFContent(statement, employee, mappedCompany);
       const buffer = Buffer.from(mockPDFContent, 'utf-8');
 
       return buffer;

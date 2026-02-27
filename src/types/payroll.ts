@@ -2,7 +2,10 @@
 export interface PayrollEmployee {
   id: string;
   employeeId: string;
+  firstName?: string;
+  lastName?: string;
   baseSalary: number;
+  hourlyRate?: number;
   payFrequency: 'Weekly' | 'Fortnightly' | 'Monthly';
   taxFileNumber?: string;
   taxScale: string;
@@ -46,21 +49,22 @@ export interface SalaryAdjustment {
 
 export interface Payslip {
   id: string;
-  employee_id: string;
-  period_start: string;
-  period_end: string;
-  gross_pay: number;
-  net_pay: number;
-  tax_withheld: number;
+  employeeId: string;
+  periodStart: string;
+  periodEnd: string;
+  grossPay: number;
+  netPay: number;
+  taxWithheld: number;
   superannuation: number;
   deductions: number;
   allowances: number;
   bonuses: number;
   reimbursements: number;
-  payment_date: string;
+  overtime: number;
+  paymentDate: string;
   status: 'Draft' | 'Published' | 'Paid';
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PayrollRun {
@@ -184,21 +188,6 @@ export interface SuperComplianceReport {
   recommendations: string[];
 }
 
-export interface Payslip {
-  id: string;
-  employeeId: string;
-  periodStart: string;
-  periodEnd: string;
-  grossPay: number;
-  allowances: number;
-  overtime: number;
-  paygTax: number;
-  netPay: number;
-  superannuation: number;
-  paymentDate: string;
-  status: 'Draft' | 'Published' | 'Paid';
-}
-
 // STP Phase 2 Types
 export interface STPSubmission {
   id: string;
@@ -244,7 +233,7 @@ export interface Award {
   version: string;
   effectiveFrom: string;
   effectiveTo?: string;
-  isActive: boolean;
+  isActive?: boolean;
   createdAt: string;
 }
 
@@ -270,7 +259,7 @@ export interface AwardRule {
   priority: number;
   effectiveFrom: string;
   effectiveTo?: string;
-  isActive: boolean;
+  isActive?: boolean;
   // Additional properties for Award Interpretation Engine compatibility
   rule_type?: string;
   classification?: string;
@@ -311,7 +300,7 @@ export interface TaxTable {
 
 export interface StatutoryRate {
   id: string;
-  rateType: 'SuperannuationGuarantee' | 'MedicareLevy' | 'PayrollTax' | 'WorkersCompensation';
+  rateType: 'SuperannuationGuarantee' | 'MedicareLevy' | 'PayrollTax' | 'WorkersCompensation' | 'payg-withholding' | 'superannuation-guarantee' | 'payroll-tax' | 'workers-compensation';
   financialYear: string;
   rate: number;
   threshold?: number;

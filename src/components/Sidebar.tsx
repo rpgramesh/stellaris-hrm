@@ -149,15 +149,12 @@ export const menuItems = [
     icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     subItems: [
       { name: 'Dashboard', href: '/payroll' },
+      { name: 'New Pay Run', href: '/payroll/runs/new' },
       { name: 'Salary Adjustments', href: '/payroll/adjustments' },
       { name: 'Process Payroll', href: '/payroll/process' },
       { name: 'Superannuation', href: '/payroll/superannuation' },
       { name: 'STP Phase 2', href: '/payroll/stp' },
-      { name: 'Award Interpretation', href: '/payroll/award-interpretation' },
       { name: 'Annual Salary Statement', href: '/payroll/annual-salary-statement' },
-      { name: 'Earning', href: '/payroll/earning' },
-      { name: 'Deduction', href: '/payroll/deduction' },
-      { name: 'Bonus', href: '/payroll/bonus' },
       { name: 'Statutory Contribution', href: '/payroll/statutory-contribution' },
       { name: 'Statutory Table', href: '/payroll/statutory-table' },
       { name: 'Settings', href: '/payroll/settings' },
@@ -326,7 +323,7 @@ export default function Sidebar() {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className={`p-4 border-b border-gray-200 bg-white flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
+      <div className={`p-4 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <Link href="/dashboard" className="flex items-center overflow-hidden">
           <img 
             src="/logo.png" 
@@ -334,7 +331,7 @@ export default function Sidebar() {
             className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
           />
           <div
-            className={`flex items-center justify-center rounded-full border border-gray-200 bg-white transition-opacity duration-300 ${isExpanded ? 'opacity-0 absolute' : 'opacity-100 block'}`}
+            className={`flex items-center justify-center rounded-full border border-gray-800 bg-gray-900 transition-opacity duration-300 ${isExpanded ? 'opacity-0 absolute' : 'opacity-100 block'}`}
           >
             <img
               src="/logo-icon.png"

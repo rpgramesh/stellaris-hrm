@@ -71,6 +71,9 @@ export async function createUser(email: string, fullName: string) {
     }
 
     const userId = data.user?.id;
+    if (!userId && !error) {
+      return { error: 'Unknown auth response from Supabase signUp' };
+    }
 
     if (userId) {
       try {
@@ -87,7 +90,7 @@ export async function createUser(email: string, fullName: string) {
       }
     }
 
-    return { userId };
+    return { userId, temporaryPassword };
   } catch (e: any) {
     const message =
       e instanceof Error

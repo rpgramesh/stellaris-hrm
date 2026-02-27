@@ -67,7 +67,7 @@ describe('AnnualSalaryStatementService', () => {
 
   beforeEach(() => {
     service = new AnnualSalaryStatementService();
-    
+
     // Mock employee data
     mockEmployee = {
       id: 'emp-001',
@@ -125,7 +125,7 @@ describe('AnnualSalaryStatementService', () => {
   describe('Annual Salary Statement Generation', () => {
     it('should generate annual salary statement correctly', async () => {
       const mockSupabase = require('../../lib/supabase').supabase;
-      
+
       mockSupabase.from.mockImplementation((table: string) => {
         if (table === 'annual_salary_statements') {
           return {
@@ -221,14 +221,14 @@ describe('AnnualSalaryStatementService', () => {
             }))
           };
         }
-        if (table === 'companies') {
+        if (table === 'company_information') {
           return {
             select: jest.fn(() => ({
               limit: jest.fn(() => ({
                 single: jest.fn(() => ({
                   data: {
-                    name: 'Test Company Pty Ltd',
-                    abn: '12345678901',
+                    company_name: 'Test Company Pty Ltd',
+                    registration_number: '12345678901',
                     address: '456 Business St, Sydney NSW 2000',
                     phone: '02 1234 5678',
                     email: 'payroll@testcompany.com.au'
@@ -339,4 +339,93 @@ describe('AnnualSalaryStatementService', () => {
               eq: jest.fn(() => ({
                 single: jest.fn(() => ({
                   data: mockEmployee,
-                  error
+                  error: null
+                }))
+              }))
+            }))
+          };
+        }
+        if (table === 'payroll_runs') {
+          return {
+            select: jest.fn(() => ({
+              eq: jest.fn(() => ({
+                gte: jest.fn(() => ({
+                  lte: jest.fn(() => ({
+                    order: jest.fn(() => ({
+                      data: [],
+                      error: null
+                    }))
+                  }))
+                }))
+              }))
+            }))
+          };
+        }
+        if (table === 'payslips') {
+          return {
+            select: jest.fn(() => ({
+              eq: jest.fn(() => ({
+                gte: jest.fn(() => ({
+                  lte: jest.fn(() => ({
+                    data: [{ gross_pay: 77000, tax_withheld: 15000 }],
+                    error: null
+                  }))
+                }))
+              }))
+            }))
+          };
+        }
+        if (table === 'superannuation_contributions') {
+          return {
+            select: jest.fn(() => ({
+              eq: jest.fn(() => ({
+                gte: jest.fn(() => ({
+                  lte: jest.fn(() => ({
+                    data: [{ amount: 8250 }],
+                    error: null
+                  }))
+                }))
+              }))
+            }))
+          };
+        }
+        return {
+          select: jest.fn(() => ({
+            eq: jest.fn(() => ({
+              gte: jest.fn(() => ({
+                lte: jest.fn(() => ({
+                  data: [],
+                  error: null
+                })),
+                or: jest.fn(() => ({
+                  data: [],
+                  error: null
+                }))
+              }))
+            })),
+            limit: jest.fn(() => ({
+              single: jest.fn(() => ({
+                data: null,
+                error: null
+              }))
+            }))
+          })),
+          insert: jest.fn(() => ({
+            select: jest.fn(() => ({
+              single: jest.fn(() => ({
+                data: { id: 'new-statement-001', ...existingStatement, is_final: false },
+                error: null
+              }))
+            }))
+          }))
+        };
+      });
+
+      const result = await service.generateAnnualSalaryStatement('emp-001', '2023-2024', true);
+
+      // When regenerate=true, it should generate a new statement even if one exists
+      expect(result).toBeDefined();
+      expect(result.id).toBe('new-statement-001');
+    });
+  });
+});
