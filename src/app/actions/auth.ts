@@ -42,39 +42,42 @@ const hashPasswordForMetadata = (password: string): string => {
 
 export async function createUser(email: string, fullName: string) {
   try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return { error: 'Admin configuration missing (SUPABASE_SERVICE_ROLE_KEY)' };
+    }
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      serviceRoleKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
     );
 
     const temporaryPassword = generateSecurePassword(14);
     const initialHash = hashPasswordForMetadata(temporaryPassword);
 
-    const { data, error } = await supabase.auth.signUp({
+    // Using admin API to create user directly and confirm email
+    const { data, error } = await supabase.auth.admin.createUser({
       email,
       password: temporaryPassword,
-      options: {
-        data: {
-          full_name: fullName,
-          initial_password_hash: initialHash,
-          password_initialized_at: new Date().toISOString(),
-        },
+      email_confirm: true,
+      user_metadata: {
+        full_name: fullName,
+        initial_password_hash: initialHash,
+        password_initialized_at: new Date().toISOString(),
       },
     });
 
     if (error) {
-      const message =
-        typeof error.message === 'string' && error.message.length > 0
-          ? error.message
-          : JSON.stringify(error);
-      return { error: message };
+      return { error: error.message };
     }
 
     const userId = data.user?.id;
-    if (!userId && !error) {
-      return { error: 'Unknown auth response from Supabase signUp' };
-    }
-
     if (userId) {
       try {
         await emailService.sendWelcomeEmail({
@@ -84,20 +87,12 @@ export async function createUser(email: string, fullName: string) {
           temporaryPassword,
         });
       } catch (e) {
-        console.error('Failed to trigger welcome email.', {
-          error: e instanceof Error ? e.message : String(e),
-        });
+        console.error('Failed to trigger welcome email:', e);
       }
     }
 
     return { userId, temporaryPassword };
   } catch (e: any) {
-    const message =
-      e instanceof Error
-        ? e.message
-        : typeof e === 'string'
-        ? e
-        : JSON.stringify(e);
-    return { error: message };
+    return { error: e.message || 'An unexpected error occurred' };
   }
 }

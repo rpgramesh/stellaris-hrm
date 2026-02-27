@@ -81,13 +81,14 @@ function ChangePasswordContent() {
 
       let user = sessionUser;
 
-      if (!user) {
+      if (!user || user.email !== email) {
         if (!email || !currentPassword) {
           setError('Email and current password are required.');
           setLoading(false);
           return;
         }
 
+        console.log('Attempting sign in for password change...');
         const { data: signInData, error: signInError } =
           await supabase.auth.signInWithPassword({
             email,
@@ -95,49 +96,27 @@ function ChangePasswordContent() {
           });
 
         if (signInError) {
-          if (signInError.message?.includes('Aborted')) {
-            // Retry once if aborted
-            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-              email,
-              password: currentPassword,
-            });
-            if (retryError) throw retryError;
-            if (retryData.user) user = retryData.user;
-          } else {
-            console.error('Sign in error during password change:', signInError);
-            const msg = signInError?.message || (signInError as any)?.error_description || (typeof signInError === 'string' ? signInError : 'Current password is incorrect.');
-            const finalMsg = msg === '{}' ? 'Authentication failed. Please check your credentials.' : msg;
-            setError(finalMsg);
-            setAttempts((prev) => prev + 1);
-            if (attempts + 1 >= 5) {
-              setBlockedUntil(Date.now() + 5 * 60 * 1000);
-            }
-            setLoading(false);
-            return;
-          }
-        } else if (!signInData.user) {
-          setError('Authentication failed. User not found.');
+          console.error('Sign in error during password change:', signInError);
+          const msg = signInError?.message || 'Current password is incorrect.';
+          setError(msg === '{}' ? 'Authentication failed. Please check your credentials.' : msg);
           setLoading(false);
           return;
-        } else {
-          user = signInData.user;
         }
-        // Small delay to ensure session is fully ready before next auth call
-        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        user = signInData.user;
+        // Ensure session is active
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
+      // Check if they are trying to set the same password as the temporary one
       const metadata = user?.user_metadata || {};
-      const existingHash = typeof metadata.initial_password_hash === 'string' ? metadata.initial_password_hash : null;
+      const existingHash = metadata.initial_password_hash;
 
-      if (existingHash) {
+      if (existingHash && typeof existingHash === 'string') {
         const newHash = await hashPasswordForComparison(password);
         if (newHash === existingHash) {
           setError('New password cannot be the same as your initial temporary password.');
           setLoading(false);
-          setAttempts((prev) => prev + 1);
-          if (attempts + 1 >= 5) {
-            setBlockedUntil(Date.now() + 5 * 60 * 1000);
-          }
           return;
         }
       }

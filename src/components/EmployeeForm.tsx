@@ -560,7 +560,11 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
               ? String((error as any).message || '') || JSON.stringify(error)
               : String(error);
           console.error('Failed to create user account', error);
-          alert(`Could not create user account (${errorMessage || 'unknown error'}). The employee record will still be created; you can invite the user later.`);
+          
+          // Only alert if it's not a known error like "user already exists"
+          // If user exists, we might want to just link it or inform the user
+          const displayMessage = errorMessage === '{}' ? 'User already exists or admin key is invalid' : errorMessage;
+          alert(`Could not create user account (${displayMessage}). The employee record will still be created; you can invite the user later.`);
         } else if (userId) {
           (employeeData as any).isPasswordChangeRequired = true;
           if (temporaryPassword) {
