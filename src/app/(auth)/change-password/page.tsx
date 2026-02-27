@@ -104,8 +104,8 @@ function ChangePasswordContent() {
         }
         
         user = signInData.user;
-        // Ensure session is active
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Ensure session is fully active and synchronized
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
       // Check if they are trying to set the same password as the temporary one
@@ -173,30 +173,29 @@ function ChangePasswordContent() {
       
       if (typeof err === 'string') {
         errorMessage = err;
-      } else if (err?.name === 'AbortError' || err?.message?.includes('Aborted')) {
-        errorMessage = 'The operation was interrupted. Please try clicking "Update Password" again.';
+      } else if (err?.name === 'AuthRetryableFetchError' || err?.status === 504) {
+        errorMessage = 'Network timeout occurred. The server is taking too long to respond. Please wait a moment and try clicking "Update Password" again.';
       } else if (err?.message && err.message !== '{}') {
         errorMessage = err.message;
       } else if (err?.error_description && err.error_description !== '{}') {
         errorMessage = err.error_description;
-      } else if (err?.error && typeof err.error === 'string') {
-        errorMessage = err.error;
       } else {
-        // If it's still {} or something unhelpful, try to see if it's a Supabase error with a nested message
+        // Try to extract from nested structures or name
         const possibleMessage = err?.data?.message || err?.error?.message;
         if (possibleMessage && possibleMessage !== '{}') {
           errorMessage = possibleMessage;
+        } else if (err?.name && err.name !== 'Error') {
+          errorMessage = `${err.name}: ${err.message || 'Connection issue'}`;
         } else {
           try {
             const stringified = JSON.stringify(err);
             if (stringified !== '{}' && stringified !== 'undefined') {
               errorMessage = stringified;
             } else {
-              // Last resort: check properties directly if it's an Error object
-              errorMessage = err.name ? `${err.name}: ${err.message || 'Unknown error'}` : 'An unexpected error occurred.';
+              errorMessage = 'An unexpected error occurred. Please try again.';
             }
           } catch (e) {
-            errorMessage = 'An unexpected error occurred. Please check console for details.';
+            errorMessage = 'An unexpected error occurred. Please check your connection.';
           }
         }
       }
