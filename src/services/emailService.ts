@@ -167,14 +167,27 @@ export const emailService = {
   },
 
   sendPasswordResetEmail: async (email: string, fullName: string, resetLink: string) => {
-    const success = await emailService.sendTemplatedEmail({
+    // Try "Forgot Employee Password" template name first (matching user's screenshot)
+    let success = await emailService.sendTemplatedEmail({
       email,
-      templateName: 'Reset Password',
+      templateName: 'Forgot Employee Password',
       variables: {
         fullName,
         resetLink
       }
     });
+
+    // Fallback to "Reset Password" if "Forgot Employee Password" doesn't exist
+    if (!success) {
+      success = await emailService.sendTemplatedEmail({
+        email,
+        templateName: 'Reset Password',
+        variables: {
+          fullName,
+          resetLink
+        }
+      });
+    }
 
     if (!success) {
       // Fallback
