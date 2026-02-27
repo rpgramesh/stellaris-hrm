@@ -99,9 +99,14 @@ export async function createUser(email: string, fullName: string) {
 
 export async function changePasswordAction(email: string, currentPass: string, newPass: string) {
   try {
-    const supabase = createClient(
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return { error: 'Admin configuration missing' };
+    }
+
+    const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      serviceRoleKey,
       {
         auth: {
           autoRefreshToken: false,
@@ -110,52 +115,42 @@ export async function changePasswordAction(email: string, currentPass: string, n
       }
     );
 
-    // 1. Verify current credentials
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    // 1. Verify current credentials using a fresh client
+    // (This is the most likely place for a timeout if the network is slow)
+    const { data: signInData, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
       email,
       password: currentPass,
     });
 
     if (signInError) {
-      return { error: signInError.message || 'Current password is incorrect' };
+      return { error: 'Current password is incorrect or session expired' };
     }
 
-    if (!signInData.user) {
+    const userId = signInData.user?.id;
+    if (!userId) {
       return { error: 'User not found' };
     }
 
-    // 2. Update password
-    // We need to use the session from sign-in
-    const { error: updateError } = await supabase.auth.updateUser(
-      { password: newPass },
-      { 
-        // @ts-ignore - explicitly pass the token if needed for server actions
-        access_token: signInData.session?.access_token 
-      }
+    // 2. Update password using ADMIN API
+    // This is much faster and bypasses the need for access tokens/sessions
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+      userId,
+      { password: newPass }
     );
 
     if (updateError) {
       return { error: updateError.message };
     }
 
-    // 3. Update employee record using service role (for bypass RLS if needed)
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-      const adminClient = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        serviceRoleKey,
-        { auth: { persistSession: false } }
-      );
-      
-      await adminClient
-        .from('employees')
-        .update({ is_password_change_required: false })
-        .eq('user_id', signInData.user.id);
-    }
+    // 3. Update employee record
+    await supabaseAdmin
+      .from('employees')
+      .update({ is_password_change_required: false })
+      .eq('user_id', userId);
 
     return { success: true };
   } catch (e: any) {
     console.error('Server action error:', e);
-    return { error: e.message || 'An unexpected error occurred during password update' };
+    return { error: 'A server timeout occurred. Your password might have been updated already. Please try logging in with the new password.' };
   }
 }
