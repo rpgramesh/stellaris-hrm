@@ -97,7 +97,7 @@ function EmployeesContent() {
         setEmployees(prev => prev.filter(emp => emp.id !== id));
       } catch (error) {
         console.error('Failed to delete employee:', error);
-        alert('Failed to delete employee. Please try again.');
+        alert(`Failed to delete employee: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   };

@@ -132,7 +132,7 @@ export const employeeService = {
       .from('employees')
       .select(`
         *,
-        department:departments(name),
+        department:departments!employees_department_id_fkey(name),
         position:job_positions(title)
       `);
 
@@ -145,7 +145,7 @@ export const employeeService = {
       .from('employees')
       .select(`
         *,
-        department:departments(name),
+        department:departments!employees_department_id_fkey(name),
         position:job_positions(title)
       `)
       .eq('id', id)
@@ -161,7 +161,7 @@ export const employeeService = {
       .from('employees')
       .select(`
         *,
-        department:departments(name),
+        department:departments!employees_department_id_fkey(name),
         position:job_positions(title)
       `)
       .eq('user_id', userId)
@@ -192,7 +192,7 @@ export const employeeService = {
       .from('employees')
       .select(`
         *,
-        department:departments!inner(name),
+        department:departments!employees_department_id_fkey!inner(name),
         position:job_positions(title)
       `)
       .eq('department.name', departmentName);
@@ -302,7 +302,7 @@ export const employeeService = {
         .insert(dbPayload)
         .select(`
           *,
-          department:departments(name),
+          department:departments!employees_department_id_fkey(name),
           position:job_positions(title)
         `)
         .single();
@@ -428,7 +428,7 @@ export const employeeService = {
         .eq('id', id)
         .select(`
           *,
-          department:departments(name),
+          department:departments!employees_department_id_fkey(name),
           position:job_positions(title)
         `)
         .single();

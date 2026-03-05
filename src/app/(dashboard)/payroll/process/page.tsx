@@ -14,12 +14,15 @@ import {
   Play,
   RefreshCw,
   Download,
-  Eye
+  Eye,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { comprehensivePayrollService, PayrollProcessingOptions } from '@/services/comprehensivePayrollService';
 import { payrollReportingService } from '@/services/payrollReportingService';
 import { payrollErrorHandlingService } from '@/services/payrollErrorHandlingService';
 import { supabase } from '@/lib/supabase';
+import { PayrollConfigurationModal } from '@/components/payroll/PayrollConfigurationModal';
 
 interface PayrollRun {
   id: string;
@@ -38,6 +41,7 @@ interface PayrollRun {
 
 interface Employee {
   id: string;
+  employee_id: string;
   first_name: string;
   last_name: string;
   employee_code?: string;
@@ -88,12 +92,15 @@ export default function PayrollProcessingPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
   const [options, setOptions] = useState<PayrollProcessingOptions>({
     validateTimesheets: true,
     requireManagerApproval: true,
     generatePayslips: true,
     sendNotifications: true
   });
+
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   useEffect(() => {
     loadInitialData();
@@ -134,8 +141,7 @@ export default function PayrollProcessingPage() {
       const { data, error } = await supabase
         .from('payroll_runs')
         .select('*')
-        .order('pay_period_start', { ascending: false })
-        .limit(10);
+        .order('pay_period_start', { ascending: false });
 
       if (error) throw error;
       return data || [];
@@ -272,7 +278,7 @@ export default function PayrollProcessingPage() {
       const filters = {
         startDate: selectedRun.pay_period_start,
         endDate: selectedRun.pay_period_end,
-        employeeIds: employees.filter(emp => emp.selected).map(emp => emp.id)
+        employeeIds: employees.filter(emp => emp.selected).map(emp => emp.employee_id)
       };
 
       let report;
@@ -351,82 +357,124 @@ export default function PayrollProcessingPage() {
 
       {/* Payroll Run Selection */}
       <div className="bg-white p-6 rounded-lg shadow-sm border">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Payroll Run</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {payrollRuns.map((run) => (
-            <div
-              key={run.id}
-              className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                selectedRun?.id === run.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-              }`}
-              onClick={async () => {
-                setSelectedRun(run);
-                // Refresh employees based on the new selection
-                const emps = await loadEmployees(run.pay_frequency);
-                setEmployees(emps);
-                validatePayrollRun(run.id);
-              }}
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Select Payroll Run</h2>
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              title="Grid View"
             >
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <p className="font-medium text-gray-900">
-                    {new Date(run.pay_period_start).toLocaleDateString()} - {new Date(run.pay_period_end).toLocaleDateString()}
-                  </p>
-                  <p className="text-sm text-gray-600">{run.pay_frequency}</p>
-                </div>
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(run.status)}`}>
-                  {run.status}
-                </span>
-              </div>
-              <div className="text-sm text-gray-600 relative group/run-info">
-                <p className="flex items-center">
-                  <Users className="h-3 w-3 mr-1" />
-                  {selectedRun?.id === run.id 
-                    ? `${employees.filter(e => e.selected).length} employees selected` 
-                    : `${run.employee_count} employees`}
-                </p>
-                <p className="flex items-center">
-                  <DollarSign className="h-3 w-3 mr-1" />
-                  ${run.total_net_pay.toLocaleString()} net pay
-                </p>
-
-                {/* Hover Details */}
-                <div className="absolute bottom-full left-0 mb-2 w-64 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-xl opacity-0 group-hover/run-info:opacity-100 transition-opacity pointer-events-none z-50 border border-gray-700">
-                  <div className="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
-                    <span className="font-bold">Run Details</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${getStatusColor(run.status)}`}>
-                      {run.status}
-                    </span>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Frequency:</span>
-                      <span>{run.pay_frequency}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Start Date:</span>
-                      <span>{new Date(run.pay_period_start).toLocaleDateString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">End Date:</span>
-                      <span>{new Date(run.pay_period_end).toLocaleDateString()}</span>
-                    </div>
-                    {run.processed_at && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Processed At:</span>
-                        <span>{new Date(run.processed_at).toLocaleString()}</span>
-                      </div>
-                    )}
-                    <div className="mt-2 pt-2 border-t border-gray-700 flex justify-between font-medium">
-                      <span className="text-gray-400">Total Net:</span>
-                      <span className="text-green-400">${run.total_net_pay.toLocaleString()}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              title="List View"
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
         </div>
+
+        {viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2">
+            {payrollRuns.map((run) => (
+              <div
+                key={run.id}
+                className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                  selectedRun?.id === run.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                }`}
+                onClick={() => {
+                  setSelectedRun(run);
+                  loadEmployees(run.pay_frequency).then(emps => {
+                    setEmployees(emps);
+                    if (emps.length > 0) {
+                      validatePayrollRun(run.id);
+                    }
+                  });
+                }}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <span className="font-medium text-gray-900">
+                    {new Date(run.pay_period_start).toLocaleDateString()} - {new Date(run.pay_period_end).toLocaleDateString()}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    run.status === 'Paid' ? 'bg-green-100 text-green-800' :
+                    run.status === 'Processing' ? 'bg-blue-100 text-blue-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {run.status}
+                  </span>
+                </div>
+                <div className="space-y-1 text-sm text-gray-500">
+                  <p>{run.pay_frequency}</p>
+                  <div className="flex items-center gap-2">
+                    <Users className="h-3 w-3" />
+                    <span>{run.employee_count} employees selected</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-3 w-3" />
+                    <span>${(run.total_net_pay || 0).toLocaleString()} net pay</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto border rounded-lg max-h-[600px]">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Frequency</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employees</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Net Pay</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {payrollRuns.map((run) => (
+                  <tr 
+                    key={run.id}
+                    onClick={() => {
+                      setSelectedRun(run);
+                      loadEmployees(run.pay_frequency).then(emps => {
+                        setEmployees(emps);
+                        if (emps.length > 0) {
+                          validatePayrollRun(run.id);
+                        }
+                      });
+                    }}
+                    className={`cursor-pointer hover:bg-gray-50 ${selectedRun?.id === run.id ? 'bg-blue-50' : ''}`}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {new Date(run.pay_period_start).toLocaleDateString()} - {new Date(run.pay_period_end).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {run.pay_frequency}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        run.status === 'Paid' ? 'bg-green-100 text-green-800' :
+                        run.status === 'Processing' ? 'bg-blue-100 text-blue-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {run.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {run.employee_count}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      ${(run.total_net_pay || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Validation Results */}
@@ -504,7 +552,16 @@ export default function PayrollProcessingPage() {
       {/* Employee Selection */}
       {selectedRun && (
         <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Employees</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Select Employees</h2>
+            <button
+              onClick={() => setShowAddEmployeeModal(true)}
+              className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center"
+            >
+              <Users className="h-4 w-4 mr-1" />
+              Add Employee to Payroll
+            </button>
+          </div>
           {employees.length === 0 ? (
             <div className="p-8 text-center border-2 border-dashed border-gray-200 rounded-lg">
               <Users className="h-12 w-12 text-gray-400 mx-auto mb-3" />
@@ -751,6 +808,21 @@ export default function PayrollProcessingPage() {
           </div>
         </div>
       )}
+
+      {/* Add Employee Modal */}
+      <PayrollConfigurationModal 
+        isOpen={showAddEmployeeModal}
+        onClose={() => setShowAddEmployeeModal(false)}
+        defaultPayFrequency={selectedRun?.pay_frequency}
+        onSave={() => {
+          // Refresh employee list after adding
+          if (selectedRun) {
+            loadEmployees(selectedRun.pay_frequency).then(setEmployees);
+          } else {
+            loadEmployees().then(setEmployees);
+          }
+        }}
+      />
     </div>
   );
 }

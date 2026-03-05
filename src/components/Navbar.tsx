@@ -36,16 +36,25 @@ export default function Navbar() {
   const [roleMenuPermissions, setRoleMenuPermissions] = useState<string[] | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const isAbortError = (e: unknown) =>
+      (e instanceof DOMException && e.name === 'AbortError') ||
+      (typeof e === 'object' && e !== null && 'name' in (e as any) && (e as any).name === 'AbortError') ||
+      (typeof e === 'string' && /aborted/i.test(e as string));
+
     const fetchUser = async () => {
       try {
         const { data, error } = await supabase.auth.getUser();
         if (error) {
-          console.error('Error fetching user details:', formatError(error));
+          if (!isAbortError(error)) {
+            console.error('Error fetching user details:', formatError(error));
+          }
           return;
         }
         const user = data?.user;
         if (user) {
           const employee = await employeeService.getByUserId(user.id);
+          if (cancelled) return;
           if (employee) {
             const primaryRole = employee.role;
             const accessRole = employee.systemAccessRole;
@@ -66,6 +75,7 @@ export default function Navbar() {
               .eq('is_active', true)
               .single();
 
+            if (cancelled) return;
             if (roleRow) {
               setRoleMenuPermissions(roleRow.permissions || []);
             } else {
@@ -74,25 +84,33 @@ export default function Navbar() {
           }
         }
       } catch (error) {
-        console.error('Unexpected error fetching user details:', formatError(error));
+        if (!isAbortError(error)) {
+          console.error('Unexpected error fetching user details:', formatError(error));
+        }
       }
     };
 
     const fetchNotifications = async () => {
       try {
         const notifications = await notificationService.getMyNotifications();
+        if (cancelled) return;
         const unread = notifications.filter(n => !n.isRead);
         setUnreadCount(unread.length);
         setNotificationPreview(notifications.slice(0, 5));
       } catch (error) {
-        console.error('Unexpected error fetching notifications:', formatError(error));
+        if (!isAbortError(error)) {
+          console.error('Unexpected error fetching notifications:', formatError(error));
+        }
       }
     };
 
     fetchUser();
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -137,6 +155,9 @@ export default function Navbar() {
         roleMenuPermissions && roleMenuPermissions.some(p => typeof p === 'string' && p.startsWith('menu:'));
 
       if (!hasMenuConfig) {
+        if (['Super Admin', 'Administrator'].includes(userRole)) {
+          return true;
+        }
         if (userRole === 'Employee') {
           return ['Dashboard', 'Self Service (ESS)'].includes(item.name);
         }
