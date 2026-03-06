@@ -42,7 +42,6 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@next/swc-darwin-arm64": "^16.1.5",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.0.10",
