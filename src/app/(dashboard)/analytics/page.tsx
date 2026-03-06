@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from 'react';
 import { 
   BarChart, 
   Bar, 
@@ -9,49 +10,44 @@ import {
   Tooltip, 
   Legend, 
   ResponsiveContainer, 
-  LineChart, 
-  Line, 
   PieChart, 
   Pie, 
   Cell,
   AreaChart,
   Area
 } from 'recharts';
+import { analyticsService } from '@/services/analyticsService';
 
 export default function AnalyticsDashboard() {
-  // Mock Data
-  const headcountTrend = [
-    { month: 'Jan', employees: 120 },
-    { month: 'Feb', employees: 122 },
-    { month: 'Mar', employees: 125 },
-    { month: 'Apr', employees: 124 },
-    { month: 'May', employees: 128 },
-    { month: 'Jun', employees: 135 },
-  ];
-
-  const turnoverData = [
-    { department: 'Engineering', rate: 5.2 },
-    { department: 'Sales', rate: 12.5 },
-    { department: 'Marketing', rate: 8.1 },
-    { department: 'HR', rate: 2.5 },
-    { department: 'Product', rate: 4.0 },
-  ];
-
-  const salaryData = [
-    { department: 'Engineering', budget: 150000, actual: 145000 },
-    { department: 'Sales', budget: 120000, actual: 125000 },
-    { department: 'Marketing', budget: 80000, actual: 78000 },
-    { department: 'HR', budget: 50000, actual: 48000 },
-    { department: 'Product', budget: 90000, actual: 88000 },
-  ];
-
-  const genderData = [
-    { name: 'Male', value: 75 },
-    { name: 'Female', value: 55 },
-    { name: 'Non-Binary', value: 5 },
-  ];
-
+  const [loading, setLoading] = useState(true);
+  const [headcountTrend, setHeadcountTrend] = useState<{month:string; employees:number}[]>([]);
+  const [salaryData, setSalaryData] = useState<{department:string; actual:number}[]>([]);
+  const [genderData, setGenderData] = useState<{name:string; value:number}[]>([]);
   const COLORS = ['#3B82F6', '#EC4899', '#10B981', '#F59E0B'];
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [hc, sal, gen] = await Promise.all([
+          analyticsService.getHeadcountTrend(6),
+          analyticsService.getDepartmentSalaryActuals(),
+          analyticsService.getGenderDistribution()
+        ]);
+        setHeadcountTrend(hc);
+        setSalaryData(sal);
+        setGenderData(gen);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  const totalHeadcount = useMemo(() => headcountTrend.length ? headcountTrend[headcountTrend.length-1].employees : 0, [headcountTrend]);
+  const femaleSlice = (genderData.find(g => g.name === 'Female')?.value || 0);
+  const totalGender = genderData.reduce((s, g) => s + g.value, 0) || 1;
+  const femalePct = Math.round((femaleSlice / totalGender) * 100);
 
   return (
     <div className="space-y-6">
@@ -77,11 +73,7 @@ export default function AnalyticsDashboard() {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="text-gray-500 text-sm font-medium mb-1">Total Headcount</div>
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-gray-900">135</span>
-            <span className="text-green-600 text-sm font-medium flex items-center mb-1">
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
-              +5.4%
-            </span>
+            <span className="text-3xl font-bold text-gray-900">{totalHeadcount}</span>
           </div>
           <div className="text-xs text-gray-400 mt-2">vs. last month</div>
         </div>
@@ -89,20 +81,16 @@ export default function AnalyticsDashboard() {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="text-gray-500 text-sm font-medium mb-1">Turnover Rate</div>
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-gray-900">4.2%</span>
-            <span className="text-red-600 text-sm font-medium flex items-center mb-1">
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
-              +0.8%
-            </span>
+            <span className="text-3xl font-bold text-gray-900">{Math.max(0, totalHeadcount - (headcountTrend[headcountTrend.length-2]?.employees || 0))}</span>
           </div>
-          <div className="text-xs text-gray-400 mt-2">Annualized</div>
+          <div className="text-xs text-gray-400 mt-2">Change vs last month</div>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="text-gray-500 text-sm font-medium mb-1">Total Salary Cost</div>
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-gray-900">$1.2M</span>
-            <span className="text-gray-500 text-sm mb-1">/ month</span>
+            <span className="text-3xl font-bold text-gray-900">${(salaryData.reduce((s, d) => s + d.actual, 0)).toLocaleString()}</span>
+            <span className="text-gray-500 text-sm mb-1">/ total</span>
           </div>
           <div className="w-full bg-gray-100 rounded-full h-1.5 mt-3">
             <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: '92%' }}></div>
@@ -113,12 +101,12 @@ export default function AnalyticsDashboard() {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="text-gray-500 text-sm font-medium mb-1">Gender Ratio (F/M)</div>
           <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-gray-900">42%</span>
+            <span className="text-3xl font-bold text-gray-900">{femalePct}%</span>
             <span className="text-gray-500 text-sm mb-1">Female</span>
           </div>
           <div className="flex mt-3 h-1.5 rounded-full overflow-hidden">
-            <div className="bg-pink-500 h-full" style={{ width: '42%' }}></div>
-            <div className="bg-blue-500 h-full" style={{ width: '58%' }}></div>
+            <div className="bg-pink-500 h-full" style={{ width: `${femalePct}%` }}></div>
+            <div className="bg-blue-500 h-full" style={{ width: `${100 - femalePct}%` }}></div>
           </div>
           <div className="text-xs text-gray-400 mt-1">Goal: 45% Female</div>
         </div>
@@ -159,7 +147,6 @@ export default function AnalyticsDashboard() {
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="budget" name="Budget" fill="#E5E7EB" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="actual" name="Actual" fill="#3B82F6" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -200,25 +187,24 @@ export default function AnalyticsDashboard() {
 
         {/* Turnover by Department */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 lg:col-span-2">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">Turnover Rate by Department (%)</h3>
+          <h3 className="text-lg font-bold text-gray-900 mb-4">Department Salary Contribution (%)</h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={turnoverData} layout="vertical" margin={{ left: 20 }}>
+              <BarChart data={salaryData.map(d => ({ department: d.department, rate: d.actual }))} layout="vertical" margin={{ left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
                 <XAxis type="number" />
                 <YAxis dataKey="department" type="category" width={100} />
                 <Tooltip />
-                <Bar dataKey="rate" fill="#EF4444" radius={[0, 4, 4, 0]} barSize={20}>
-                  {turnoverData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.rate > 10 ? '#EF4444' : '#F59E0B'} />
+                <Bar dataKey="rate" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={20}>
+                  {salaryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} />
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="mt-2 text-sm text-gray-500">
-            <span className="inline-block w-3 h-3 bg-red-500 rounded-full mr-2"></span>High Risk (&gt;10%)
-            <span className="inline-block w-3 h-3 bg-yellow-500 rounded-full ml-4 mr-2"></span>Moderate Risk
+            Contribution calculated from sum of employee salaries per department
           </div>
         </div>
       </div>

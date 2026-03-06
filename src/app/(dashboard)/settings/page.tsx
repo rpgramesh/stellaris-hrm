@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { roleBasedAccessService, UserRole } from '@/services/roleBasedAccessService';
 import { menuItems } from '@/components/Sidebar';
-import { emailTemplateService, EmailTemplate } from '@/services/emailTemplateService';
-import { employeeService } from '@/services/employeeService';
 import { emailService } from '@/services/emailService';
+import { menuConfigurationService, MenuItemConfig } from '@/services/menuConfigurationService';
 import { Employee } from '@/types';
-import { Mail, Plus, Pencil, Trash2, X, Check, Play } from 'lucide-react';
+import { Mail, Plus, Pencil, Trash2, X, Check, Play, History, ChevronRight, ShieldCheck, LayoutDashboard, Settings as SettingsIcon, Type, Loader2 } from 'lucide-react';
+import { settingsService } from '@/services/settingsService';
+import Link from 'next/link';
 
 type RoleMenuState = {
   [roleId: string]: string[];
@@ -16,32 +17,33 @@ type RoleMenuState = {
 
 type ActiveTab = 'company' | 'menu' | 'email';
 
-const toMenuKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-
 const getFallbackMenuKeysForRole = (roleName: string): string[] => {
+  if (['Super Admin', 'Administrator'].includes(roleName)) {
+    return menuItems.map(item => item.key || '');
+  }
   if (roleName === 'Employee') {
-    const allowed = ['Dashboard', 'Self Service (ESS)'];
+    const allowed = ['dashboard', 'self_service_ess'];
     return menuItems
-      .filter(item => allowed.includes(item.name))
-      .map(item => toMenuKey(item.name));
+      .filter(item => allowed.includes(item.key || ''))
+      .map(item => item.key || '');
   }
 
   if (roleName === 'Manager') {
-    const allowed = ['Dashboard', 'Team', 'Leave'];
+    const allowed = ['dashboard', 'team', 'leave'];
     return menuItems
-      .filter(item => allowed.includes(item.name))
-      .map(item => toMenuKey(item.name));
+      .filter(item => allowed.includes(item.key || ''))
+      .map(item => item.key || '');
   }
 
   if (['HR Admin', 'HR Manager'].includes(roleName)) {
     return menuItems
-      .filter(item => item.name !== 'Settings' && item.name !== 'Self Service (ESS)')
-      .map(item => toMenuKey(item.name));
+      .filter(item => item.key !== 'settings' && item.key !== 'self_service_ess')
+      .map(item => item.key || '');
   }
 
   return menuItems
-    .filter(item => item.name !== 'Self Service (ESS)')
-    .map(item => toMenuKey(item.name));
+    .filter(item => item.key !== 'self_service_ess')
+    .map(item => item.key || '');
 };
 
 export default function SettingsPage() {
@@ -56,21 +58,37 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // Email Templates State
-  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<Partial<EmailTemplate> | null>(null);
-  const [variablesInput, setVariablesInput] = useState('');
-  const [isAddingTemplate, setIsAddingTemplate] = useState(false);
-  const [templateSearch, setTemplateSearch] = useState('');
+  // Company Settings state
+  const [companyName, setCompanyName] = useState('');
+  const [taxId, setTaxId] = useState('');
+  const [companyAddress, setCompanyAddress] = useState('');
+  const [defaultCurrency, setDefaultCurrency] = useState('AUD ($)');
+  const [timezone, setTimezone] = useState('Australia/Sydney');
+  const [loadingCompany, setLoadingCompany] = useState(false);
+  const [companyError, setCompanyError] = useState<string | null>(null);
 
-  // Test Email State
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [isTestModalOpen, setIsTestModalOpen] = useState(false);
-  const [testTemplate, setTestTemplate] = useState<EmailTemplate | null>(null);
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
-  const [isTestSending, setIsTestSending] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  // Menu Label state
+  const [menuLabelConfigs, setMenuLabelConfigs] = useState<MenuItemConfig[]>([]);
+  const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
+  const [savingLabels, setSavingLabels] = useState<string | null>(null);
+
+  const menuConfig = useMemo(
+    () =>
+      menuItems.map(item => ({
+        key: item.key || '',
+        name: item.name,
+        href: item.href
+      })),
+    []
+  );
+
+  const filteredMenuConfig = useMemo(() => {
+    if (!menuSearch.trim()) return menuConfig;
+    const term = menuSearch.toLowerCase();
+    return menuConfig.filter(
+      m => m.name.toLowerCase().includes(term) || m.href.toLowerCase().includes(term)
+    );
+  }, [menuConfig, menuSearch]);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -111,148 +129,74 @@ export default function SettingsPage() {
   }, [activeTab, selectedRoleId]);
 
   useEffect(() => {
-    if (activeTab !== 'email') return;
-    const loadTemplates = async () => {
-      setLoadingTemplates(true);
-      setError(null);
+    if (activeTab !== 'company') return;
+    const loadCompany = async () => {
+      setLoadingCompany(true);
+      setCompanyError(null);
       try {
-        const data = await emailTemplateService.getAll();
-        setEmailTemplates(data);
-      } catch (err: any) {
-        setError(err.message || 'Failed to load email templates');
+        const s = await settingsService.get();
+        if (s) {
+          setCompanyName(s.companyName || '');
+          setTaxId(s.taxId || '');
+          setCompanyAddress(s.companyAddress || '');
+          if (s.currency) setDefaultCurrency(s.currency);
+          if (s.timeZone) setTimezone(s.timeZone);
+        }
+      } catch (e: any) {
+        setCompanyError(e?.message || 'Failed to load settings');
       } finally {
-        setLoadingTemplates(false);
+        setLoadingCompany(false);
       }
     };
-    loadTemplates();
+    loadCompany();
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab !== 'email') return;
-    const loadEmployees = async () => {
+    if (activeTab !== 'menu') return;
+    const loadMenuConfigs = async () => {
       try {
-        const data = await employeeService.getAll();
-        setEmployees(data);
+        const configs = await menuConfigurationService.getAll();
+        setMenuLabelConfigs(configs);
+        
+        // Initialize editing labels with either custom names or defaults from menuItems
+        const initialLabels: Record<string, string> = {};
+        menuConfig.forEach(m => {
+          const config = configs.find(c => c.menu_key === m.key);
+          initialLabels[m.key] = config ? config.display_name : m.name;
+        });
+        setEditingLabels(initialLabels);
       } catch (err) {
-        console.error('Failed to load employees for email test:', err);
+        console.error('Error loading menu configs:', err);
       }
     };
-    loadEmployees();
-  }, [activeTab]);
-
-  const handleSaveTemplate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingTemplate || !editingTemplate.name || !editingTemplate.subject || !editingTemplate.body) return;
-
-    setLoadingTemplates(true);
-    setError(null);
-    try {
-      const payload = {
-        name: editingTemplate.name,
-        subject: editingTemplate.subject,
-        body: editingTemplate.body,
-        category: editingTemplate.category || 'General',
-        variables: editingTemplate.variables || []
-      };
-
-      if (isAddingTemplate) {
-        const newTemplate = await emailTemplateService.create(payload);
-        setEmailTemplates(prev => [...prev, newTemplate]);
-      } else if (editingTemplate.id) {
-        const updated = await emailTemplateService.update(editingTemplate.id, payload);
-        setEmailTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
-      }
-      setEditingTemplate(null);
-      setIsAddingTemplate(false);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to save template');
-    } finally {
-      setLoadingTemplates(false);
-    }
-  };
-
-  const handleDeleteTemplate = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this template?')) return;
-    setLoadingTemplates(true);
-    setError(null);
-    try {
-      await emailTemplateService.delete(id);
-      setEmailTemplates(prev => prev.filter(t => t.id !== id));
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete template');
-    } finally {
-      setLoadingTemplates(false);
-    }
-  };
-
-  const handleSendTestEmail = async () => {
-    if (!testTemplate || !selectedEmployeeId) return;
-
-    setIsTestSending(true);
-    setTestResult(null);
-
-    try {
-      const employee = employees.find(e => e.id === selectedEmployeeId);
-      if (!employee) throw new Error('Selected employee not found');
-
-      // Add some generic mock data for variables that might be in templates
-      const mockCustomVariables = {
-        resetLink: 'https://stellaris-hrm.com/reset-password?token=test-token',
-        period: 'January 2024',
-        documentType: 'Passport',
-        startDate: '2024-01-01',
-        endDate: '2024-01-10',
-        reason: 'Personal leave',
-        reviewDate: '2024-02-15',
-        policyName: 'Work from Home Policy',
-        exitDate: '2024-12-31',
-        interviewDate: '2024-03-01 10:00 AM',
-        jobTitle: 'Senior Developer',
-        salary: '$120,000'
-      };
-
-      const success = await emailService.sendTestEmail(testTemplate.name, employee, mockCustomVariables);
-      
-      if (success) {
-        setTestResult({ success: true, message: `Test email sent successfully to ${employee.email}` });
-      } else {
-        throw new Error('Failed to send test email');
-      }
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.message || 'An error occurred while sending test email' });
-    } finally {
-      setIsTestSending(false);
-    }
-  };
+    loadMenuConfigs();
+  }, [activeTab, menuConfig]);
 
   const handleCompanySave = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setLoading(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    setCompanyError(null);
+    try {
+      if (!companyName.trim()) {
+        setCompanyError('Company name is required');
+        setLoading(false);
+        return;
+      }
+      await settingsService.update({
+        companyName,
+        taxId,
+        companyAddress,
+        currency: defaultCurrency,
+        timeZone: timezone
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      setCompanyError(e?.message || 'Failed to save settings');
+    } finally {
+      setLoading(false);
+    }
   };
-
-  const menuConfig = useMemo(
-    () =>
-      menuItems.map(item => ({
-        key: toMenuKey(item.name),
-        name: item.name,
-        href: item.href
-      })),
-    []
-  );
-
-  const filteredMenuConfig = useMemo(() => {
-    if (!menuSearch.trim()) return menuConfig;
-    const term = menuSearch.toLowerCase();
-    return menuConfig.filter(
-      m => m.name.toLowerCase().includes(term) || m.href.toLowerCase().includes(term)
-    );
-  }, [menuConfig, menuSearch]);
 
   const selectedRole = roles.find(r => r.id === selectedRoleId) || null;
   const selectedRoleMenuKeys = selectedRoleId ? roleMenuState[selectedRoleId] || [] : [];
@@ -311,6 +255,29 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveMenuLabel = async (menuKey: string) => {
+    const newName = editingLabels[menuKey];
+    if (!newName || !newName.trim()) return;
+
+    setSavingLabels(menuKey);
+    try {
+      const result = await menuConfigurationService.update(menuKey, newName.trim());
+      if (result.success) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+        // Refresh local configs
+        const configs = await menuConfigurationService.getAll();
+        setMenuLabelConfigs(configs);
+      } else {
+        alert(result.error || 'Failed to update menu label');
+      }
+    } catch (err: any) {
+      alert(err.message || 'An unexpected error occurred');
+    } finally {
+      setSavingLabels(null);
+    }
+  };
+
   const renderCompanySettings = () => (
     <div className="bg-white rounded-lg shadow">
       <div className="px-6 py-4 border-b border-gray-200">
@@ -318,12 +285,19 @@ export default function SettingsPage() {
         <p className="text-sm text-gray-500">Manage your company's information and preferences.</p>
       </div>
       <form onSubmit={handleCompanySave} className="p-6 space-y-6">
+        {companyError && (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded">
+            {companyError}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700">Company Name</label>
             <input
               type="text"
-              defaultValue="Stellaris Tech Solutions"
+              value={companyName}
+              onChange={e => setCompanyName(e.target.value)}
+              disabled={loadingCompany}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
@@ -331,7 +305,9 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium text-gray-700">Tax ID / ABN</label>
             <input
               type="text"
-              defaultValue="12 345 678 901"
+              value={taxId}
+              onChange={e => setTaxId(e.target.value)}
+              disabled={loadingCompany}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
@@ -339,54 +315,39 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium text-gray-700">Address</label>
             <textarea
               rows={3}
-              defaultValue="123 Innovation Way, Sydney NSW 2000"
+              value={companyAddress}
+              onChange={e => setCompanyAddress(e.target.value)}
+              disabled={loadingCompany}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Default Currency</label>
-            <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500">
-              <option>AUD ($)</option>
-              <option>USD ($)</option>
-              <option>EUR (€)</option>
-              <option>GBP (£)</option>
+            <select
+              value={defaultCurrency}
+              onChange={e => setDefaultCurrency(e.target.value)}
+              disabled={loadingCompany}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="AUD ($)">AUD ($)</option>
+              <option value="USD ($)">USD ($)</option>
+              <option value="EUR (€)">EUR (€)</option>
+              <option value="GBP (£)">GBP (£)</option>
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Timezone</label>
-            <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500">
-              <option>Australia/Sydney</option>
-              <option>Australia/Melbourne</option>
-              <option>Australia/Brisbane</option>
-              <option>Australia/Perth</option>
+            <select
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              disabled={loadingCompany}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="Australia/Sydney">Australia/Sydney</option>
+              <option value="Australia/Melbourne">Australia/Melbourne</option>
+              <option value="Australia/Brisbane">Australia/Brisbane</option>
+              <option value="Australia/Perth">Australia/Perth</option>
             </select>
-          </div>
-        </div>
-        <div className="pt-6 border-t border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Notifications</h3>
-          <div className="space-y-4">
-            <div className="flex items-center">
-              <input
-                id="email-notif"
-                type="checkbox"
-                defaultChecked
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="email-notif" className="ml-2 block text-sm text-gray-900">
-                Email alerts for leave requests
-              </label>
-            </div>
-            <div className="flex items-center">
-              <input
-                id="payroll-notif"
-                type="checkbox"
-                defaultChecked
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="payroll-notif" className="ml-2 block text-sm text-gray-900">
-                Reminders for payroll processing
-              </label>
-            </div>
           </div>
         </div>
         <div className="flex justify-end pt-6">
@@ -405,155 +366,218 @@ export default function SettingsPage() {
   );
 
   const renderMenuSettings = () => (
-    <div className="bg-white rounded-lg shadow flex flex-col lg:flex-row">
-      <div className="border-b lg:border-b-0 lg:border-r border-gray-200 w-full lg:w-1/3">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">Role-Based Menu Access</h2>
-            <p className="text-sm text-gray-500">
-              Configure which menu items are visible for each role.
-            </p>
-          </div>
+    <div className="space-y-8">
+      {/* Menu Label Customization Section */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+            <Type className="h-5 w-5 text-blue-600" />
+            Menu Display Names
+          </h2>
+          <p className="text-sm text-gray-500">
+            Customize how menu items appear in the sidebar. Changes apply system-wide.
+          </p>
         </div>
-        <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
-          {roles.map(role => (
-            <button
-              key={role.id}
-              type="button"
-              onClick={() => setSelectedRoleId(role.id)}
-              className={`w-full text-left px-3 py-2 rounded-md border text-sm mb-1 ${
-                selectedRoleId === role.id
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
-              }`}
-            >
-              <div className="font-medium">{role.name}</div>
-              <div className="text-xs text-gray-500 truncate">{role.description}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="w-full lg:w-2/3 flex flex-col">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">
-              {selectedRole ? selectedRole.name : 'Select a role'}
-            </h3>
-            <p className="text-xs text-gray-500">
-              Use the toggles to enable or disable individual menu items.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setAllMenusForSelectedRole(true)}
-              className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-blue-500 hover:text-blue-600"
-              disabled={!selectedRole}
-            >
-              Enable All
-            </button>
-            <button
-              type="button"
-              onClick={() => setAllMenusForSelectedRole(false)}
-              className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-red-500 hover:text-red-600"
-              disabled={!selectedRole}
-            >
-              Disable All
-            </button>
-            <button
-              type="button"
-              onClick={applyMenuToAllRoles}
-              className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-purple-500 hover:text-purple-600"
-              disabled={!selectedRole}
-            >
-              Copy To All Roles
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-col lg:flex-row flex-1">
-          <div className="flex-1 border-b lg:border-b-0 lg:border-r border-gray-200 p-4 space-y-4">
-            <div className="flex items-center justify-between mb-2">
-              <input
-                type="text"
-                value={menuSearch}
-                onChange={e => setMenuSearch(e.target.value)}
-                placeholder="Search menu items..."
-                className="w-full mr-2 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div className="space-y-2 max-h-[320px] overflow-y-auto">
-              {filteredMenuConfig.map(menu => {
-                const enabled = selectedRoleMenuKeys.includes(menu.key);
-                return (
-                  <div
-                    key={menu.key}
-                    className="flex items-center justify-between px-3 py-2 rounded-md border border-gray-100 hover:border-gray-300"
-                  >
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">{menu.name}</div>
-                      <div className="text-xs text-gray-500">{menu.href}</div>
-                    </div>
+        <div className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {menuConfig.map(menu => {
+              const config = menuLabelConfigs.find(c => c.menu_key === menu.key);
+              const isDefault = !config || config.display_name === menu.name;
+              
+              return (
+                <div key={menu.key} className="space-y-2 p-4 rounded-xl border border-gray-100 hover:border-blue-100 transition-all bg-gray-50/50">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                      {menu.name} (Default)
+                    </label>
+                    {!isDefault && (
+                      <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full uppercase">
+                        Customized
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={editingLabels[menu.key] || ''}
+                      onChange={e => setEditingLabels(prev => ({ ...prev, [menu.key]: e.target.value }))}
+                      className="flex-1 min-w-0 rounded-lg border-gray-300 shadow-sm text-sm focus:ring-blue-500 focus:border-blue-500 p-2 border bg-white"
+                      placeholder={`Enter new name for ${menu.name}`}
+                    />
                     <button
-                      type="button"
-                      onClick={() => toggleMenuForSelectedRole(menu.key)}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        enabled ? 'bg-blue-600' : 'bg-gray-300'
-                      }`}
-                      disabled={!selectedRole}
+                      onClick={() => handleSaveMenuLabel(menu.key)}
+                      disabled={savingLabels === menu.key || editingLabels[menu.key] === (config?.display_name || menu.name)}
+                      className="inline-flex items-center justify-center p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                      title="Save Name"
                     >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          enabled ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
+                      {savingLabels === menu.key ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4" />
+                      )}
                     </button>
                   </div>
-                );
-              })}
-            </div>
+                  <p className="text-[10px] text-gray-400">
+                    URL: <code className="bg-gray-100 px-1 rounded">{menu.href}</code>
+                  </p>
+                </div>
+              );
+            })}
           </div>
-          <div className="w-full lg:w-1/3 p-4 space-y-3">
-            <div className="border-b border-gray-200 pb-2">
-              <h4 className="text-sm font-semibold text-gray-900">Preview</h4>
-              <p className="text-xs text-gray-500">
-                This is how the sidebar will look for the selected role.
+        </div>
+      </div>
+
+      {/* Existing Role-Based Menu Access Section */}
+      <div className="bg-white rounded-lg shadow flex flex-col lg:flex-row">
+        <div className="border-b lg:border-b-0 lg:border-r border-gray-200 w-full lg:w-1/3">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-800">Role-Based Menu Access</h2>
+              <p className="text-sm text-gray-500">
+                Configure which menu items are visible for each role.
               </p>
             </div>
-            <div className="bg-gray-900 text-white rounded-lg p-3 space-y-1 max-h-[320px] overflow-y-auto">
-              {menuConfig
-                .filter(menu => selectedRoleMenuKeys.includes(menu.key))
-                .map(menu => (
-                  <div
-                    key={menu.key}
-                    className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-gray-800 text-sm"
-                  >
-                    <span>{menu.name}</span>
-                  </div>
-                ))}
-              {!selectedRoleMenuKeys.length && (
-                <div className="text-xs text-gray-400 px-3 py-2">
-                  No menu items enabled for this role.
-                </div>
-              )}
-            </div>
-            <div className="pt-2">
+          </div>
+          <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
+            {roles.map(role => (
               <button
+                key={role.id}
                 type="button"
-                onClick={handleSaveMenu}
-                disabled={!selectedRole || savingMenu || !currentUserId}
-                className={`w-full px-4 py-2 rounded-md text-sm font-semibold ${
-                  !selectedRole || savingMenu || !currentUserId
-                    ? 'bg-blue-400 text-white cursor-not-allowed'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                onClick={() => setSelectedRoleId(role.id)}
+                className={`w-full text-left px-3 py-2 rounded-md border text-sm mb-1 ${
+                  selectedRoleId === role.id
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
                 }`}
               >
-                {savingMenu ? 'Saving...' : 'Save Menu Permissions'}
+                <div className="font-medium">{role.name}</div>
+                <div className="text-xs text-gray-500 truncate">{role.description}</div>
               </button>
-              {error && (
-                <div className="mt-2 text-xs text-red-600 border border-red-200 bg-red-50 px-2 py-1 rounded">
-                  {error}
-                </div>
-              )}
+            ))}
+          </div>
+        </div>
+        <div className="w-full lg:w-2/3 flex flex-col">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {selectedRole ? selectedRole.name : 'Select a role'}
+              </h3>
+              <p className="text-xs text-gray-500">
+                Use the toggles to enable or disable individual menu items.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAllMenusForSelectedRole(true)}
+                className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-blue-500 hover:text-blue-600"
+                disabled={!selectedRole}
+              >
+                Enable All
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllMenusForSelectedRole(false)}
+                className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-red-500 hover:text-red-600"
+                disabled={!selectedRole}
+              >
+                Disable All
+              </button>
+              <button
+                type="button"
+                onClick={applyMenuToAllRoles}
+                className="text-xs px-3 py-1 rounded-full border border-gray-300 hover:border-purple-500 hover:text-purple-600"
+                disabled={!selectedRole}
+              >
+                Copy To All Roles
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col lg:flex-row flex-1">
+            <div className="flex-1 border-b lg:border-b-0 lg:border-r border-gray-200 p-4 space-y-4">
+              <div className="flex items-center justify-between mb-2">
+                <input
+                  type="text"
+                  value={menuSearch}
+                  onChange={e => setMenuSearch(e.target.value)}
+                  placeholder="Search menu items..."
+                  className="w-full mr-2 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div className="space-y-2 max-h-[320px] overflow-y-auto">
+                {filteredMenuConfig.map(menu => {
+                  const enabled = selectedRoleMenuKeys.includes(menu.key);
+                  return (
+                    <div
+                      key={menu.key}
+                      className="flex items-center justify-between px-3 py-2 rounded-md border border-gray-100 hover:border-gray-300"
+                    >
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{menu.name}</div>
+                        <div className="text-xs text-gray-500">{menu.href}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleMenuForSelectedRole(menu.key)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          enabled ? 'bg-blue-600' : 'bg-gray-300'
+                        }`}
+                        disabled={!selectedRole}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="w-full lg:w-1/3 p-4 space-y-3">
+              <div className="border-b border-gray-200 pb-2">
+                <h4 className="text-sm font-semibold text-gray-900">Preview</h4>
+                <p className="text-xs text-gray-500">
+                  This is how the sidebar will look for the selected role.
+                </p>
+              </div>
+              <div className="bg-gray-900 text-white rounded-lg p-3 space-y-1 max-h-[320px] overflow-y-auto">
+                {menuConfig
+                  .filter(menu => selectedRoleMenuKeys.includes(menu.key))
+                  .map(menu => (
+                    <div
+                      key={menu.key}
+                      className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-gray-800 text-sm"
+                    >
+                      <span>{menu.name}</span>
+                    </div>
+                  ))}
+                {!selectedRoleMenuKeys.length && (
+                  <div className="text-xs text-gray-400 px-3 py-2">
+                    No menu items enabled for this role.
+                  </div>
+                )}
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveMenu}
+                  disabled={!selectedRole || savingMenu || !currentUserId}
+                  className={`w-full px-4 py-2 rounded-md text-sm font-semibold ${
+                    !selectedRole || savingMenu || !currentUserId
+                      ? 'bg-blue-400 text-white cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {savingMenu ? 'Saving...' : 'Save Menu Permissions'}
+                </button>
+                {error && (
+                  <div className="mt-2 text-xs text-red-600 border border-red-200 bg-red-50 px-2 py-1 rounded">
+                    {error}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -562,270 +586,76 @@ export default function SettingsPage() {
   );
 
   const renderEmailSettings = () => {
-    const filteredTemplates = emailTemplates.filter(t =>
-      t.name.toLowerCase().includes(templateSearch.toLowerCase()) ||
-      t.category.toLowerCase().includes(templateSearch.toLowerCase())
-    );
-
     return (
-      <div className="bg-white rounded-lg shadow min-h-[600px]">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">Email Template Management</h2>
-            <p className="text-sm text-gray-500">Configure and customize system-generated emails.</p>
-          </div>
-          <button
-            onClick={() => {
-              setEditingTemplate({
-                name: '',
-                subject: '',
-                body: '',
-                category: 'General',
-                variables: []
-              });
-              setVariablesInput('');
-              setIsAddingTemplate(true);
-            }}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+      <div className="space-y-8 animate-in fade-in duration-500">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Mail className="h-6 w-6 text-blue-600" />
+            Email Communication Settings
+          </h2>
+          <p className="mt-1 text-gray-500">
+            Configure system-wide email behavior, templates, and track communication history.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Link 
+            href="/settings/email/templates"
+            className="group relative bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 hover:shadow-md transition-all duration-300 overflow-hidden"
           >
-            <Plus className="w-4 h-4" />
-            Add Template
-          </button>
+            <div className="absolute top-0 right-0 p-3 bg-blue-50 group-hover:bg-blue-100 transition-colors rounded-bl-2xl">
+              <Mail className="h-6 w-6 text-blue-600" />
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                Template Configuration
+              </h3>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                Assign specific email templates to different system events like welcome emails, payslips, and notifications.
+              </p>
+              <div className="pt-4 flex items-center text-sm font-semibold text-blue-600">
+                Configure Templates
+                <ChevronRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </div>
+          </Link>
+
+          <Link 
+            href="/settings/email/audit"
+            className="group relative bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 hover:shadow-md transition-all duration-300 overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 p-3 bg-gray-50 group-hover:bg-gray-100 transition-colors rounded-bl-2xl">
+              <History className="h-6 w-6 text-gray-600" />
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                Communication Audit Log
+              </h3>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                Review a complete history of all emails sent by the system, including delivery status, recipients, and error logs.
+              </p>
+              <div className="pt-4 flex items-center text-sm font-semibold text-blue-600">
+                View Audit Log
+                <ChevronRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </div>
+          </Link>
         </div>
 
-        <div className="p-6">
-          <div className="mb-6 relative">
-            <input
-              type="text"
-              placeholder="Search templates by name or category..."
-              value={templateSearch}
-              onChange={(e) => setTemplateSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-            />
-            <Mail className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" />
-          </div>
-
-          {loadingTemplates ? (
-            <div className="text-center py-12 text-gray-500">Loading templates...</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredTemplates.map(template => (
-                <div key={template.id} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:shadow-sm transition-all group">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                      {template.category}
-                    </span>
-                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => {
-                          setTestTemplate(template);
-                          setIsTestModalOpen(true);
-                          setTestResult(null);
-                        }}
-                        title="Test Template"
-                        className="p-1 text-gray-400 hover:text-green-600"
-                      >
-                        <Play className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingTemplate(template);
-                          setVariablesInput(template.variables.join(', '));
-                          setIsAddingTemplate(false);
-                        }}
-                        className="p-1 text-gray-400 hover:text-blue-600"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteTemplate(template.id)}
-                        className="p-1 text-gray-400 hover:text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <h3 className="font-medium text-gray-900 mb-1">{template.name}</h3>
-                  <p className="text-sm text-gray-500 line-clamp-1 mb-3">{template.subject}</p>
-                  <div className="text-xs text-gray-400">
-                    Variables: {template.variables.join(', ') || 'None'}
-                  </div>
-                </div>
-              ))}
+        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6">
+          <div className="flex gap-4">
+            <div className="p-3 bg-white rounded-xl shadow-sm">
+              <ShieldCheck className="h-6 w-6 text-blue-600" />
             </div>
-          )}
+            <div>
+              <h4 className="text-lg font-bold text-blue-900">Enterprise Security & Compliance</h4>
+              <p className="mt-1 text-blue-800 text-sm leading-relaxed max-w-2xl">
+                Our email delivery system ensures all communications are encrypted and logged for compliance purposes. 
+                You can audit any email sent by your organization to ensure proper communication standards are met.
+              </p>
+            </div>
+          </div>
         </div>
-
-        {editingTemplate && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-                <h3 className="text-lg font-semibold text-gray-800">
-                  {isAddingTemplate ? 'Create New Template' : `Edit Template: ${editingTemplate.name}`}
-                </h3>
-                <button onClick={() => { setEditingTemplate(null); setVariablesInput(''); }} className="text-gray-400 hover:text-gray-600">
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-              <form onSubmit={handleSaveTemplate} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingTemplate.name || ''}
-                    onChange={(e) => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
-                    placeholder="e.g., Welcome Email"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                    <input
-                      type="text"
-                      required
-                      value={editingTemplate.category || ''}
-                      onChange={(e) => setEditingTemplate({ ...editingTemplate, category: e.target.value })}
-                      placeholder="e.g., Onboarding"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Variables (comma separated)</label>
-                    <input
-                      type="text"
-                      value={variablesInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setVariablesInput(val);
-                        setEditingTemplate({
-                          ...editingTemplate,
-                          variables: val.split(',').map(v => v.trim()).filter(v => v)
-                        });
-                      }}
-                      placeholder="e.g., fullName, username"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject Line</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingTemplate.subject || ''}
-                    onChange={(e) => setEditingTemplate({ ...editingTemplate, subject: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email Body</label>
-                  <textarea
-                    required
-                    rows={8}
-                    value={editingTemplate.body || ''}
-                    onChange={(e) => setEditingTemplate({ ...editingTemplate, body: e.target.value })}
-                    placeholder="Use {{variableName}} for dynamic content"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                  />
-                </div>
-                <div className="pt-4 border-t border-gray-200 flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => { setEditingTemplate(null); setVariablesInput(''); }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors font-semibold"
-                  >
-                    <Check className="w-4 h-4" />
-                    Save Template
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {isTestModalOpen && testTemplate && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-800">Test Email: {testTemplate.name}</h3>
-                <button 
-                  onClick={() => {
-                    setIsTestModalOpen(false);
-                    setTestTemplate(null);
-                    setTestResult(null);
-                    setSelectedEmployeeId('');
-                  }} 
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm text-gray-600">
-                  Select an employee to send a test email using this template. 
-                  Dynamic variables like <code className="bg-gray-100 px-1 rounded">{"{{fullName}}"}</code> will be automatically replaced with the employee's data.
-                </p>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Select Employee</label>
-                  <select
-                    value={selectedEmployeeId}
-                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">-- Choose an employee --</option>
-                    {employees.map(emp => (
-                      <option key={emp.id} value={emp.id}>
-                        {emp.firstName} {emp.lastName} ({emp.email})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {testResult && (
-                  <div className={`p-3 rounded-md text-sm ${testResult.success ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                    {testResult.message}
-                  </div>
-                )}
-
-                <div className="pt-4 flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsTestModalOpen(false);
-                      setTestTemplate(null);
-                      setTestResult(null);
-                      setSelectedEmployeeId('');
-                    }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={handleSendTestEmail}
-                    disabled={!selectedEmployeeId || isTestSending}
-                    className="flex items-center gap-2 bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isTestSending ? 'Sending...' : (
-                      <>
-                        <Play className="w-4 h-4" />
-                        Send Test Email
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   };

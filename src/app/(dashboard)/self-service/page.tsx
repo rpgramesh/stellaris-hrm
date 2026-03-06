@@ -56,7 +56,7 @@ export default function ESSDashboardPage() {
         const currentYear = new Date().getFullYear();
         const [leaves, payslips, attendance, entitlements, thisYearHolidays, nextYearHolidays, notifications] = await Promise.all([
           leaveService.getByEmployeeId(currentEmployee.id!),
-          payrollService.getPayslipsByEmployee(currentEmployee.id!),
+          payrollService.getPayslipsByEmployeeId(currentEmployee.id!),
           attendanceService.getAll(undefined, undefined, currentEmployee.id!),
           leaveService.getEntitlements(currentEmployee.id!, currentYear),
           holidayService.getByYear(currentYear),
@@ -85,7 +85,7 @@ export default function ESSDashboardPage() {
         // Assume monthly pay cycle, find next 15th or 30th?
         // Or just look at the last payslip and add 1 month.
         if (payslips.length > 0) {
-          const lastPayDate = new Date(payslips[0].paymentDate);
+          const lastPayDate = new Date(payslips[0].payPeriodEnd);
           const nextPay = new Date(lastPayDate);
           nextPay.setMonth(nextPay.getMonth() + 1);
           setNextPayDate(nextPay.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
@@ -121,11 +121,11 @@ export default function ESSDashboardPage() {
         payslips.slice(0, 2).forEach(p => {
           activities.push({
             action: 'Payslip Available',
-            date: new Date(p.paymentDate).toLocaleDateString(),
-            detail: `Period: ${p.periodStart} - ${p.periodEnd}`,
+            date: new Date(p.payPeriodEnd).toLocaleDateString(),
+            detail: `Period: ${p.payPeriodStart} - ${p.payPeriodEnd}`,
             icon: '📄',
             color: 'bg-blue-100 text-blue-600',
-            timestamp: new Date(p.paymentDate).getTime()
+            timestamp: new Date(p.payPeriodEnd).getTime()
           });
         });
 

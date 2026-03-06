@@ -15,6 +15,7 @@ import {
   User
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { getNamesByIds } from '../services/employeeResolver';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { SalaryAdjustment } from '../types/payroll';
 import { salaryAdjustmentService } from '../services/salaryAdjustmentService';
@@ -57,23 +58,8 @@ export default function SalaryAdjustments() {
 
   const fetchEmployeeNames = async (employeeIds: string[]) => {
     if (employeeIds.length === 0) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('id, first_name, last_name')
-        .in('id', employeeIds);
-
-      if (error) throw error;
-
-      const names: Record<string, string> = {};
-      data?.forEach(emp => {
-        names[emp.id] = `${emp.first_name} ${emp.last_name}`;
-      });
-      setEmployeeNames(names);
-    } catch (error) {
-      console.error('Error loading employee names:', error);
-    }
+    const names = await getNamesByIds(employeeIds);
+    setEmployeeNames(names);
   };
 
   const loadAdjustments = async () => {
@@ -113,14 +99,13 @@ export default function SalaryAdjustments() {
       }
 
       const mappedData = (data || []).map(item => salaryAdjustmentService.mapFromDb(item));
-      setAdjustments(mappedData);
-
-      // Fetch employee names for the loaded adjustments
+      // Fetch names first so UI renders with names immediately
       if (mappedData.length > 0) {
         const employeeIds = [...new Set(mappedData.map(adj => adj.employeeId))];
-        console.log('Fetching names for employee IDs:', employeeIds);
-        await fetchEmployeeNames(employeeIds);
+        const names = await getNamesByIds(employeeIds);
+        setEmployeeNames(names);
       }
+      setAdjustments(mappedData);
     } catch (error) {
       console.error('Error loading adjustments:', error);
       console.error('Error details:', JSON.stringify(error, null, 2));

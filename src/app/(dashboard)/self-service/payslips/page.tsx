@@ -92,7 +92,7 @@ export default function EmployeePayslipsPage() {
       }
 
       // Load payslips for the employee
-      const employeePayslips = await payrollService.getPayslipsByEmployee(currentEmployeeId);
+      const employeePayslips = await payrollService.getPayslipsByEmployeeId(currentEmployeeId);
       
       // Load detailed pay components for each payslip
       const payslipsWithDetails: Payslip[] = await Promise.all(

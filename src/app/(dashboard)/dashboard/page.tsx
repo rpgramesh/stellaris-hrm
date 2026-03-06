@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
@@ -96,7 +97,7 @@ export default function DashboardPage() {
           leaveService.getAll(),
           expensesService.getExpenses(),
           attendanceService.getAll(),
-          payrollService.getAllPayslips(),
+          payrollService.getPayslipsByMonthYear(format(today, 'yyyy-MM')),
           holidayService.getByYear(currentYear),
           learningService.getAllAssignments(),
           recruitmentService.getJobs(),

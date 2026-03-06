@@ -156,7 +156,7 @@ export const payrollReportingService = {
   async generatePayrollSummaryReport(filters: PayrollReportFilters): Promise<PayrollSummaryReport> {
     try {
       const { data: payslips, error } = await this.getPayslipsWithDetails(filters);
-      
+
       if (error) throw error;
       if (!payslips || payslips.length === 0) {
         return this.createEmptySummaryReport(filters);
@@ -164,39 +164,39 @@ export const payrollReportingService = {
 
       // Calculate totals
       const totals = this.calculateTotals(payslips);
-      
+
       // Calculate statistics
-      const netPays = payslips.map(p => p.net_pay);
-      const averagePay = netPays.reduce((sum, pay) => sum + pay, 0) / netPays.length;
+      const netPays = payslips.map((p) => Number(p.net_pay || 0));
+      const averagePay = netPays.reduce((sum, pay) => sum + pay, 0) / (netPays.length || 1);
       const medianPay = this.calculateMedian(netPays);
-      
+
       // Generate pay distribution
       const payDistribution = this.generatePayDistribution(netPays);
 
       // Create audit log
       await auditService.logAction(
-        'payroll_reports',
-        'summary_report',
-        'SYSTEM_ACTION',
+        "payroll_reports",
+        "summary_report",
+        "SYSTEM_ACTION",
         null,
         { filters, recordCount: payslips.length },
-        'system'
+        "system"
       );
 
       return {
         period: {
-          start: filters.startDate || payslips[0].period_start,
-          end: filters.endDate || payslips[payslips.length - 1].period_end
+          start: filters.startDate || payslips[0].pay_period_start || payslips[0].period_start,
+          end: filters.endDate || payslips[payslips.length - 1].pay_period_end || payslips[payslips.length - 1].period_end,
         },
         totals,
-        employeeCount: new Set(payslips.map(p => p.employee_id)).size,
-        payrollRuns: new Set(payslips.map(p => p.payroll_run_id)).size,
+        employeeCount: new Set(payslips.map((p) => p.employee_id)).size,
+        payrollRuns: new Set(payslips.map((p) => p.payroll_run_id)).size,
         averagePay,
         medianPay,
-        payDistribution
+        payDistribution,
       };
-    } catch (error) {
-      console.error('Error generating payroll summary report:', error);
+    } catch (error: any) {
+      console.error("Error generating payroll summary report:", JSON.stringify(error, null, 2) || error.message || error);
       throw error;
     }
   },
@@ -245,9 +245,16 @@ export const payrollReportingService = {
         : { data: null };
 
       // Calculate period totals
-      const periodTotals = this.calculateTotals(payslips || []);
+      const totals = this.calculateTotals(payslips || []);
+      const periodTotals = {
+        grossPay: totals.grossPay,
+        tax: totals.tax,
+        netPay: totals.netPay,
+        superannuation: totals.superannuation,
+        hoursWorked: (payslips || []).reduce((sum, p) => sum + (Number(p.hours_logged) || 0), 0)
+      };
       
-      // Calculate YTD totals (simplified - would need proper YTD calculation)
+      // Calculate YTD totals
       const ytdTotals = await this.calculateYTDTotals(employeeId, filters);
 
       // Create audit log
@@ -271,16 +278,16 @@ export const payrollReportingService = {
         ytdTotals,
         payslips: (payslips || []).map(p => ({
           id: p.id,
-          periodStart: p.period_start,
-          periodEnd: p.period_end,
-          grossPay: p.gross_pay,
-          netPay: p.net_pay,
+          periodStart: p.pay_period_start || p.period_start,
+          periodEnd: p.pay_period_end || p.period_end,
+          grossPay: Number(p.gross_earnings || p.gross_pay || 0),
+          netPay: Number(p.net_pay || 0),
           paymentDate: p.payment_date,
           status: p.status
         }))
       };
-    } catch (error) {
-      console.error('Error generating employee payroll report:', error);
+    } catch (error: any) {
+      console.error('Error generating employee payroll report:', JSON.stringify(error, null, 2) || error.message || error);
       throw error;
     }
   },
@@ -298,8 +305,8 @@ export const payrollReportingService = {
       const { data: stpSubmissions } = await supabase
         .from('stp_submissions')
         .select('*')
-        .gte('submission_date', filters.startDate)
-        .lte('submission_date', filters.endDate);
+        .gte('submission_date', filters.startDate || '1970-01-01')
+        .lte('submission_date', filters.endDate || new Date().toISOString());
 
       // Build tax breakdown
       const taxBreakdown = await this.buildTaxBreakdown(payslips);
@@ -316,22 +323,22 @@ export const payrollReportingService = {
 
       return {
         period: {
-          start: filters.startDate || payslips[0].period_start,
-          end: filters.endDate || payslips[payslips.length - 1].period_end
+          start: filters.startDate || payslips[0].pay_period_start || payslips[0].period_start,
+          end: filters.endDate || payslips[payslips.length - 1].pay_period_end || payslips[payslips.length - 1].period_end
         },
-        totalTaxWithheld: payslips.reduce((sum, p) => sum + p.tax_withheld, 0),
+        totalTaxWithheld: payslips.reduce((sum, p) => sum + (Number(p.income_tax || p.tax_withheld) || 0), 0),
         taxBreakdown,
         stpSubmissions: (stpSubmissions || []).map(s => ({
           id: s.id,
           submissionDate: s.submission_date,
           status: s.status,
-          totalGross: s.total_gross,
-          totalTax: s.total_tax,
-          employeeCount: s.employee_count
+          totalGross: Number(s.total_gross || 0),
+          totalTax: Number(s.total_tax || 0),
+          employeeCount: Number(s.employee_count || 0)
         }))
       };
-    } catch (error) {
-      console.error('Error generating tax report:', error);
+    } catch (error: any) {
+      console.error('Error generating tax report:', JSON.stringify(error, null, 2) || error.message || error);
       throw error;
     }
   },
@@ -342,14 +349,18 @@ export const payrollReportingService = {
         .from('superannuation_contributions')
         .select(`
           *,
-          super_funds:name,
+          super_funds:fund_id (
+            name,
+            abn
+          ),
           employees:employee_id (
             first_name,
-            last_name
+            last_name,
+            super_member_number
           )
         `)
-        .gte('period_start', filters.startDate)
-        .lte('period_end', filters.endDate);
+        .gte('period_start', filters.startDate || '1970-01-01')
+        .lte('period_end', filters.endDate || new Date().toISOString());
 
       if (error) throw error;
       if (!contributions || contributions.length === 0) {
@@ -369,9 +380,9 @@ export const payrollReportingService = {
         }
         return {
           employeeId: String(c.employee_id),
-          employeeName: `${c.employees.first_name} ${c.employees.last_name}`,
-          superMemberNumber: String(c.super_member_number || ''),
-          fundName: String(c.super_funds.name || ''),
+          employeeName: `${c.employees?.first_name || 'Unknown'} ${c.employees?.last_name || ''}`,
+          superMemberNumber: String(c.employees?.super_member_number || c.super_member_number || ''),
+          fundName: String(c.super_funds?.name || ''),
           contributions: Number(c.amount || 0),
           paymentStatus: status
         };
@@ -395,13 +406,13 @@ export const payrollReportingService = {
           start: filters.startDate || contributions[0].period_start,
           end: filters.endDate || contributions[contributions.length - 1].period_end
         },
-        totalContributions: contributions.reduce((sum, c) => sum + c.amount, 0),
+        totalContributions: contributions.reduce((sum, c) => sum + (Number(c.amount) || 0), 0),
         contributionsByFund,
         employeeContributions,
         complianceStatus
       };
-    } catch (error) {
-      console.error('Error generating superannuation report:', error);
+    } catch (error: any) {
+      console.error('Error generating superannuation report:', JSON.stringify(error, null, 2) || error.message || error);
       throw error;
     }
   },
@@ -436,7 +447,7 @@ export const payrollReportingService = {
       ]);
 
       // Generate recommendations
-      const recommendations = this.generateComplianceRecommendations({
+      const recommendations = await this.generateComplianceRecommendations({
         minimumWageCompliance,
         awardCompliance,
         taxCompliance,
@@ -455,8 +466,8 @@ export const payrollReportingService = {
 
       return {
         period: {
-          start: filters.startDate || payslips[0].period_start,
-          end: filters.endDate || payslips[payslips.length - 1].period_end
+          start: filters.startDate || payslips[0].pay_period_start || payslips[0].period_start,
+          end: filters.endDate || payslips[payslips.length - 1].pay_period_end || payslips[payslips.length - 1].period_end
         },
         minimumWageCompliance,
         awardCompliance,
@@ -465,8 +476,8 @@ export const payrollReportingService = {
         overallComplianceRate,
         recommendations
       };
-    } catch (error) {
-      console.error('Error generating compliance report:', error);
+    } catch (error: any) {
+      console.error('Error generating compliance report:', JSON.stringify(error, null, 2) || error.message || error);
       throw error;
     }
   },
@@ -480,32 +491,34 @@ export const payrollReportingService = {
         employees:employee_id (
           first_name,
           last_name,
+          employee_code,
           department_id,
-          position_id
+          position_id,
+          remark
         ),
         pay_components(*),
         payroll_runs:payroll_run_id (
           pay_period_start,
           pay_period_end,
-          pay_frequency,
           status
         )
       `);
 
+    // Using definitive column names from latest migration (pay_period_start/end)
     if (filters.startDate) {
-      query = query.gte('period_start', filters.startDate);
+      query = query.gte('pay_period_start', filters.startDate);
     }
     if (filters.endDate) {
-      query = query.lte('period_end', filters.endDate);
+      query = query.lte('pay_period_end', filters.endDate);
     }
     if (filters.employeeIds && filters.employeeIds.length > 0) {
       query = query.in('employee_id', filters.employeeIds);
     }
-    if (filters.payFrequency) {
-      query = query.eq('pay_frequency', filters.payFrequency);
-    }
     if (filters.status) {
-      query = query.eq('status', filters.status);
+      // status in payroll_runs is 'draft', 'processed', 'finalized', 'paid' (lowercase)
+      // but filters might pass TitleCase from UI.
+      const status = filters.status.toLowerCase();
+      query = query.eq('status', status);
     }
 
     return await query;
@@ -521,15 +534,33 @@ export const payrollReportingService = {
     deductions: number;
   } {
     return payslips.reduce(
-      (acc, p) => ({
-        grossPay: acc.grossPay + (p.gross_pay || 0),
-        tax: acc.tax + (p.tax_withheld || 0),
-        netPay: acc.netPay + (p.net_pay || 0),
-        superannuation: acc.superannuation + (p.superannuation || 0),
-        allowances: acc.allowances + (p.allowances || 0),
-        overtime: acc.overtime + (p.overtime || 0),
-        deductions: acc.deductions + (p.deductions || 0)
-      }),
+      (acc, p) => {
+        // Calculate allowances and overtime from components if available
+        const allowances = p.pay_components 
+          ? p.pay_components.filter((c: any) => c.component_type === 'Allowance').reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0)
+          : (Number(p.allowances) || 0);
+        
+        const overtime = p.pay_components
+          ? p.pay_components.filter((c: any) => c.component_type === 'Overtime').reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0)
+          : (Number(p.overtime_amount || p.overtime) || 0);
+
+        // Map column names based on available data
+        const grossEarnings = Number(p.gross_earnings || p.gross_pay || 0);
+        const incomeTax = Number(p.income_tax || p.tax_withheld || 0);
+        const superannuation = Number(p.superannuation || p.pf_deduction || 0);
+        const totalDeductions = Number(p.total_deductions || p.deductions || 0);
+        const netPay = Number(p.net_pay || 0);
+
+        return {
+          grossPay: acc.grossPay + grossEarnings,
+          tax: acc.tax + incomeTax,
+          netPay: acc.netPay + netPay,
+          superannuation: acc.superannuation + superannuation,
+          allowances: acc.allowances + allowances,
+          overtime: acc.overtime + overtime,
+          deductions: acc.deductions + totalDeductions
+        };
+      },
       { grossPay: 0, tax: 0, netPay: 0, superannuation: 0, allowances: 0, overtime: 0, deductions: 0 }
     );
   },
@@ -573,10 +604,17 @@ export const payrollReportingService = {
     
     for (const payslip of payslips) {
       const employee = payslip.employees;
+      
+      // Attempt to get TFN from remark or metadata if not directly available
+      let tfn = '*** *** ***';
+      if (employee.remark && employee.remark.includes('TFN:')) {
+         // This is a simplified extraction
+      }
+
       breakdown.push({
         employeeId: payslip.employee_id,
         employeeName: `${employee.first_name} ${employee.last_name}`,
-        taxFileNumber: '*** *** ***', // Masked for privacy
+        taxFileNumber: tfn,
         grossPay: payslip.gross_pay,
         taxWithheld: payslip.tax_withheld,
         superannuation: payslip.superannuation
@@ -592,22 +630,28 @@ export const payrollReportingService = {
     netPay: number;
     superannuation: number;
   }> {
-    // Simplified YTD calculation - would need proper financial year logic
+    // Determine financial year based on end date
+    const date = filters.endDate ? new Date(filters.endDate) : new Date();
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const fyStart = month >= 6 ? `${year}-07-01` : `${year-1}-07-01`;
+
     const { data: ytdPayslips } = await supabase
       .from('payslips')
-      .select('gross_pay, tax_withheld, net_pay, superannuation')
+      .select('gross_earnings, gross_pay, income_tax, tax_withheld, net_pay, superannuation, pf_deduction')
       .eq('employee_id', employeeId)
-      .gte('period_start', '2024-07-01'); // Start of financial year
+      .or(`pay_period_start.gte.${fyStart},period_start.gte.${fyStart}`)
+      .or(`pay_period_end.lte.${filters.endDate || new Date().toISOString()},period_end.lte.${filters.endDate || new Date().toISOString()}`);
 
     if (!ytdPayslips || ytdPayslips.length === 0) {
       return { grossPay: 0, tax: 0, netPay: 0, superannuation: 0 };
     }
 
     return {
-      grossPay: ytdPayslips.reduce((sum, p) => sum + (p.gross_pay || 0), 0),
-      tax: ytdPayslips.reduce((sum, p) => sum + (p.tax_withheld || 0), 0),
-      netPay: ytdPayslips.reduce((sum, p) => sum + (p.net_pay || 0), 0),
-      superannuation: ytdPayslips.reduce((sum, p) => sum + (p.superannuation || 0), 0)
+      grossPay: ytdPayslips.reduce((sum, p) => sum + (Number(p.gross_earnings || p.gross_pay) || 0), 0),
+      tax: ytdPayslips.reduce((sum, p) => sum + (Number(p.income_tax || p.tax_withheld) || 0), 0),
+      netPay: ytdPayslips.reduce((sum, p) => sum + (Number(p.net_pay) || 0), 0),
+      superannuation: ytdPayslips.reduce((sum, p) => sum + (Number(p.superannuation || p.pf_deduction) || 0), 0)
     };
   },
 
@@ -615,12 +659,16 @@ export const payrollReportingService = {
     const fundMap = new Map();
     
     for (const contribution of contributions) {
-      const fundId = contribution.fund_id;
+      const fundId = contribution.fund_id || 'DEFAULT';
+      const fundName = contribution.super_funds?.name || 'Default Fund';
+      const fundABN = contribution.super_funds?.abn || '';
+      const amount = Number(contribution.amount) || 0;
+
       if (!fundMap.has(fundId)) {
         fundMap.set(fundId, {
           fundId,
-          fundName: contribution.super_funds.name,
-          abn: contribution.super_funds.abn,
+          fundName: fundName,
+          abn: fundABN,
           totalContributions: 0,
           employeeCount: new Set(),
           unpaidContributions: 0
@@ -628,10 +676,10 @@ export const payrollReportingService = {
       }
       
       const fundData = fundMap.get(fundId);
-      fundData.totalContributions += contribution.amount;
+      fundData.totalContributions += amount;
       fundData.employeeCount.add(contribution.employee_id);
       if (!contribution.is_paid) {
-        fundData.unpaidContributions += contribution.amount;
+        fundData.unpaidContributions += amount;
       }
     }
 
@@ -648,16 +696,16 @@ export const payrollReportingService = {
     complianceRate: number;
     issues: string[];
   } {
-    const totalDue = contributions.reduce((sum, c) => sum + c.amount, 0);
-    const totalPaid = contributions.filter(c => c.is_paid).reduce((sum, c) => sum + c.amount, 0);
-    const overdueAmount = contributions.filter(c => !c.is_paid && c.payment_date < new Date().toISOString())
-      .reduce((sum, c) => sum + c.amount, 0);
+    const totalDue = contributions.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    const totalPaid = contributions.filter(c => c.is_paid).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    const overdueAmount = contributions.filter(c => !c.is_paid && c.payment_date && c.payment_date < new Date().toISOString())
+      .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
     
     const complianceRate = totalDue > 0 ? (totalPaid / totalDue) * 100 : 100;
     
     const issues: string[] = [];
     if (overdueAmount > 0) {
-      issues.push(`${overdueAmount.toFixed(2)} in overdue superannuation contributions`);
+      issues.push(`$${overdueAmount.toFixed(2)} in overdue superannuation contributions`);
     }
     if (complianceRate < 95) {
       issues.push(`Superannuation compliance rate is ${complianceRate.toFixed(1)}%`);
@@ -678,7 +726,6 @@ export const payrollReportingService = {
     totalUnderpayment: number;
     issues: string[];
   }> {
-    // Simplified minimum wage check - would need proper calculation
     const minimumWagePerHour = 23.23; // Current Australian minimum wage
     let compliantEmployees = 0;
     let nonCompliantEmployees = 0;
@@ -686,16 +733,20 @@ export const payrollReportingService = {
     const issues: string[] = [];
 
     for (const payslip of payslips) {
-      // This is a simplified check - real implementation would calculate based on hours worked
-      const isCompliant = payslip.net_pay >= minimumWagePerHour * 38; // Assume 38-hour week
+      // Calculate hourly rate if hours logged is available
+      const hoursLogged = Number(payslip.hours_logged) || 38; // Default to 38 if not available
+      const grossPay = Number(payslip.gross_pay) || 0;
+      const hourlyRate = grossPay / hoursLogged;
+      
+      const isCompliant = hourlyRate >= minimumWagePerHour;
       
       if (isCompliant) {
         compliantEmployees++;
       } else {
         nonCompliantEmployees++;
-        const underpayment = (minimumWagePerHour * 38) - payslip.net_pay;
+        const underpayment = (minimumWagePerHour - hourlyRate) * hoursLogged;
         totalUnderpayment += underpayment;
-        issues.push(`Employee ${payslip.employee_id} may be underpaid by $${underpayment.toFixed(2)}`);
+        issues.push(`Employee ${payslip.employees?.first_name} ${payslip.employees?.last_name} (${payslip.employee_id}) may be underpaid by $${underpayment.toFixed(2)}`);
       }
     }
 
@@ -714,10 +765,11 @@ export const payrollReportingService = {
     allowanceIssues: string[];
   }> {
     // Simplified award compliance check
+    const nonCompliant = payslips.filter(p => !p.pay_components || p.pay_components.length === 0).length;
     return {
-      compliantEmployees: payslips.length,
-      nonCompliantEmployees: 0,
-      penaltyRateIssues: [],
+      compliantEmployees: payslips.length - nonCompliant,
+      nonCompliantEmployees: nonCompliant,
+      penaltyRateIssues: nonCompliant > 0 ? [`${nonCompliant} employees missing pay components`] : [],
       allowanceIssues: []
     };
   },
@@ -727,9 +779,24 @@ export const payrollReportingService = {
     issues: string[];
   }> {
     // Simplified tax compliance check
+    const issues: string[] = [];
+    let compliant = 0;
+
+    for (const payslip of payslips) {
+      const taxWithheld = Number(payslip.tax_withheld) || 0;
+      const grossPay = Number(payslip.gross_pay) || 0;
+      
+      // Very basic check: tax should usually be between 0% and 45%
+      if (grossPay > 0 && (taxWithheld <= 0 || taxWithheld > grossPay * 0.47)) {
+        issues.push(`Tax withheld ($${taxWithheld}) for ${payslip.employees?.first_name} seems incorrect for gross pay $${grossPay}`);
+      } else {
+        compliant++;
+      }
+    }
+
     return {
-      compliantEmployees: payslips.length,
-      issues: []
+      compliantEmployees: compliant,
+      issues
     };
   },
 
@@ -746,32 +813,50 @@ export const payrollReportingService = {
       .select('*')
       .in('payslip_id', payslipIds);
 
-    const unpaidContributions = (contributions || []).filter(c => !c.is_paid).reduce((sum, c) => sum + c.amount, 0);
-    const overdueContributions = (contributions || []).filter(c => !c.is_paid && c.payment_date < new Date().toISOString())
-      .reduce((sum, c) => sum + c.amount, 0);
+    const unpaidContributions = (contributions || []).filter(c => !c.is_paid).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    const overdueContributions = (contributions || []).filter(c => !c.is_paid && c.payment_date && c.payment_date < new Date().toISOString())
+      .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+
+    const nonCompliant = (contributions || []).filter(c => !c.is_paid && c.payment_date && c.payment_date < new Date().toISOString()).length;
 
     return {
-      compliantEmployees: payslips.length,
+      compliantEmployees: payslips.length - nonCompliant,
       unpaidContributions,
       overdueContributions,
-      issues: overdueContributions > 0 ? [`${overdueContributions.toFixed(2)} in overdue super contributions`] : []
+      issues: overdueContributions > 0 ? [`$${overdueContributions.toFixed(2)} in overdue super contributions across ${nonCompliant} records`] : []
     };
   },
 
   calculateOverallComplianceRate(compliances: any[]): number {
-    // Simplified calculation
-    return 95; // Placeholder
+    if (!compliances || compliances.length === 0) return 0;
+    
+    const totalRates = compliances.map(c => {
+      if (c.compliantEmployees !== undefined && (c.compliantEmployees + (c.nonCompliantEmployees || 0)) > 0) {
+        return (c.compliantEmployees / (c.compliantEmployees + (c.nonCompliantEmployees || 0))) * 100;
+      }
+      return 100; // Assume compliant if no data
+    });
+
+    return totalRates.reduce((sum, r) => sum + r, 0) / totalRates.length;
   },
 
-  generateComplianceRecommendations(compliances: any): string[] {
+  async generateComplianceRecommendations(compliances: any): Promise<string[]> {
     const recommendations: string[] = [];
     
-    if (compliances.minimumWageCompliance.totalUnderpayment > 0) {
-      recommendations.push('Review and adjust employee wages to meet minimum wage requirements');
+    if (compliances.minimumWageCompliance.nonCompliantEmployees > 0) {
+      recommendations.push(`Review and adjust wages for ${compliances.minimumWageCompliance.nonCompliantEmployees} employees to meet minimum wage requirements ($${compliances.minimumWageCompliance.totalUnderpayment.toFixed(2)} total underpayment detected).`);
     }
     
     if (compliances.superannuationCompliance.overdueContributions > 0) {
-      recommendations.push('Process overdue superannuation contributions immediately');
+      recommendations.push(`Process $${compliances.superannuationCompliance.overdueContributions.toFixed(2)} in overdue superannuation contributions immediately to avoid penalties.`);
+    }
+
+    if (compliances.taxCompliance.issues.length > 0) {
+      recommendations.push(`Review tax withholding settings for ${compliances.taxCompliance.issues.length} employees with potentially incorrect withholding.`);
+    }
+
+    if (compliances.awardCompliance.nonCompliantEmployees > 0) {
+      recommendations.push(`Assign pay components to ${compliances.awardCompliance.nonCompliantEmployees} employees to ensure award compliance.`);
     }
 
     return recommendations;

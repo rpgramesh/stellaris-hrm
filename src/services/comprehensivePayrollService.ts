@@ -343,25 +343,47 @@ export const comprehensivePayrollService = {
       const employeeName = employee.firstName && employee.lastName 
         ? `${employee.firstName} ${employee.lastName}`
         : employee.employeeId;
-      
-      // 1. Existing manual validations
-      // Check for required timesheets (for ALL employees as per user request)
-      const timesheets = await this.getEmployeeTimesheetsForPeriod(
-        employee.employeeId,
-        payrollRun.payPeriodStart,
-        payrollRun.payPeriodEnd
-      );
-
-      if (timesheets.length === 0) {
-        missingTimesheets.push(employee.employeeId);
-        errors.push(`Employee ${employeeName} has no timesheets for the pay period`);
-      } else {
-        // Check for approved timesheets
-        const unapproved = timesheets.filter(t => t.status !== 'Approved');
-        if (unapproved.length > 0) {
-          unapprovedTimesheets.push(employee.employeeId);
-          errors.push(`Employee ${employeeName} has unapproved timesheets`);
+      // Check timesheet exemption marker on employee record
+      let isTimesheetExempt = false;
+      let exemptionReason: string | null = null;
+      try {
+        const { data: empMeta } = await supabase
+          .from('employees')
+          .select('remark')
+          .eq('id', employee.employeeId)
+          .maybeSingle();
+        const remark: string | undefined = empMeta?.remark;
+        if (remark && remark.includes('NO_TIMESHEET:')) {
+          isTimesheetExempt = true;
+          const idx = remark.indexOf('NO_TIMESHEET:');
+          exemptionReason = remark.slice(idx + 'NO_TIMESHEET:'.length).trim();
         }
+      } catch {
+        // Ignore metadata fetch errors for exemption check
+      }
+
+      // 1. Existing manual validations
+      // Check for required timesheets unless exempt
+      if (!isTimesheetExempt) {
+        const timesheets = await this.getEmployeeTimesheetsForPeriod(
+          employee.employeeId,
+          payrollRun.payPeriodStart,
+          payrollRun.payPeriodEnd
+        );
+
+        if (timesheets.length === 0) {
+          missingTimesheets.push(employee.employeeId);
+          errors.push(`Employee ${employeeName} has no timesheets for the pay period`);
+        } else {
+          // Check for approved timesheets
+          const unapproved = timesheets.filter(t => t.status !== 'Approved');
+          if (unapproved.length > 0) {
+            unapprovedTimesheets.push(employee.employeeId);
+            errors.push(`Employee ${employeeName} has unapproved timesheets`);
+          }
+        }
+      } else {
+        warnings.push(`${employeeName}: Timesheet exemption applied${exemptionReason ? ` (${exemptionReason})` : ''}`);
       }
 
       // 2. Rule-based validations from database

@@ -146,6 +146,13 @@ export interface Department {
   branchName?: string;
 }
 
+export interface Designation {
+  id: string;
+  name: string;
+  description?: string;
+  level?: string;
+}
+
 export interface JobPosition {
   id: string;
   title: string;
@@ -963,6 +970,9 @@ export interface CompanyInformation {
 
 export interface SystemSettings {
   id: string;
+  companyName?: string;
+  taxId?: string;
+  companyAddress?: string;
   dateFormat: string;
   timeZone: string;
   currency: string;

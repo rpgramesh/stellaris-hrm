@@ -9,14 +9,6 @@ import { CourseEnrollment } from '@/types';
 import { Loader2, ArrowLeft, CheckCircle, PlayCircle, FileText, Video } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-// Mock content for the course player since we don't have a modules table yet
-const MOCK_MODULES = [
-  { id: 'm1', title: 'Introduction', type: 'video', duration: '5 min', completed: true },
-  { id: 'm2', title: 'Core Concepts', type: 'video', duration: '15 min', completed: false },
-  { id: 'm3', title: 'Practical Application', type: 'reading', duration: '10 min', completed: false },
-  { id: 'm4', title: 'Assessment', type: 'quiz', duration: '20 min', completed: false },
-];
-
 export default function CoursePlayerPage() {
   const params = useParams();
   const router = useRouter();
@@ -24,7 +16,8 @@ export default function CoursePlayerPage() {
   
   const [enrollment, setEnrollment] = useState<CourseEnrollment | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeModule, setActiveModule] = useState(MOCK_MODULES[0]);
+  const [modules, setModules] = useState<any[]>([]);
+  const [activeModule, setActiveModule] = useState<any | null>(null);
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -41,6 +34,20 @@ export default function CoursePlayerPage() {
         setProgress(data.progress);
         // If completed, maybe show all as completed?
       }
+      // Attempt to load modules if a modules table exists; otherwise leave empty
+      try {
+        const { data: mods } = await supabase.from('course_modules').select('*').eq('course_id', data?.courseId || id).order('order');
+        if (mods && mods.length > 0) {
+          setModules(mods);
+          setActiveModule(mods[0]);
+        } else {
+          setModules([]);
+          setActiveModule(null);
+        }
+      } catch {
+        setModules([]);
+        setActiveModule(null);
+      }
     } catch (error) {
       console.error('Error loading course:', error);
     } finally {
@@ -55,12 +62,12 @@ export default function CoursePlayerPage() {
   const handleMarkModuleComplete = async () => {
     if (!enrollment) return;
 
-    const currentIndex = MOCK_MODULES.findIndex(m => m.id === activeModule.id);
+    const currentIndex = modules.findIndex(m => m.id === activeModule?.id);
     if (currentIndex === -1) return;
 
     // Calculate progress based on this module being completed
     // (currentIndex + 1) because index is 0-based. 1 module done = 1/4 = 25%
-    const progressPerModule = 100 / MOCK_MODULES.length;
+    const progressPerModule = modules.length ? 100 / modules.length : 100;
     // We only want to increase progress, never decrease it via this button
     // And we assume completion of current module means all previous are done in this linear model
     const newProgress = Math.max(progress, Math.round((currentIndex + 1) * progressPerModule));
@@ -106,25 +113,25 @@ export default function CoursePlayerPage() {
     }
 
     // Move to next module if available
-    if (currentIndex < MOCK_MODULES.length - 1) {
-        setActiveModule(MOCK_MODULES[currentIndex + 1]);
+    if (modules.length > 0 && currentIndex < modules.length - 1) {
+        setActiveModule(modules[currentIndex + 1]);
         // Scroll to top of content
         const mainContent = document.querySelector('main');
         if (mainContent) mainContent.scrollTop = 0;
     }
   };
 
-  const getCurrentModuleIndex = () => MOCK_MODULES.findIndex(m => m.id === activeModule.id);
+  const getCurrentModuleIndex = () => modules.findIndex(m => m.id === activeModule?.id);
   
   const isCurrentModuleCompleted = () => {
       const index = getCurrentModuleIndex();
-      const progressPerModule = 100 / MOCK_MODULES.length;
+      const progressPerModule = modules.length ? 100 / modules.length : 100;
       return progress >= (index + 1) * progressPerModule;
   };
 
   const getButtonText = () => {
       const index = getCurrentModuleIndex();
-      const isLastModule = index === MOCK_MODULES.length - 1;
+      const isLastModule = modules.length ? index === modules.length - 1 : true;
       const isCompleted = isCurrentModuleCompleted();
 
       if (isLastModule) {
@@ -188,25 +195,28 @@ export default function CoursePlayerPage() {
             <div className="p-4">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Course Content</h2>
                 <div className="space-y-2">
-                    {MOCK_MODULES.map((module, index) => (
+                    {modules.length === 0 && (
+                      <div className="text-sm text-gray-500">No modules available</div>
+                    )}
+                    {modules.map((module, index) => (
                         <button
                             key={module.id}
                             onClick={() => handleModuleClick(module)}
                             className={`w-full flex items-start gap-3 p-3 rounded-lg text-left transition-colors ${
-                                activeModule.id === module.id 
+                                activeModule?.id === module.id 
                                     ? 'bg-blue-50 border border-blue-100' 
                                     : 'hover:bg-gray-50 border border-transparent'
                             }`}
                         >
                             <div className="mt-1">
-                                {progress >= (index + 1) * 25 ? (
+                                {progress >= (index + 1) * (modules.length ? (100 / modules.length) : 100) ? (
                                     <CheckCircle size={16} className="text-green-500" />
                                 ) : (
                                     module.type === 'video' ? <PlayCircle size={16} className="text-gray-400" /> : <FileText size={16} className="text-gray-400" />
                                 )}
                             </div>
                             <div>
-                                <p className={`text-sm font-medium ${activeModule.id === module.id ? 'text-blue-700' : 'text-gray-700'}`}>
+                                <p className={`text-sm font-medium ${activeModule?.id === module.id ? 'text-blue-700' : 'text-gray-700'}`}>
                                     {module.title}
                                 </p>
                                 <p className="text-xs text-gray-500">{module.duration}</p>
@@ -225,13 +235,13 @@ export default function CoursePlayerPage() {
                     <div className="bg-gray-900 aspect-video flex items-center justify-center text-white">
                         <div className="text-center">
                             <Video size={48} className="mx-auto mb-4 opacity-50" />
-                            <h2 className="text-2xl font-bold mb-2">{activeModule.title}</h2>
+                            <h2 className="text-2xl font-bold mb-2">{activeModule?.title || 'Module'}</h2>
                             <p className="text-gray-400">Video Content Placeholder</p>
                         </div>
                     </div>
 
                     <div className="p-8 flex-1">
-                        <h2 className="text-2xl font-bold text-gray-900 mb-4">{activeModule.title}</h2>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-4">{activeModule?.title || 'Module'}</h2>
                         <p className="text-gray-600 leading-relaxed mb-8">
                             This is a placeholder for the actual course content. In a real application, 
                             this would contain the video player, article text, or interactive quiz for 
@@ -241,7 +251,7 @@ export default function CoursePlayerPage() {
                         <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-8">
                             <h3 className="text-sm font-semibold text-blue-900 mb-2">Learning Objectives</h3>
                             <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
-                                <li>Understand the key concepts of {activeModule.title}</li>
+                                <li>Understand the key concepts of {activeModule?.title || 'this module'}</li>
                                 <li>Apply knowledge in practical scenarios</li>
                                 <li>Review best practices and common pitfalls</li>
                             </ul>
@@ -252,9 +262,9 @@ export default function CoursePlayerPage() {
                     <div className="bg-gray-50 border-t border-gray-100 p-6 flex justify-end">
                         <button
                             onClick={handleMarkModuleComplete}
-                            disabled={progress === 100 && getCurrentModuleIndex() === MOCK_MODULES.length - 1}
+                            disabled={modules.length > 0 ? (progress === 100 && getCurrentModuleIndex() === modules.length - 1) : true}
                             className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                                (progress === 100 && getCurrentModuleIndex() === MOCK_MODULES.length - 1)
+                                (modules.length > 0 && (progress === 100 && getCurrentModuleIndex() === modules.length - 1))
                                     ? 'bg-green-100 text-green-700 cursor-default'
                                     : 'bg-blue-600 text-white hover:bg-blue-700'
                             }`}

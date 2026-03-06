@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { 
   Users, 
   Search, 
@@ -133,6 +134,12 @@ export default function PayrollEmployeesPage() {
             className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
           />
         </div>
+        <Link
+          href="/payroll/employees/compliance"
+          className="inline-flex items-center text-sm px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+        >
+          Configure Tax &amp; Super
+        </Link>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border overflow-hidden">

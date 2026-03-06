@@ -147,14 +147,26 @@ export default function TimesheetPage() {
       if (!finalTimesheet) {
         // Create draft if not exists (ONLY if viewing own timesheet)
         if (currentUser?.id === employeeId) {
-          finalTimesheet = await timesheetService.create(employeeId, dateStr);
+          try {
+            finalTimesheet = await timesheetService.create(employeeId, dateStr);
+          } catch (createError: any) {
+            // Handle race condition: if another process created it simultaneously
+            if (createError.code === '23505') {
+              finalTimesheet = await timesheetService.getByWeek(employeeId, dateStr);
+            } else {
+              throw createError;
+            }
+          }
         }
       }
       setTimesheet(finalTimesheet);
       setLeaves(leavesData);
       setHolidays(holidaysData);
 
-    } catch (error) {
+    } catch (error: any) {
+      // Don't log expected PGRST116 errors or duplicate key errors we handle
+      if (error?.code === '23505') return; 
+
       console.error("Error fetching data:", error);
       if (typeof error === 'object' && error !== null) {
         console.error("Error details:", JSON.stringify(error, null, 2));
@@ -514,7 +526,13 @@ export default function TimesheetPage() {
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               <Users className="w-4 h-4" />
-              Teammates
+              {currentEmployee ? (
+                <span>
+                  {currentEmployee.firstName} {currentEmployee.lastName} {currentEmployee.id === currentUser?.id ? '(You)' : ''}
+                </span>
+              ) : (
+                'Teammates'
+              )}
             </button>
             {isTeammatesDropdownOpen && (
               <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50">

@@ -8,12 +8,14 @@ import { salaryAdjustmentService } from '@/services/salaryAdjustmentService';
 import { employeeService } from '@/services/employeeService';
 import { Employee } from '@/types';
 import { SalaryAdjustment } from '@/types/payroll';
+import { supabase } from '@/lib/supabase';
 
 export default function NewAdjustmentPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
     employeeId: '',
@@ -23,11 +25,21 @@ export default function NewAdjustmentPage() {
     effectiveDate: new Date().toISOString().split('T')[0],
     endDate: '',
     isPermanent: true,
-    requestedBy: 'current_user' // Ideally this should come from auth context
+    requestedBy: '' // Populated from auth
   });
 
   useEffect(() => {
     fetchEmployees();
+    const fetchUser = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const uid = data.user?.id || null;
+        setCurrentUserId(uid);
+      } catch {
+        setCurrentUserId(null);
+      }
+    };
+    fetchUser();
   }, []);
 
   const fetchEmployees = async () => {
@@ -60,6 +72,7 @@ export default function NewAdjustmentPage() {
       if (!formData.employeeId) throw new Error('Please select an employee');
       if (!formData.amount || Number(formData.amount) <= 0) throw new Error('Please enter a valid amount');
       if (!formData.effectiveDate) throw new Error('Please select an effective date');
+      if (!currentUserId) throw new Error('Unable to identify current user. Please sign in and try again.');
 
       await salaryAdjustmentService.createAdjustment({
         employeeId: formData.employeeId,
@@ -69,7 +82,7 @@ export default function NewAdjustmentPage() {
         effectiveDate: formData.effectiveDate,
         endDate: formData.isPermanent ? undefined : formData.endDate,
         isPermanent: formData.isPermanent,
-        requestedBy: 'System Admin', // Replace with actual user ID when auth is available
+        requestedBy: currentUserId,
         isProcessed: false
       });
 

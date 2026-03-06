@@ -2,27 +2,6 @@
 import { supabase } from '@/lib/supabase';
 import { ExpenseCategory, ExpenseType, ExpenseWorkflow } from '@/types';
 
-// Fallback data since tables cannot be created in read-only mode
-const DEFAULT_CATEGORIES: ExpenseCategory[] = [
-  { id: 'cat-travel', name: 'Travel', description: 'Business travel expenses', limit: 5000 },
-  { id: 'cat-office', name: 'Office Supplies', description: 'Stationery and equipment', limit: 1000 },
-  { id: 'cat-meals', name: 'Meals & Entertainment', description: 'Client meetings', limit: 500 },
-  { id: 'cat-training', name: 'Training', description: 'Courses and certifications', limit: 2000 }
-];
-
-const DEFAULT_TYPES: ExpenseType[] = [
-  { id: 'type-receipt', name: 'Receipt', description: 'Standard receipt' },
-  { id: 'type-invoice', name: 'Invoice', description: 'Tax invoice' },
-  { id: 'type-perdiem', name: 'Per Diem', description: 'Daily allowance' },
-  { id: 'type-mileage', name: 'Mileage', description: 'Vehicle mileage' }
-];
-
-const DEFAULT_WORKFLOWS: ExpenseWorkflow[] = [
-  { id: 'wf-standard', name: 'Standard Approval', steps: ['Manager', 'Finance'] },
-  { id: 'wf-executive', name: 'Executive Approval', steps: ['Director', 'CFO'] },
-  { id: 'wf-auto', name: 'Auto Approval', steps: [] }
-];
-
 export const expenseSettingsService = {
   // Categories
   async getCategories(): Promise<ExpenseCategory[]> {
@@ -32,8 +11,8 @@ export const expenseSettingsService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.warn('Error fetching expense categories (using fallback):', error.message);
-      return DEFAULT_CATEGORIES;
+      console.warn('Error fetching expense categories:', error.message);
+      return [];
     }
 
     return data.map(mapCategoryFromDb);
@@ -67,8 +46,8 @@ export const expenseSettingsService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.warn('Error fetching expense types (using fallback):', error.message);
-      return DEFAULT_TYPES;
+      console.warn('Error fetching expense types:', error.message);
+      return [];
     }
 
     return data.map(mapTypeFromDb);
@@ -102,8 +81,8 @@ export const expenseSettingsService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.warn('Error fetching expense workflows (using fallback):', error.message);
-      return DEFAULT_WORKFLOWS;
+      console.warn('Error fetching expense workflows:', error.message);
+      return [];
     }
 
     return data.map(mapWorkflowFromDb);

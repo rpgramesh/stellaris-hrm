@@ -1,13 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { WebAccount } from '@/types';
 
-// Fallback data
-const DEFAULT_WEB_ACCOUNTS: WebAccount[] = [
-  { id: '1', employeeId: '1', platform: 'GitHub', username: 'johndoe', status: 'Active', lastLogin: '2024-01-01 10:00:00' },
-  { id: '2', employeeId: '1', platform: 'Slack', username: 'john.doe', status: 'Active', lastLogin: '2024-01-02 09:00:00' },
-  { id: '3', employeeId: '2', platform: 'Jira', username: 'janedoe', status: 'Active', lastLogin: '2024-01-03 11:00:00' }
-];
-
 const mapWebAccountFromDb = (dbRecord: any): WebAccount => {
   return {
     id: dbRecord.id,
@@ -28,8 +21,8 @@ export const webAccountService = {
       .select('*');
 
     if (error) {
-      console.warn('Error fetching web accounts (using fallback):', error.message);
-      return DEFAULT_WEB_ACCOUNTS;
+      console.warn('Error fetching web accounts:', error.message);
+      return [];
     }
     return data ? data.map(mapWebAccountFromDb) : [];
   },
@@ -41,8 +34,8 @@ export const webAccountService = {
       .eq('employee_id', employeeId);
 
     if (error) {
-      console.warn(`Error fetching web accounts for ${employeeId} (using fallback):`, error.message);
-      return DEFAULT_WEB_ACCOUNTS.filter(acc => acc.employeeId === employeeId);
+      console.warn(`Error fetching web accounts for ${employeeId}:`, error.message);
+      return [];
     }
     return data ? data.map(mapWebAccountFromDb) : [];
   },

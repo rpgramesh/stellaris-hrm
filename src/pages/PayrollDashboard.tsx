@@ -16,6 +16,7 @@ import {
   PiggyBank
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { getNamesByIds } from '../services/employeeResolver';
 
 interface PayrollStats {
   totalEmployees: number;
@@ -61,23 +62,8 @@ export default function PayrollDashboard() {
 
   const fetchEmployeeNames = async (employeeIds: string[]) => {
     if (employeeIds.length === 0) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('id, first_name, last_name')
-        .in('id', employeeIds);
-
-      if (error) throw error;
-
-      const names: Record<string, string> = {};
-      data?.forEach(emp => {
-        names[emp.id] = `${emp.first_name} ${emp.last_name}`;
-      });
-      setEmployeeNames(names);
-    } catch (error) {
-      console.error('Error loading employee names:', error);
-    }
+    const names = await getNamesByIds(employeeIds);
+    setEmployeeNames(names);
   };
 
   const loadDashboardData = async () => {
@@ -135,21 +121,23 @@ export default function PayrollDashboard() {
         .order('created_at', { ascending: false })
         .limit(10);
 
-      // Transform recent activity data
-      const transformedActivity: RecentActivity[] = recentData?.map(item => ({
+      // Fetch employee names for recent activity first, then transform
+      let names: Record<string, string> = {};
+      if (recentData && recentData.length > 0) {
+        const employeeIds = [...new Set(recentData.map(item => item.employee_id))];
+        names = await getNamesByIds(employeeIds);
+        setEmployeeNames(names);
+      }
+
+      // Transform recent activity data with resolved names
+      const transformedActivity: RecentActivity[] = (recentData || []).map(item => ({
         id: item.id,
         type: 'adjustment' as const,
         description: `${item.adjustment_type} adjustment of $${item.amount}`,
-        employeeName: employeeNames[item.employee_id] || 'Unknown Employee',
+        employeeName: names[item.employee_id] || 'Unknown Employee',
         date: item.effective_date,
         status: item.status as any
-      })) || [];
-
-      // Fetch employee names for recent activity
-      if (recentData && recentData.length > 0) {
-        const employeeIds = [...new Set(recentData.map(item => item.employee_id))];
-        await fetchEmployeeNames(employeeIds);
-      }
+      }));
 
       setStats({
         totalEmployees: employeesCount.count || 0,

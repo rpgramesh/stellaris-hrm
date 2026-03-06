@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { Timesheet, TimesheetRow, TimesheetEntry, TimesheetTemplate, TimesheetStatus } from '@/types';
+import { employeeCache } from '../lib/cache/employeeCache';
 
 const mapEntryFromDb = (db: any): TimesheetEntry => ({
   id: db.id,
@@ -36,6 +37,133 @@ const mapTimesheetFromDb = (db: any): Timesheet => ({
 });
 
 export const timesheetService = {
+  async listSubmissions(options?: {
+    page?: number;
+    pageSize?: number;
+    status?: TimesheetStatus | 'All';
+    department?: string | 'All';
+    search?: string;
+    sortBy?: 'week_start_date' | 'status' | 'total_hours';
+    sortDir?: 'asc' | 'desc';
+  }): Promise<{ rows: Array<{ id: string; employeeId: string; employeeName: string; department: string; jobTitle?: string; email?: string; phone?: string; hireDate?: string; empStatus?: string; status: any; submittedAt?: string; payPeriod: string; hoursLogged: number }>; total: number }> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.min(100, Math.max(1, options?.pageSize || 20));
+    const allowedSorts = ['week_start_date', 'status', 'total_hours'] as const;
+    const sortCandidate = options?.sortBy;
+    const sortBy = (sortCandidate && (allowedSorts as readonly string[]).includes(sortCandidate as string))
+      ? (sortCandidate as typeof allowedSorts[number])
+      : 'week_start_date';
+    const ascending = (options?.sortDir || 'desc') === 'asc';
+
+    let employeeIds: string[] | null = null;
+    if ((options?.department && options.department !== 'All') || (options?.search && options.search.trim() !== '')) {
+      let empQuery = supabase.from('employees').select('id');
+      if (options?.department && options.department !== 'All') {
+        empQuery = empQuery.eq('department', options.department);
+      }
+      if (options?.search && options.search.trim() !== '') {
+        const s = options.search.trim();
+        empQuery = empQuery.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,id.ilike.%${s}%`);
+      }
+      const { data: emps, error: empErr } = await empQuery.limit(1000);
+      if (empErr) throw empErr;
+      employeeIds = (emps || []).map((e: any) => e.id);
+      if (employeeIds.length === 0) {
+        return { rows: [], total: 0 };
+      }
+    }
+
+    let base = supabase.from('timesheets').select('id, employee_id, week_start_date, status, total_hours', { count: 'exact' });
+    if (options?.status && options.status !== 'All') {
+      base = base.eq('status', options.status);
+    }
+    if (employeeIds) {
+      base = base.in('employee_id', employeeIds);
+    }
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, count, error } = await base.order(sortBy, { ascending }).range(from, to);
+    if (error) throw error;
+    const rows = data || [];
+    const ids = Array.from(new Set(rows.map((t: any) => t.employee_id))).filter(Boolean);
+    let employeesById: Record<string, any> = {};
+    if (ids.length > 0) {
+      const cached = employeeCache.getMany(ids);
+      employeesById = { ...cached };
+      const missing = ids.filter((id) => !employeesById[id]);
+      if (missing.length > 0) {
+        const { data: emps } = await supabase
+          .from('employees')
+          .select('id, first_name, last_name, email, phone, start_date, employment_status, department:departments(name), position:job_positions(title)')
+          .in('id', missing);
+        for (const e of emps || []) {
+          employeesById[e.id] = e;
+        }
+        employeeCache.setMany((emps || []) as any);
+      }
+    }
+    const mapped = rows.map((t: any) => {
+      const e = employeesById[t.employee_id] || {};
+      const name = [e.first_name, e.last_name].filter(Boolean).join(' ') || t.employee_id;
+      const startDate = new Date(t.week_start_date);
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 6);
+      const payPeriod = `${startDate.toISOString().slice(0, 10)} - ${endDate.toISOString().slice(0, 10)}`;
+      return {
+        id: t.id,
+        employeeId: t.employee_id,
+        employeeName: name,
+        department: e?.department?.name || 'N/A',
+        jobTitle: e?.position?.title,
+        email: e?.email,
+        phone: e?.phone,
+        hireDate: e?.start_date,
+        empStatus: e?.employment_status,
+        status: t.status,
+        submittedAt: undefined,
+        payPeriod,
+        hoursLogged: Number(t.total_hours || 0),
+      };
+    });
+    return { rows: mapped, total: count || 0 };
+  },
+
+  async getEmployeeTimesheetDetail(employeeId: string): Promise<{ employee: any; timesheets: Timesheet[] }> {
+    const { data: employee, error: empErr } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name, email, phone, start_date, employment_status, department:departments(name), position:job_positions(title)')
+      .eq('id', employeeId)
+      .single();
+    if (empErr) throw empErr;
+
+    const { data: tdata, error: tErr } = await supabase
+      .from('timesheets')
+      .select(`*, timesheet_rows (*, projects (*), timesheet_entries (*))`)
+      .eq('employee_id', employeeId)
+      .order('week_start_date', { ascending: false })
+      .limit(5);
+    if (tErr) throw tErr;
+    const ts = (tdata || []).map(mapTimesheetFromDb);
+    return { employee, timesheets: ts };
+  },
+
+  async updateSubmission(id: string, updates: Partial<{ status: TimesheetStatus; hoursLogged: number }>): Promise<void> {
+    const { data: current, error: curErr } = await supabase.from('timesheets').select('*').eq('id', id).single();
+    if (curErr) throw curErr;
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || null;
+    const { data, error } = await supabase.rpc('timesheets_update_submission', {
+      p_id: id,
+      p_status: updates.status ?? null,
+      p_hours: updates.hoursLogged ?? null,
+      p_prev_updated_at: current.updated_at,
+      p_user: userId
+    });
+    if (error) throw error;
+  },
+
   async getByWeek(employeeId: string, weekStartDate: string): Promise<Timesheet | null> {
     const { data, error } = await supabase
       .from('timesheets')

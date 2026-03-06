@@ -27,7 +27,9 @@ export const notificationService = {
     try {
       const { data, error: userError } = await supabase.auth.getUser();
       if (userError) {
-        console.error('Error getting current user for notifications:', formatError(userError));
+        if (!(userError instanceof DOMException && userError.name === 'AbortError')) {
+          console.error('Error getting current user for notifications:', formatError(userError));
+        }
         return [];
       }
 
@@ -44,7 +46,9 @@ export const notificationService = {
         .limit(50);
 
       if (error) {
-        console.error('Error fetching notifications:', formatError(error));
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Error fetching notifications:', formatError(error));
+        }
         return [];
       }
 
@@ -62,7 +66,9 @@ export const notificationService = {
         createdAt: n.created_at,
       }));
     } catch (err) {
-      console.error('Unexpected error in getMyNotifications:', formatError(err));
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        console.error('Unexpected error in getMyNotifications:', formatError(err));
+      }
       return [];
     }
   },

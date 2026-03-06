@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from 'react';
 import { 
   PieChart, 
   Pie, 
@@ -8,15 +9,18 @@ import {
   Legend, 
   ResponsiveContainer 
 } from 'recharts';
+import { analyticsService } from '@/services/analyticsService';
 
 export default function DiversityPage() {
-  const genderData = [
-    { name: 'Male', value: 75 },
-    { name: 'Female', value: 55 },
-    { name: 'Non-Binary', value: 5 },
-  ];
-
+  const [genderData, setGenderData] = useState<{name:string; value:number}[]>([]);
+  const [loading, setLoading] = useState(true);
   const COLORS = ['#3B82F6', '#EC4899', '#10B981', '#F59E0B'];
+
+  useEffect(() => {
+    analyticsService.getGenderDistribution()
+      .then(setGenderData)
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -49,22 +53,7 @@ export default function DiversityPage() {
             </PieChart>
           </ResponsiveContainer>
         </div>
-        <div className="mt-6 text-center">
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div className="p-3 bg-blue-50 rounded-lg">
-              <div className="font-semibold text-blue-700">Male</div>
-              <div className="text-2xl font-bold text-blue-900">56%</div>
-            </div>
-            <div className="p-3 bg-pink-50 rounded-lg">
-              <div className="font-semibold text-pink-700">Female</div>
-              <div className="text-2xl font-bold text-pink-900">41%</div>
-            </div>
-            <div className="p-3 bg-green-50 rounded-lg">
-              <div className="font-semibold text-green-700">Non-Binary</div>
-              <div className="text-2xl font-bold text-green-900">4%</div>
-            </div>
-          </div>
-        </div>
+        {!loading && genderData.length === 0 && <div className="mt-6 text-center text-gray-500">No data</div>}
       </div>
     </div>
   );
