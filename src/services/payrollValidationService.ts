@@ -66,9 +66,16 @@ export const payrollValidationService = {
   async executeRule(rule: ValidationRule, employee: PayrollEmployee, payrollRun: PayrollRun): Promise<{ isValid: boolean; details?: any }> {
     const { validationLogic } = rule;
 
+    const getFieldValue = (obj: any, field: string) => {
+      if (obj[field] !== undefined) return obj[field];
+      // Try camelCase conversion (e.g. tax_file_number -> taxFileNumber)
+      const camel = field.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      return obj[camel];
+    };
+
     switch (validationLogic.type) {
       case 'required_field':
-        const value = (employee as any)[validationLogic.field];
+        const value = getFieldValue(employee, validationLogic.field);
         const isRequired = !validationLogic.employment_types || validationLogic.employment_types.includes(employee.employmentType);
         if (isRequired && (!value || value === '')) {
           return { isValid: false };

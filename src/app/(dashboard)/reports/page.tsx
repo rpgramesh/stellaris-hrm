@@ -6,7 +6,7 @@ export default function ReportsPage() {
       title: 'Payroll Summary', 
       desc: 'Monthly payroll breakdown by department', 
       icon: '💰',
-      href: '/reports/payroll-analytics'
+      href: '/reports/payroll-reports'
     },
     { 
       title: 'Attendance Logs', 
@@ -36,7 +36,7 @@ export default function ReportsPage() {
       title: 'Tax Withholding', 
       desc: 'PAYG withholding summary for ATO', 
       icon: '🏛️',
-      href: '/reports/payroll-analytics'
+      href: '/reports/payroll-reports'
     },
   ];
 

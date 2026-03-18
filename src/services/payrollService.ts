@@ -38,8 +38,10 @@ export interface PayrollRun {
   totalDeductions: number;
   totalNetPay: number;
   processedBy?: string;
+  processedByName?: string;
   processedAt?: string;
   finalizedAt?: string;
+  createdAt?: string;
 }
 
 export interface Payslip {
@@ -200,17 +202,18 @@ export class PayrollService {
   private mapToPayrollRun(run: any): PayrollRun {
     return {
       id: run.id,
-      monthYear: run.month_year,
+      monthYear: run.month_year || (run.pay_period_start ? format(new Date(run.pay_period_start), 'MMMM yyyy') : ''),
       payPeriodStart: run.pay_period_start,
       payPeriodEnd: run.pay_period_end,
       status: run.status,
-      totalEmployees: run.total_employees,
+      totalEmployees: run.employee_count || 0, // Removed total_employees fallback
       totalGrossPay: run.total_gross_pay,
-      totalDeductions: run.total_deductions,
+      totalDeductions: run.total_tax || run.total_deductions || 0, // Fallback to total_tax
       totalNetPay: run.total_net_pay,
       processedBy: run.processed_by,
       processedAt: run.processed_at,
-      finalizedAt: run.finalized_at
+      finalizedAt: run.finalized_at,
+      createdAt: run.created_at
     };
   }
 
@@ -453,16 +456,36 @@ export class PayrollService {
 
   // Payroll Calculation
   async calculatePayroll(employeeId: string, monthYear: string): Promise<{
-    earnings: { [key: string]: number };
-    deductions: { [key: string]: number };
+    earnings: { [key: string]: number; basicSalary: number; daAllowance: number; hra: number; conveyance: number; medical: number; specialAllowance: number; grossSalary: number };
+    deductions: { [key: string]: number; pfDeduction: number; esiDeduction: number; professionalTax: number; incomeTax: number; totalDeductions: number };
     netPay: number;
   }> {
     // Get employee salary
     const employeeSalaries = await this.getEmployeeSalaries(employeeId);
-    const currentSalary = employeeSalaries.find(s => s.isCurrent);
+    // Find active salary (is_current = true) or fallback to the most recent one
+    const currentSalary = employeeSalaries.find(s => s.isCurrent) || employeeSalaries[0];
     
     if (!currentSalary) {
-      throw new Error('No active salary found for employee');
+      console.warn(`No active salary found for employee ${employeeId}. Returning 0 values.`);
+      return {
+        earnings: {
+          basicSalary: 0,
+          daAllowance: 0,
+          hra: 0,
+          conveyance: 0,
+          medical: 0,
+          specialAllowance: 0,
+          grossSalary: 0
+        },
+        deductions: {
+          pfDeduction: 0,
+          esiDeduction: 0,
+          professionalTax: 0,
+          incomeTax: 0,
+          totalDeductions: 0
+        },
+        netPay: 0
+      };
     }
 
     // Get salary structure
@@ -472,9 +495,14 @@ export class PayrollService {
       .eq('id', currentSalary.salaryStructureId)
       .single();
 
-    if (!salaryStructure) {
-      throw new Error('Salary structure not found');
-    }
+    // Default structure if missing (fallback for robustness)
+    const structure = salaryStructure || {
+      da_allowance: 0,
+      hra: 0,
+      conveyance: 0,
+      medical: 0,
+      special_allowance: 0
+    };
 
     // Get statutory rates
     const pfRate = await this.getCurrentPFRate();
@@ -482,11 +510,11 @@ export class PayrollService {
     
     // Calculate earnings
     const basicSalary = currentSalary.basicSalary;
-    const daAllowance = (basicSalary * salaryStructure.da_allowance) / 100;
-    const hra = (basicSalary * salaryStructure.hra) / 100;
-    const conveyance = salaryStructure.conveyance;
-    const medical = salaryStructure.medical;
-    const specialAllowance = salaryStructure.special_allowance;
+    const daAllowance = (basicSalary * structure.da_allowance) / 100;
+    const hra = (basicSalary * structure.hra) / 100;
+    const conveyance = structure.conveyance;
+    const medical = structure.medical;
+    const specialAllowance = structure.special_allowance;
     
     const grossSalary = basicSalary + daAllowance + hra + conveyance + medical + specialAllowance;
 
@@ -564,29 +592,53 @@ export class PayrollService {
   }
 
   // Payroll Run Management
-  async createPayrollRun(monthYear: string, processedBy?: string): Promise<PayrollRun> {
+  async createPayrollRun(monthYear: string, processedBy?: string, customStart?: string, customEnd?: string): Promise<PayrollRun> {
     const { data: employees } = await supabase
       .from('employees')
       .select('id')
-      .eq('status', 'Active');
+      .eq('employment_status', 'Active');
 
     if (!employees || employees.length === 0) {
       throw new Error('No active employees found');
     }
 
-    const payPeriodStart = format(new Date(monthYear + '-01'), 'yyyy-MM-dd');
-    const payPeriodEnd = format(new Date(new Date(monthYear + '-01').getFullYear(), new Date(monthYear + '-01').getMonth() + 1, 0), 'yyyy-MM-dd');
+    // Resolve processedBy (user_id) to employee_id
+    let processedByEmployeeId = processedBy;
+    if (processedBy) {
+      const { data: processor } = await supabase
+        .from('employees')
+        .select('id')
+        .eq('user_id', processedBy)
+        .single();
+      
+      if (processor) {
+        processedByEmployeeId = processor.id;
+      }
+    }
+
+    const payPeriodStart = customStart ? customStart : format(new Date(monthYear + '-01'), 'yyyy-MM-dd');
+    const payPeriodEnd = customEnd ? customEnd : format(new Date(new Date(monthYear + '-01').getFullYear(), new Date(monthYear + '-01').getMonth() + 1, 0), 'yyyy-MM-dd');
+    
+    // Validate date range on backend
+    if (new Date(payPeriodEnd) < new Date(payPeriodStart)) {
+      throw new Error('Pay period end date cannot be before start date.');
+    }
+
+    // Default payment date to 5 days after period end
+    const paymentDate = format(new Date(new Date(payPeriodEnd).getTime() + 5 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd');
 
     const payrollRun: any = {
       month_year: monthYear,
       pay_period_start: payPeriodStart,
       pay_period_end: payPeriodEnd,
+      payment_date: paymentDate, // Added required field
       status: 'draft',
-      total_employees: employees.length,
+      // total_employees: employees.length, // Removed as column doesn't exist
+      employee_count: employees.length,
       total_gross_pay: 0,
-      total_deductions: 0,
+      total_tax: 0, // Using total_tax as per schema
       total_net_pay: 0,
-      processed_by: processedBy,
+      processed_by: processedByEmployeeId, // Use resolved employee_id
       processed_at: new Date().toISOString()
     };
 
@@ -597,10 +649,10 @@ export class PayrollService {
       .single();
 
     if (error) throw error;
-    return data;
+    return this.mapToPayrollRun(data);
   }
 
-  async processPayrollRun(payrollRunId: string, processedBy?: string): Promise<void> {
+  async processPayrollRun(payrollRunId: string, processedBy?: string): Promise<number> {
     const { data: payrollRun } = await supabase
       .from('payroll_runs')
       .select('*')
@@ -619,7 +671,7 @@ export class PayrollService {
     const { data: employees } = await supabase
       .from('employees')
       .select('*')
-      .eq('status', 'Active');
+      .eq('employment_status', 'Active');
 
     if (!employees || employees.length === 0) {
       throw new Error('No active employees found');
@@ -628,6 +680,7 @@ export class PayrollService {
     let totalGrossPay = 0;
     let totalDeductions = 0;
     let totalNetPay = 0;
+    let processedCount = 0;
 
     // Process each employee
     for (const employee of employees) {
@@ -642,7 +695,12 @@ export class PayrollService {
           .eq('is_current', true)
           .single();
 
-        if (!employeeSalary) continue;
+        if (!employeeSalary) {
+          console.warn(`Skipping employee ${employee.id} (no active salary record)`);
+          continue;
+        }
+
+        processedCount++;
 
         // Create payslip
         const payslipNumber = `PSL${format(new Date(), 'yyyyMM')}${String(employees.indexOf(employee) + 1).padStart(4, '0')}`;
@@ -689,15 +747,49 @@ export class PayrollService {
     }
 
     // Update payroll run totals
+    // Note: 'total_deductions' column does not exist in some schema versions, using 'total_tax' instead
     await supabase
       .from('payroll_runs')
       .update({
         status: 'processed',
         total_gross_pay: totalGrossPay,
-        total_deductions: totalDeductions,
+        total_tax: totalDeductions, // Mapping total deductions to total_tax as fallback
         total_net_pay: totalNetPay,
+        // total_employees: processedCount, // Removed as column doesn't exist
+        employee_count: processedCount,
         processed_by: processedBy,
         processed_at: new Date().toISOString()
+      })
+      .eq('id', payrollRunId);
+
+    return processedCount;
+  }
+
+  async syncPayrollRunTotals(payrollRunId: string): Promise<void> {
+    const { data: payslips, error } = await supabase
+      .from('payslips')
+      .select('gross_earnings, total_deductions, net_pay')
+      .eq('payroll_run_id', payrollRunId);
+
+    if (error) throw error;
+
+    const totals = (payslips || []).reduce(
+      (acc, slip) => ({
+        gross: acc.gross + (slip.gross_earnings || 0),
+        deductions: acc.deductions + (slip.total_deductions || 0),
+        net: acc.net + (slip.net_pay || 0),
+      }),
+      { gross: 0, deductions: 0, net: 0 }
+    );
+
+    await supabase
+      .from('payroll_runs')
+      .update({
+        // total_employees: payslips?.length || 0, // Removed as column doesn't exist
+        employee_count: payslips?.length || 0, // Update both fields to be safe
+        total_gross_pay: totals.gross,
+        total_tax: totals.deductions, // Using total_tax instead of total_deductions
+        total_net_pay: totals.net,
       })
       .eq('id', payrollRunId);
   }
@@ -711,7 +803,61 @@ export class PayrollService {
     if (error) throw error;
     
     // Map snake_case from DB to camelCase for the frontend
-    return (data || []).map(run => this.mapToPayrollRun(run));
+    const payrollRuns = (data || []).map(run => this.mapToPayrollRun(run));
+
+    // Fetch user names for processed_by
+    const processedByUserIds = data
+      ?.filter(r => r.processed_by)
+      .map(r => r.processed_by) || [];
+    
+    if (processedByUserIds.length > 0) {
+      // Try fetching by user_id first
+      const { data: employeesByUser } = await supabase
+        .from('employees')
+        .select('user_id, first_name, last_name')
+        .in('user_id', processedByUserIds);
+
+      // Try fetching by id (in case processed_by is an employee ID, not a user ID)
+      const { data: employeesById } = await supabase
+        .from('employees')
+        .select('id, first_name, last_name')
+        .in('id', processedByUserIds);
+        
+      const userMap: Record<string, string> = {};
+
+      if (employeesByUser) {
+        employeesByUser.forEach(emp => {
+          if (emp.user_id) {
+            userMap[emp.user_id] = `${emp.first_name} ${emp.last_name}`;
+          }
+        });
+      }
+
+      if (employeesById) {
+        employeesById.forEach(emp => {
+          if (emp.id) {
+            userMap[emp.id] = `${emp.first_name} ${emp.last_name}`;
+          }
+        });
+      }
+
+      payrollRuns.forEach(run => {
+        if (run.processedBy && userMap[run.processedBy]) {
+          run.processedByName = userMap[run.processedBy];
+        }
+      });
+    }
+
+    return payrollRuns;
+  }
+
+  async deletePayrollRun(payrollRunId: string): Promise<void> {
+    const { error } = await supabase
+      .from('payroll_runs')
+      .delete()
+      .eq('id', payrollRunId);
+
+    if (error) throw error;
   }
 
   // Loan Management

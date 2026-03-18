@@ -1,5 +1,5 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-import { PayrollRun, Payslip, PayComponent, PayrollCalculationResult, PayrollEmployee, TaxTable, Deduction, SuperannuationContribution, TimesheetEntry as PayrollTimesheetEntry } from '@/types/payroll';
+import { PayrollRun, Payslip, PayComponent, PayrollCalculationResult, PayrollEmployee, TaxTable, Deduction, SuperannuationContribution, TimesheetEntry as PayrollTimesheetEntry, SalaryAdjustment } from '@/types/payroll';
 import { auditService } from './auditService';
 import { timesheetService } from './timesheetService';
 import { statutoryTablesService } from './statutoryTablesService';
@@ -12,6 +12,17 @@ export const payrollProcessingEngine = {
   async processPayrollRun(payrollRunId: string, processedBy: string, selectedEmployeeIds?: string[]): Promise<PayrollCalculationResult[]> {
     const payrollRun = await this.getPayrollRun(payrollRunId);
     if (!payrollRun) throw new Error('Payroll run not found');
+    if (payrollRun.status === 'Paid') {
+      await auditService.logAction(
+        'payroll_runs',
+        payrollRunId,
+        'SYSTEM_ACTION',
+        { status: payrollRun.status },
+        { attempt: 'PROCESS_ALREADY_PAID_RUN' },
+        processedBy
+      );
+      throw new Error('Payroll run is already paid and cannot be modified');
+    }
     // Allow 'processing' status as well since we set it when creating the run
     if (payrollRun.status !== 'Approved' && payrollRun.status !== 'Processing') {
         // Auto-approve if it's draft for this flow
@@ -28,6 +39,8 @@ export const payrollProcessingEngine = {
       throw new Error(`No active employees found with ${payrollRun.payFrequency} pay frequency matching the selected criteria.`);
     }
     const results: PayrollCalculationResult[] = [];
+
+    await this.assertEmployeesNotAlreadyPaid(payrollRunId, payrollRun, employees, processedBy);
 
     // Update payroll run status
     await this.updatePayrollRunStatus(payrollRunId, 'Processing', processedBy);
@@ -58,6 +71,11 @@ export const payrollProcessingEngine = {
       await this.updatePayrollRunTotals(payrollRunId, results);
       await this.updatePayrollRunStatus(payrollRunId, 'Paid', processedBy);
 
+      await supabase
+        .from('payslips')
+        .update({ status: 'Paid', payment_date: payrollRun.paymentDate })
+        .eq('payroll_run_id', payrollRunId);
+
       // Create audit log
       await auditService.logAction(
         'payroll_runs',
@@ -74,6 +92,49 @@ export const payrollProcessingEngine = {
       console.error('Error in processPayrollRun:', error);
       await this.updatePayrollRunStatus(payrollRunId, 'Draft', processedBy);
       throw error;
+    }
+  },
+
+  async assertEmployeesNotAlreadyPaid(payrollRunId: string, payrollRun: PayrollRun, employees: PayrollEmployee[], processedBy: string): Promise<void> {
+    const employeeIds = Array.from(new Set(employees.map(e => e.employeeId))).filter(Boolean);
+    if (employeeIds.length === 0) return;
+    const paidEmployeeIds = await this.getPaidEmployeeIdsForPeriod(payrollRun.payPeriodStart, payrollRun.payPeriodEnd, employeeIds);
+    if (paidEmployeeIds.size === 0) return;
+    const blocked = employeeIds.filter((id) => paidEmployeeIds.has(id));
+    if (blocked.length === 0) return;
+
+    await auditService.logAction(
+      'payroll_runs',
+      payrollRunId,
+      'SYSTEM_ACTION',
+      null,
+      { attempt: 'PROCESS_PAID_EMPLOYEE', employeeIds: blocked, periodStart: payrollRun.payPeriodStart, periodEnd: payrollRun.payPeriodEnd },
+      processedBy
+    );
+    throw new Error(`Cannot process payroll: employee(s) already processed and paid for this period`);
+  },
+
+  async getPaidEmployeeIdsForPeriod(periodStart: string, periodEnd: string, employeeIds: string[]): Promise<Set<string>> {
+    try {
+      const { data: paidRuns } = await supabase
+        .from('payroll_runs')
+        .select('id')
+        .eq('pay_period_start', periodStart)
+        .eq('pay_period_end', periodEnd)
+        .eq('status', 'Paid');
+
+      const paidRunIds = (paidRuns || []).map((r: any) => r.id).filter(Boolean);
+      if (paidRunIds.length === 0) return new Set();
+
+      const { data: payslips } = await supabase
+        .from('payslips')
+        .select('employee_id, payroll_run_id')
+        .in('payroll_run_id', paidRunIds)
+        .in('employee_id', employeeIds);
+
+      return new Set((payslips || []).map((p: any) => p.employee_id).filter(Boolean));
+    } catch {
+      return new Set();
     }
   },
 
@@ -105,15 +166,40 @@ export const payrollProcessingEngine = {
       result.components.earnings.push(...timesheetComponents.earnings);
       result.components.superContributions.push(...timesheetComponents.superContributions);
       
-      // 2. Calculate base salary (for salaried employees) or validate minimum wage
+      // 2. Calculate base salary (for salaried employees) when timesheet-based earnings are not present
       if (employee.employmentType === 'FullTime' || employee.employmentType === 'PartTime') {
-        const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun);
-        result.components.earnings.push(baseSalaryComponent);
+        const hasHoursBasedBase = result.components.earnings.some(
+          (e) => e.componentType === 'BaseSalary' && String(e.description || '') !== 'Base Salary'
+        );
+        if (!hasHoursBasedBase) {
+          const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun);
+          result.components.earnings.push(baseSalaryComponent);
+        }
       }
 
       // 3. Apply salary adjustments
       const adjustments = await this.getSalaryAdjustments(employee.employeeId, payrollRun);
       for (const adjustment of adjustments) {
+        if (adjustment.adjustmentType === 'Deduction') {
+          result.components.deductions.push({
+            id: adjustment.id,
+            employeeId: adjustment.employeeId,
+            deductionType: 'PostTax',
+            category: 'Other',
+            description: `Salary Adjustment - ${adjustment.adjustmentReason}`,
+            amount: Math.abs(Number(adjustment.amount || 0)),
+            isFixed: true,
+            isPercentage: false,
+            priority: 100,
+            effectiveFrom: adjustment.effectiveDate,
+            effectiveTo: adjustment.endDate,
+            isActive: true,
+            createdAt: adjustment.createdAt,
+            updatedAt: adjustment.updatedAt
+          });
+          continue;
+        }
+
         const adjustmentComponent = this.createAdjustmentComponent(adjustment, payrollRun);
         result.components.earnings.push(adjustmentComponent);
       }
@@ -122,7 +208,7 @@ export const payrollProcessingEngine = {
       result.totals.grossPay = result.components.earnings.reduce((sum, comp) => sum + comp.amount, 0);
 
       // 4. Apply deductions (pre-tax)
-      const preTaxDeductions = await this.getPreTaxDeductions(employee.employeeId);
+      const preTaxDeductions = await this.getPreTaxDeductions(employee.employeeId, payrollRun);
       for (const deduction of preTaxDeductions) {
         const deductionAmount = this.calculateDeductionAmount(deduction, result.totals.grossPay);
         result.components.deductions.push({
@@ -161,7 +247,7 @@ export const payrollProcessingEngine = {
       }
 
       // 8. Apply post-tax deductions
-      const postTaxDeductions = await this.getPostTaxDeductions(employee.employeeId);
+      const postTaxDeductions = await this.getPostTaxDeductions(employee.employeeId, payrollRun);
       for (const deduction of postTaxDeductions) {
         const deductionAmount = this.calculateDeductionAmount(deduction, result.totals.taxableIncome - result.totals.taxWithheld);
         result.components.deductions.push({
@@ -171,8 +257,12 @@ export const payrollProcessingEngine = {
       }
 
       // 9. Calculate final totals
-      result.totals.totalDeductions = result.components.deductions.reduce((sum, d) => sum + d.amount, 0);
-      result.totals.netPay = result.totals.taxableIncome - result.totals.taxWithheld - result.totals.totalDeductions;
+      const postTaxDeductionsTotal = result.components.deductions
+        .filter(d => d.deductionType === 'PostTax')
+        .reduce((sum, d) => sum + d.amount, 0);
+
+      result.totals.totalDeductions = preTaxDeductionsTotal + postTaxDeductionsTotal;
+      result.totals.netPay = result.totals.taxableIncome - result.totals.taxWithheld - postTaxDeductionsTotal;
       result.totals.superContributions = result.components.superContributions.reduce((sum, s) => sum + s.amount, 0);
 
       // 10. Validation
@@ -204,24 +294,85 @@ export const payrollProcessingEngine = {
     };
   },
 
-  getSalaryAdjustments(employeeId: string, payrollRun: PayrollRun): any[] {
-    // In a real implementation, this would be passed as a parameter or fetched from cache
-    return [];
+  async getSalaryAdjustments(employeeId: string, payrollRun: PayrollRun): Promise<SalaryAdjustment[]> {
+    try {
+      const { data, error } = await supabase
+        .from('salary_adjustments')
+        .select('*')
+        .eq('employee_id', employeeId)
+        .in('status', ['Approved', 'Processed'])
+        .lte('effective_date', payrollRun.payPeriodEnd)
+        .or(`end_date.is.null,end_date.gte.${payrollRun.payPeriodStart}`);
+
+      if (error) throw error;
+      return (data || []).map((row: any) => this.mapSalaryAdjustmentFromDb(row));
+    } catch (error) {
+      console.error('Error fetching salary adjustments:', error);
+      return [];
+    }
   },
 
-  createAdjustmentComponent(adjustment: any, payrollRun: PayrollRun): PayComponent {
+  createAdjustmentComponent(adjustment: SalaryAdjustment, payrollRun: PayrollRun): PayComponent {
+    const componentType =
+      adjustment.adjustmentType === 'Bonus'
+        ? 'Bonus'
+        : adjustment.adjustmentType === 'Allowance'
+          ? 'Allowance'
+          : 'BaseSalary';
+
     return {
       id: crypto.randomUUID(),
       payslipId: '',
-      componentType: adjustment.adjustment_type,
-      description: `Salary Adjustment - ${adjustment.adjustment_reason}`,
+      componentType,
+      description: `Salary Adjustment - ${adjustment.adjustmentReason}`,
       units: 1,
       rate: adjustment.amount,
       amount: adjustment.amount,
-      taxTreatment: adjustment.adjustment_type === 'Bonus' ? 'Taxable' : 'Taxable',
-      stpCategory: this.getSTPCategoryForAdjustment(adjustment.adjustment_type),
+      taxTreatment: 'Taxable',
+      stpCategory: this.getSTPCategoryForAdjustment(adjustment.adjustmentType),
       isYtd: false,
       createdAt: new Date().toISOString()
+    };
+  },
+
+  mapSalaryAdjustmentFromDb(row: any): SalaryAdjustment {
+    return {
+      id: row.id,
+      employeeId: row.employee_id,
+      adjustmentType: row.adjustment_type,
+      amount: Number(row.amount || 0),
+      adjustmentReason: row.adjustment_reason,
+      effectiveDate: row.effective_date,
+      endDate: row.end_date || undefined,
+      isPermanent: Boolean(row.is_permanent),
+      isProcessed: Boolean(row.is_processed),
+      status: row.status,
+      requestedBy: row.requested_by,
+      approvedBy: row.approved_by || undefined,
+      approvedAt: row.approved_at || undefined,
+      rejectionReason: row.rejection_reason || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  },
+
+  mapDeductionFromDb(row: any): Deduction {
+    return {
+      id: row.id,
+      employeeId: row.employee_id,
+      deductionType: row.deduction_type,
+      category: row.category,
+      description: row.description,
+      amount: Number(row.amount || 0),
+      isFixed: Boolean(row.is_fixed),
+      isPercentage: Boolean(row.is_percentage),
+      percentage: row.percentage != null ? Number(row.percentage) : undefined,
+      priority: Number(row.priority || 100),
+      effectiveFrom: row.effective_from,
+      effectiveTo: row.effective_to || undefined,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
     };
   },
 
@@ -354,14 +505,44 @@ export const payrollProcessingEngine = {
     };
   },
 
-  getPreTaxDeductions(employeeId: string): Deduction[] {
-    // In a real implementation, this would be passed as a parameter or fetched from cache
-    return [];
+  async getPreTaxDeductions(employeeId: string, payrollRun: PayrollRun): Promise<Deduction[]> {
+    try {
+      const { data, error } = await supabase
+        .from('deductions')
+        .select('*')
+        .eq('employee_id', employeeId)
+        .eq('deduction_type', 'PreTax')
+        .eq('is_active', true)
+        .lte('effective_from', payrollRun.payPeriodEnd)
+        .or(`effective_to.is.null,effective_to.gte.${payrollRun.payPeriodStart}`)
+        .order('priority', { ascending: true });
+
+      if (error) throw error;
+      return (data || []).map((row: any) => this.mapDeductionFromDb(row));
+    } catch (error) {
+      console.error('Error fetching pre-tax deductions:', error);
+      return [];
+    }
   },
 
-  getPostTaxDeductions(employeeId: string): Deduction[] {
-    // In a real implementation, this would be passed as a parameter or fetched from cache
-    return [];
+  async getPostTaxDeductions(employeeId: string, payrollRun: PayrollRun): Promise<Deduction[]> {
+    try {
+      const { data, error } = await supabase
+        .from('deductions')
+        .select('*')
+        .eq('employee_id', employeeId)
+        .eq('deduction_type', 'PostTax')
+        .eq('is_active', true)
+        .lte('effective_from', payrollRun.payPeriodEnd)
+        .or(`effective_to.is.null,effective_to.gte.${payrollRun.payPeriodStart}`)
+        .order('priority', { ascending: true });
+
+      if (error) throw error;
+      return (data || []).map((row: any) => this.mapDeductionFromDb(row));
+    } catch (error) {
+      console.error('Error fetching post-tax deductions:', error);
+      return [];
+    }
   },
 
   calculateDeductionAmount(deduction: Deduction, baseAmount: number): number {
@@ -467,6 +648,26 @@ export const payrollProcessingEngine = {
   async createPayslipFromCalculation(result: PayrollCalculationResult, payrollRunId: string): Promise<void> {
     try {
       // 1. Create Payslip
+      const { data: runRow } = await supabase
+        .from('payroll_runs')
+        .select('pay_frequency, payment_date, status')
+        .eq('id', payrollRunId)
+        .maybeSingle();
+
+      const allowancesTotal = result.components.earnings
+        .filter((c) => c.componentType === 'Allowance')
+        .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+      const overtimeTotal = result.components.earnings
+        .filter((c) => c.componentType === 'Overtime')
+        .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+      const hoursWorked = result.components.earnings.reduce((sum, c) => sum + Number(c.units || 0), 0);
+
+      const paymentDate = runRow?.payment_date || new Date().toISOString().split('T')[0];
+      const payFrequency = runRow?.pay_frequency || 'Monthly';
+      const payslipStatus = runRow?.status === 'Paid' ? 'Paid' : 'Draft';
+
       const { data: payslip, error: payslipError } = await supabase
         .from('payslips')
         .insert({
@@ -475,19 +676,57 @@ export const payrollProcessingEngine = {
           payslip_number: `PS-${Date.now()}-${result.employeeId.slice(0, 4)}`, // Simple generation
           period_start: result.periodStart,
           period_end: result.periodEnd,
-          payment_date: new Date().toISOString().split('T')[0], // Default to today
+          payment_date: paymentDate,
           gross_pay: result.totals.grossPay,
+          allowances: allowancesTotal,
+          overtime: overtimeTotal,
           taxable_income: result.totals.taxableIncome,
           tax_withheld: result.totals.taxWithheld,
+          payg_tax: result.totals.taxWithheld,
           superannuation: result.totals.superContributions,
           net_pay: result.totals.netPay,
-          pay_frequency: 'Monthly', // Should come from employee or run
-          status: 'Draft'
+          pay_frequency: payFrequency,
+          hours_worked: hoursWorked,
+          status: payslipStatus
         })
         .select()
         .single();
 
       if (payslipError) throw payslipError;
+
+      await auditService.logAction('payslips', payslip.id, 'INSERT', null, {
+        payroll_run_id: payrollRunId,
+        employee_id: result.employeeId,
+        period_start: result.periodStart,
+        period_end: result.periodEnd,
+        payment_date: paymentDate,
+        gross_pay: result.totals.grossPay,
+        tax_withheld: result.totals.taxWithheld,
+        net_pay: result.totals.netPay,
+      });
+
+      const year = new Date(paymentDate).getFullYear();
+      const yearStart = `${year}-01-01`;
+      const { data: ytdRows } = await supabase
+        .from('payslips')
+        .select('gross_pay, tax_withheld, payg_tax, superannuation')
+        .eq('employee_id', result.employeeId)
+        .gte('payment_date', yearStart)
+        .lte('payment_date', paymentDate);
+
+      const ytd = ((ytdRows as any[]) || []).reduce(
+        (acc, r) => ({
+          gross: acc.gross + Number(r.gross_pay || 0),
+          tax: acc.tax + Number(r.tax_withheld ?? r.payg_tax ?? 0),
+          super: acc.super + Number(r.superannuation || 0),
+        }),
+        { gross: 0, tax: 0, super: 0 }
+      );
+
+      await supabase
+        .from('payslips')
+        .update({ ytd_gross: ytd.gross, ytd_tax: ytd.tax, ytd_super: ytd.super })
+        .eq('id', payslip.id);
 
       // 2. Create Pay Components
       if (result.components.earnings.length > 0) {
@@ -665,26 +904,6 @@ export const payrollProcessingEngine = {
     };
   },
 
-  mapDeductionFromDb(data: any): Deduction {
-    return {
-      id: data.id,
-      employeeId: data.employee_id,
-      deductionType: data.deduction_type,
-      category: data.category,
-      description: data.description,
-      amount: Number(data.amount) || 0,
-      isFixed: data.is_fixed,
-      isPercentage: data.is_percentage,
-      percentage: data.percentage ? Number(data.percentage) : undefined,
-      priority: data.priority,
-      effectiveFrom: data.effective_from,
-      effectiveTo: data.effective_to,
-      isActive: data.is_active,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at
-    };
-  },
-
   async processTimesheetData(employee: PayrollEmployee, payrollRun: PayrollRun): Promise<{
     earnings: PayComponent[];
     superContributions: SuperannuationContribution[];
@@ -817,6 +1036,8 @@ export const payrollProcessingEngine = {
         }
       } else {
         // Fallback to simple calculation if no award
+        let totalHours = 0;
+
         for (const record of attendanceRecords) {
           if (!record.clockIn || !record.clockOut) continue;
           
@@ -825,6 +1046,7 @@ export const payrollProcessingEngine = {
           const hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
           
           if (hours > 0) {
+            totalHours += hours;
             earnings.push({
               id: crypto.randomUUID(),
               payslipId: '',
@@ -839,6 +1061,43 @@ export const payrollProcessingEngine = {
               createdAt: new Date().toISOString()
             });
           }
+        }
+
+        // If no attendance records found but timesheets exist (e.g. manual entry), fallback to timesheet total
+        if (totalHours === 0 && timesheets.length > 0) {
+          timesheets.forEach(ts => {
+            const { regularHours, overtimeHours } = this.calculateHoursFromTimesheet(ts);
+            if (regularHours > 0) {
+              earnings.push({
+                id: crypto.randomUUID(),
+                payslipId: '',
+                componentType: 'BaseSalary',
+                description: `Regular Hours (Timesheet ${ts.weekStartDate})`,
+                units: regularHours,
+                rate: baseHourlyRate,
+                amount: regularHours * baseHourlyRate,
+                taxTreatment: 'Taxable',
+                stpCategory: 'SAW',
+                isYtd: false,
+                createdAt: new Date().toISOString()
+              });
+            }
+            if (overtimeHours > 0) {
+              earnings.push({
+                id: crypto.randomUUID(),
+                payslipId: '',
+                componentType: 'Overtime',
+                description: `Overtime (Timesheet ${ts.weekStartDate})`,
+                units: overtimeHours,
+                rate: baseHourlyRate * 1.5, // Simple 1.5x assumption
+                amount: overtimeHours * baseHourlyRate * 1.5,
+                taxTreatment: 'Taxable',
+                stpCategory: 'OVT',
+                isYtd: false,
+                createdAt: new Date().toISOString()
+              });
+            }
+          });
         }
       }
 
@@ -856,7 +1115,9 @@ export const payrollProcessingEngine = {
     
     // Get timesheets for each week in the period
     let currentWeekStart = new Date(startDate);
-    currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay()); // Start from Sunday
+    const day = currentWeekStart.getDay();
+    const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+    currentWeekStart.setDate(diff);
     
     while (currentWeekStart <= endDate) {
       const weekStartStr = currentWeekStart.toISOString().split('T')[0];

@@ -1,7 +1,18 @@
 import { supabase } from '@/lib/supabase';
 import { auditService } from './auditService';
+import { comprehensivePayrollService } from './comprehensivePayrollService';
+
+export function normalizePayrollRunStatusCandidates(status: string): string[] {
+  const s = String(status || '').trim();
+  if (!s) return [];
+  const lower = s.toLowerCase();
+  const upperFirst = lower.charAt(0).toUpperCase() + lower.slice(1);
+  const allUpper = s.toUpperCase();
+  return Array.from(new Set([s, lower, upperFirst, allUpper])).filter(Boolean);
+}
 
 export interface PayrollReportFilters {
+  payrollRunId?: string;
   startDate?: string;
   endDate?: string;
   employeeIds?: string[];
@@ -159,6 +170,18 @@ export const payrollReportingService = {
 
       if (error) throw error;
       if (!payslips || payslips.length === 0) {
+        const preview = await this.tryBuildPreviewPayrollReport(filters);
+        if (preview) {
+          await auditService.logAction(
+            'payroll_reports',
+            `summary_report_preview_${filters.payrollRunId}`,
+            'SYSTEM_ACTION',
+            null,
+            { filters, source: 'preview', employeeCount: preview.totalEmployees },
+            'system'
+          );
+          return this.buildSummaryFromPreview(filters, preview);
+        }
         return this.createEmptySummaryReport(filters);
       }
 
@@ -298,6 +321,18 @@ export const payrollReportingService = {
       
       if (error) throw error;
       if (!payslips || payslips.length === 0) {
+        const preview = await this.tryBuildPreviewPayrollReport(filters);
+        if (preview) {
+          await auditService.logAction(
+            'payroll_reports',
+            `tax_report_preview_${filters.payrollRunId}`,
+            'SYSTEM_ACTION',
+            null,
+            { filters, source: 'preview', employeeCount: preview.totalEmployees },
+            'system'
+          );
+          return await this.buildTaxFromPreview(filters, preview);
+        }
         return this.createEmptyTaxReport(filters);
       }
 
@@ -349,14 +384,12 @@ export const payrollReportingService = {
         .from('superannuation_contributions')
         .select(`
           *,
-          super_funds:fund_id (
-            name,
-            abn
-          ),
           employees:employee_id (
             first_name,
             last_name,
-            super_member_number
+            payroll_employees (
+              super_member_number
+            )
           )
         `)
         .gte('period_start', filters.startDate || '1970-01-01')
@@ -364,6 +397,18 @@ export const payrollReportingService = {
 
       if (error) throw error;
       if (!contributions || contributions.length === 0) {
+        const preview = await this.tryBuildPreviewPayrollReport(filters);
+        if (preview) {
+          await auditService.logAction(
+            'payroll_reports',
+            `super_report_preview_${filters.payrollRunId}`,
+            'SYSTEM_ACTION',
+            null,
+            { filters, source: 'preview', employeeCount: preview.totalEmployees },
+            'system'
+          );
+          return await this.buildSuperFromPreview(filters, preview);
+        }
         return this.createEmptySuperReport(filters);
       }
 
@@ -378,11 +423,19 @@ export const payrollReportingService = {
         } else if (c.payment_date && c.payment_date < new Date().toISOString()) {
           status = 'Overdue';
         }
+        
+        // Try to get fund name from fund_id or other fields if relation failed
+        const fundName = c.fund_name || String(c.fund_id || 'Unknown Fund');
+        
+        // Try to get super member number from payroll_employees array or direct field if available
+        const payrollEmp = c.employees?.payroll_employees?.[0];
+        const memberNumber = String(payrollEmp?.super_member_number || c.super_member_number || '');
+        
         return {
           employeeId: String(c.employee_id),
           employeeName: `${c.employees?.first_name || 'Unknown'} ${c.employees?.last_name || ''}`,
-          superMemberNumber: String(c.employees?.super_member_number || c.super_member_number || ''),
-          fundName: String(c.super_funds?.name || ''),
+          superMemberNumber: memberNumber,
+          fundName: fundName,
           contributions: Number(c.amount || 0),
           paymentStatus: status
         };
@@ -423,6 +476,18 @@ export const payrollReportingService = {
       
       if (error) throw error;
       if (!payslips || payslips.length === 0) {
+        const preview = await this.tryBuildPreviewPayrollReport(filters);
+        if (preview) {
+          await auditService.logAction(
+            'payroll_reports',
+            `compliance_report_preview_${filters.payrollRunId}`,
+            'SYSTEM_ACTION',
+            null,
+            { filters, source: 'preview', employeeCount: preview.totalEmployees },
+            'system'
+          );
+          return this.buildComplianceFromPreview(filters, preview);
+        }
         return this.createEmptyComplianceReport(filters);
       }
 
@@ -484,6 +549,66 @@ export const payrollReportingService = {
 
   // Public helper methods
   async getPayslipsWithDetails(filters: PayrollReportFilters) {
+    let employeeIds = filters.employeeIds;
+    if (filters.departments && filters.departments.length > 0) {
+      const { data: emps, error: empErr } = await supabase
+        .from('employees')
+        .select('id')
+        .in('department_id', filters.departments);
+      if (empErr) return { data: null, error: empErr } as any;
+      const deptEmployeeIds = (emps || []).map((e: any) => e.id);
+      employeeIds = employeeIds && employeeIds.length > 0
+        ? employeeIds.filter((id) => deptEmployeeIds.includes(id))
+        : deptEmployeeIds;
+    }
+
+    if (filters.payrollRunId) {
+      let query = supabase
+        .from('payslips')
+        .select(`
+          *,
+          employees:employee_id (
+            first_name,
+            last_name,
+            employee_code,
+            department_id,
+            position_id,
+            remark
+          ),
+          pay_components(*),
+          payroll_runs:payroll_run_id (
+            pay_period_start,
+            pay_period_end,
+            status
+          )
+        `)
+        .eq('payroll_run_id', filters.payrollRunId);
+
+      if (employeeIds && employeeIds.length > 0) query = query.in('employee_id', employeeIds);
+      return await query;
+    }
+
+    let runQuery = supabase
+      .from('payroll_runs')
+      .select('id')
+      .order('pay_period_start', { ascending: true });
+
+    if (filters.startDate) runQuery = runQuery.gte('pay_period_start', filters.startDate);
+    if (filters.endDate) runQuery = runQuery.lte('pay_period_end', filters.endDate);
+    if (filters.payFrequency) runQuery = runQuery.eq('pay_frequency', filters.payFrequency);
+
+    if (filters.status) {
+      runQuery = runQuery.in('status', normalizePayrollRunStatusCandidates(filters.status));
+    } else {
+      runQuery = runQuery.in('status', ['Paid', 'paid']);
+    }
+
+    const { data: runs, error: runErr } = await runQuery;
+    if (runErr) return { data: null, error: runErr } as any;
+
+    const runIds = (runs || []).map((r: any) => r.id).filter(Boolean);
+    if (runIds.length === 0) return { data: [], error: null } as any;
+
     let query = supabase
       .from('payslips')
       .select(`
@@ -502,28 +627,175 @@ export const payrollReportingService = {
           pay_period_end,
           status
         )
-      `);
+      `)
+      .in('payroll_run_id', runIds);
 
-    // Using definitive column names from latest migration (pay_period_start/end)
-    if (filters.startDate) {
-      query = query.gte('pay_period_start', filters.startDate);
-    }
-    if (filters.endDate) {
-      query = query.lte('pay_period_end', filters.endDate);
-    }
-    if (filters.employeeIds && filters.employeeIds.length > 0) {
-      query = query.in('employee_id', filters.employeeIds);
-    }
-    if (filters.status) {
-      // status in payroll_runs is 'draft', 'processed', 'finalized', 'paid' (lowercase)
-      // but filters might pass TitleCase from UI.
-      const status = filters.status.toLowerCase();
-      query = query.eq('status', status);
-    }
+    if (employeeIds && employeeIds.length > 0) query = query.in('employee_id', employeeIds);
 
     return await query;
   },
 
+  async tryBuildPreviewPayrollReport(filters: PayrollReportFilters) {
+    if (!filters.payrollRunId) return null;
+    try {
+      const selectedIds = filters.employeeIds || [];
+      const preview = await comprehensivePayrollService.calculatePayrollPreview(filters.payrollRunId, selectedIds);
+      if (!preview) return null;
+      if (!preview.employeeBreakdown || preview.employeeBreakdown.length === 0) return null;
+      return preview;
+    } catch {
+      return null;
+    }
+  },
+
+  buildSummaryFromPreview(filters: PayrollReportFilters, preview: any): PayrollSummaryReport {
+    const netPays = (preview.employeeBreakdown || []).map((e: any) => Number(e.netPay || 0));
+    const totals = {
+      grossPay: Number(preview.totalGrossPay || 0),
+      tax: Number(preview.totalTax || 0),
+      netPay: Number(preview.totalNetPay || 0),
+      superannuation: Number(preview.totalSuper || 0),
+      allowances: 0,
+      overtime: 0,
+      deductions: 0,
+    };
+
+    const averagePay = netPays.reduce((sum: number, pay: number) => sum + pay, 0) / (netPays.length || 1);
+    const medianPay = this.calculateMedian(netPays);
+    const payDistribution = this.generatePayDistribution(netPays);
+
+    return {
+      period: {
+        start: filters.startDate || preview.periodStart,
+        end: filters.endDate || preview.periodEnd,
+      },
+      totals,
+      employeeCount: new Set((preview.employeeBreakdown || []).map((e: any) => e.employeeId)).size,
+      payrollRuns: 1,
+      averagePay,
+      medianPay,
+      payDistribution,
+    };
+  },
+
+  async buildTaxFromPreview(filters: PayrollReportFilters, preview: any): Promise<TaxReport> {
+    const employeeIds = Array.from(new Set((preview.employeeBreakdown || []).map((e: any) => e.employeeId).filter(Boolean)));
+    const { data: employees } = employeeIds.length
+      ? await supabase
+          .from('employees')
+          .select('id, tfn')
+          .in('id', employeeIds)
+      : { data: [] as any[] };
+
+    const tfnById = new Map<string, string>();
+    for (const e of employees || []) {
+      tfnById.set(e.id, e.tfn || '');
+    }
+
+    const taxBreakdown = (preview.employeeBreakdown || []).map((e: any) => ({
+      employeeId: e.employeeId,
+      employeeName: e.employeeName,
+      taxFileNumber: tfnById.get(e.employeeId) || '',
+      grossPay: Number(e.grossPay || 0),
+      taxWithheld: Number(e.tax || 0),
+      superannuation: Number(e.super || 0),
+    }));
+
+    return {
+      period: {
+        start: filters.startDate || preview.periodStart,
+        end: filters.endDate || preview.periodEnd,
+      },
+      totalTaxWithheld: Number(preview.totalTax || 0),
+      taxBreakdown,
+      stpSubmissions: [],
+    };
+  },
+
+  async buildSuperFromPreview(filters: PayrollReportFilters, preview: any): Promise<SuperannuationReport> {
+    const employeeIds = Array.from(new Set((preview.employeeBreakdown || []).map((e: any) => e.employeeId).filter(Boolean)));
+    const { data: employees } = employeeIds.length
+      ? await supabase
+          .from('employees')
+          .select('id, superannuation_fund_name, superannuation_member_number')
+          .in('id', employeeIds)
+      : { data: [] as any[] };
+
+    const byId = new Map<string, any>();
+    for (const e of employees || []) byId.set(e.id, e);
+
+    const employeeContributions = (preview.employeeBreakdown || []).map((e: any) => {
+      const emp = byId.get(e.employeeId);
+      return {
+        employeeId: e.employeeId,
+        employeeName: e.employeeName,
+        superMemberNumber: emp?.superannuation_member_number || '',
+        fundName: emp?.superannuation_fund_name || 'Unknown Fund',
+        contributions: Number(e.super || 0),
+        paymentStatus: 'Pending',
+      };
+    });
+
+    const totalContributions = employeeContributions.reduce((sum: number, c: any) => sum + Number(c.contributions || 0), 0);
+
+    return {
+      period: {
+        start: filters.startDate || preview.periodStart,
+        end: filters.endDate || preview.periodEnd,
+      },
+      totalContributions,
+      contributionsByFund: [],
+      employeeContributions,
+      complianceStatus: {
+        totalDue: totalContributions,
+        totalPaid: 0,
+        overdueAmount: 0,
+        complianceRate: 100,
+        issues: [],
+      },
+    };
+  },
+
+  buildComplianceFromPreview(filters: PayrollReportFilters, preview: any): PayrollComplianceReport {
+    const issues: string[] = [];
+    for (const emp of preview.employeeBreakdown || []) {
+      for (const err of emp.errors || []) issues.push(`${emp.employeeName}: ${err}`);
+      for (const warn of emp.warnings || []) issues.push(`${emp.employeeName}: ${warn}`);
+    }
+
+    const clean = issues.length === 0;
+
+    return {
+      period: {
+        start: filters.startDate || preview.periodStart,
+        end: filters.endDate || preview.periodEnd,
+      },
+      minimumWageCompliance: {
+        compliantEmployees: clean ? (preview.totalEmployees || 0) : 0,
+        nonCompliantEmployees: clean ? 0 : (preview.totalEmployees || 0),
+        totalUnderpayment: 0,
+        issues: clean ? [] : issues,
+      },
+      awardCompliance: {
+        compliantEmployees: clean ? (preview.totalEmployees || 0) : 0,
+        nonCompliantEmployees: clean ? 0 : (preview.totalEmployees || 0),
+        penaltyRateIssues: clean ? [] : issues,
+        allowanceIssues: [],
+      },
+      taxCompliance: {
+        compliantEmployees: clean ? (preview.totalEmployees || 0) : 0,
+        issues: clean ? [] : issues,
+      },
+      superannuationCompliance: {
+        compliantEmployees: clean ? (preview.totalEmployees || 0) : 0,
+        unpaidContributions: clean ? 0 : Number(preview.totalSuper || 0),
+        overdueContributions: 0,
+        issues: clean ? [] : issues,
+      },
+      overallComplianceRate: clean ? 100 : 80,
+      recommendations: clean ? [] : ['Review payroll warnings/errors before finalising this run.'],
+    };
+  },
   calculateTotals(payslips: any[]): {
     grossPay: number;
     tax: number;

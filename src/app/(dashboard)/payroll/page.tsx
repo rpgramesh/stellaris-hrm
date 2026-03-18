@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { payrollService, PayrollRun } from '@/services/payrollService';
 import { format } from 'date-fns';
-import { Plus, Play, Download, Eye, CheckCircle, Clock, DollarSign, Users } from 'lucide-react';
+import { Plus, Play, Download, Eye, CheckCircle, Clock, DollarSign, Users, RefreshCw, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function PayrollDashboard() {
@@ -52,9 +52,17 @@ export default function PayrollDashboard() {
       setError('User not authenticated.');
       return;
     }
+
+    // Validate dates
+    if (new Date(newRunEnd) < new Date(newRunStart)) {
+      alert('Pay period end date cannot be before start date.');
+      return;
+    }
+
     try {
       setProcessing(true);
-      const run = await payrollService.createPayrollRun(newRunMonth, user.id);
+      const run = await payrollService.createPayrollRun(newRunMonth, user.id, newRunStart, newRunEnd);
+      
       setPayrollRuns([run, ...payrollRuns]);
       setShowNewRunModal(false);
       setError(null);
@@ -72,7 +80,10 @@ export default function PayrollDashboard() {
     }
     try {
       setProcessing(true);
-      await payrollService.processPayrollRun(runId, user.id);
+      const processedCount = await payrollService.processPayrollRun(runId, user.id);
+      if (processedCount === 0) {
+        alert('Warning: No employees were processed. Please check if employees have active salary records.');
+      }
       await loadPayrollRuns();
       setError(null);
     } catch (err: any) {
@@ -82,8 +93,43 @@ export default function PayrollDashboard() {
     }
   };
 
+  const syncPayroll = async (runId: string) => {
+    if (!user) {
+      setError('User not authenticated.');
+      return;
+    }
+    try {
+      setProcessing(true);
+      await payrollService.syncPayrollRunTotals(runId);
+      await loadPayrollRuns();
+      setError(null);
+      alert('Payroll run totals synced successfully.');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to sync payroll data');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const deletePayrollRun = async (runId: string) => {
+    if (!confirm('Are you sure you want to delete this payroll run? This action cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      setProcessing(true);
+      await payrollService.deletePayrollRun(runId);
+      await loadPayrollRuns();
+      setError(null);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete payroll run');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'draft': return 'bg-gray-100 text-gray-800';
       case 'processed': return 'bg-blue-100 text-blue-800';
       case 'finalized': return 'bg-green-100 text-green-800';
@@ -93,7 +139,7 @@ export default function PayrollDashboard() {
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'draft': return <Clock className="w-4 h-4" />;
       case 'processed': return <Play className="w-4 h-4" />;
       case 'finalized': return <CheckCircle className="w-4 h-4" />;
@@ -155,7 +201,7 @@ export default function PayrollDashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600">Draft Runs</p>
               <p className="text-2xl font-bold text-gray-900">
-                {payrollRuns.filter(r => r.status === 'draft').length}
+                {payrollRuns.filter(r => r.status.toLowerCase() === 'draft').length}
               </p>
             </div>
             <div className="p-3 bg-gray-100 rounded-full">
@@ -169,7 +215,7 @@ export default function PayrollDashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600">Processed Runs</p>
               <p className="text-2xl font-bold text-gray-900">
-                {payrollRuns.filter(r => r.status === 'processed').length}
+                {payrollRuns.filter(r => r.status.toLowerCase() === 'processed').length}
               </p>
             </div>
             <div className="p-3 bg-blue-100 rounded-full">
@@ -183,7 +229,7 @@ export default function PayrollDashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600">Paid Runs</p>
               <p className="text-2xl font-bold text-gray-900">
-                {payrollRuns.filter(r => r.status === 'paid').length}
+                {payrollRuns.filter(r => r.status.toLowerCase() === 'paid').length}
               </p>
             </div>
             <div className="p-3 bg-green-100 rounded-full">
@@ -216,6 +262,9 @@ export default function PayrollDashboard() {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Total Net Pay
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created At
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Processed By
@@ -252,7 +301,10 @@ export default function PayrollDashboard() {
                     ₹{(run.totalNetPay || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {run.processedBy || '-'}
+                    {run.createdAt ? format(new Date(run.createdAt), 'MMM dd, yyyy') : '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {run.processedByName || run.processedBy || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {run.processedAt ? format(new Date(run.processedAt), 'MMM dd, yyyy HH:mm') : '-'}
@@ -269,6 +321,17 @@ export default function PayrollDashboard() {
                           Process
                         </button>
                       )}
+                      {(run.status.toLowerCase() === 'paid' || run.status.toLowerCase() === 'finalized') && (!run.totalNetPay || run.totalNetPay === 0) && (
+                         <button
+                           onClick={() => syncPayroll(run.id)}
+                           disabled={processing}
+                           className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                           title="Sync totals from payslips"
+                         >
+                           <RefreshCw className="w-3 h-3" />
+                           Sync
+                         </button>
+                      )}
                       <button
                         onClick={() => setSelectedRun(run)}
                         className="flex items-center gap-1 px-2 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
@@ -281,6 +344,15 @@ export default function PayrollDashboard() {
                       >
                         <Download className="w-3 h-3" />
                         Export
+                      </button>
+                      <button
+                        onClick={() => deletePayrollRun(run.id)}
+                        disabled={processing}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                        title="Delete Payroll Run"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Delete
                       </button>
                     </div>
                   </td>
@@ -410,6 +482,21 @@ export default function PayrollDashboard() {
                     <span className="font-medium text-gray-700">Processed At:</span>
                     <span className="ml-2 text-gray-900">{format(new Date(selectedRun.processedAt), 'MMM dd, yyyy HH:mm')}</span>
                   </div>
+                )}
+                {(selectedRun.status.toLowerCase() === 'paid' || selectedRun.status.toLowerCase() === 'finalized') && (!selectedRun.totalNetPay || selectedRun.totalNetPay === 0) && (
+                   <div className="pt-2">
+                     <button
+                       onClick={() => {
+                         syncPayroll(selectedRun.id);
+                         setSelectedRun(null); // Close modal to refresh list
+                       }}
+                       disabled={processing}
+                       className="flex items-center gap-2 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 w-full justify-center"
+                     >
+                       <RefreshCw className="w-4 h-4" />
+                       Sync Totals
+                     </button>
+                   </div>
                 )}
               </div>
               <div className="flex justify-end pt-6">

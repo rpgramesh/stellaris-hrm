@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { 
   Users, 
   Search, 
@@ -46,7 +47,7 @@ import "jspdf-autotable";
 
 // --- Types ---
 
-type SubmissionStatus = 'Submitted' | 'Pending' | 'Approved' | 'Rejected' | 'Overdue';
+type SubmissionStatus = 'Draft' | 'Submitted' | 'Pending' | 'Approved' | 'Rejected' | 'Overdue';
 
 interface TimesheetSubmission {
   id: string;
@@ -80,14 +81,29 @@ const TREND_DATA = [
 // --- Component ---
 
 export default function TimesheetDashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [submissions, setSubmissions] = useState<TimesheetSubmission[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [deptFilter, setDeptFilter] = useState<string>("All");
+  const [payPeriodStart, setPayPeriodStart] = useState<string | null>(null);
+  const [payPeriodEnd, setPayPeriodEnd] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLive, setIsLive] = useState(false);
+  const [isHrAdmin, setIsHrAdmin] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [headcountTotal, setHeadcountTotal] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState<'week_start_date' | 'status' | 'total_hours'>('week_start_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Modal States
   const [selectedSubmission, setSelectedSubmission] = useState<TimesheetSubmission | null>(null);
@@ -99,41 +115,125 @@ export default function TimesheetDashboard() {
   // Edit Form State
   const [editFormData, setEditFormData] = useState<Partial<TimesheetSubmission>>({});
 
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, deptFilter, searchQuery, sortBy, sortDir, isHrAdmin, payPeriodStart, payPeriodEnd]);
+
+  useEffect(() => {
+    if (!searchParams) return;
+    const start = searchParams.get('payPeriodStart');
+    const end = searchParams.get('payPeriodEnd');
+    const q = searchParams.get('search');
+    setPayPeriodStart(start || null);
+    setPayPeriodEnd(end || null);
+    if (q) setSearchTerm(q);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const resolve = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+        if (!user) return;
+        const { data: emp } = await supabase
+          .from('employees')
+          .select('role, system_access_role')
+          .eq('user_id', user.id)
+          .limit(1)
+          .maybeSingle();
+        const role = String(emp?.role || emp?.system_access_role || '');
+        const isAdmin = ['HR Admin', 'HR Manager', 'Employer Admin', 'Administrator', 'Super Admin'].includes(role) || role.toLowerCase().includes('hr');
+        setIsHrAdmin(isAdmin);
+      } catch {
+      }
+    };
+    resolve();
+  }, []);
+
   const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { rows } = await timesheetService.listSubmissions();
+      const { rows, total, headcountTotal } = await timesheetService.listSubmissions({
+        page,
+        pageSize,
+        status: statusFilter as any,
+        department: deptFilter as any,
+        search: searchQuery,
+        payPeriodStart: payPeriodStart || undefined,
+        payPeriodEnd: payPeriodEnd || undefined,
+        sortBy,
+        sortDir,
+        admin: isHrAdmin,
+      });
       setSubmissions(rows as any);
+      setTotal(total || 0);
+      setHeadcountTotal(typeof headcountTotal === 'number' ? headcountTotal : null);
     } catch (error) {
       console.error("Error fetching initial timesheet data:", error);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [page, pageSize, statusFilter, deptFilter, searchQuery, payPeriodStart, payPeriodEnd, sortBy, sortDir, isHrAdmin]);
 
-  // Initial Data Load & Realtime Subscription
+  const showInsights = process.env.NEXT_PUBLIC_TIMESHEET_DASHBOARD_SHOW_INSIGHTS === 'true';
+
+  const formatShortDate = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '-';
+      return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    } catch {
+      return '-';
+    }
+  };
+
+  const clearPayPeriodFilter = () => {
+    if (!searchParams) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('payPeriodStart');
+    params.delete('payPeriodEnd');
+    const qs = params.toString();
+    router.replace(`/attendance/timesheets${qs ? `?${qs}` : ''}`);
+  };
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    fetchInitialData().finally(() => {
+      setLastRefresh(new Date());
+      setIsRefreshing(false);
+    });
+  }, [fetchInitialData]);
+
   useEffect(() => {
     fetchInitialData();
+  }, [fetchInitialData]);
+
+  useEffect(() => {
+    if (isHrAdmin) {
+      setIsLive(false);
+      return;
+    }
 
     const sub = subscribeToTableWithClient(
       supabase,
       { table: 'timesheets' },
       {
         onUpdate: (payload) => {
-          console.log('[Realtime] Timesheet updated:', payload.new);
           setSubmissions(prev => prev.map(s => 
             s.id === payload.new.id 
               ? { 
                   ...s, 
                   status: payload.new.status, 
-                  hoursLogged: Number(payload.new.total_hours) 
+                  hoursLogged: Number(payload.new.total_hours),
+                  submittedAt: payload.new.status !== 'Draft' ? (payload.new.updated_at || s.submittedAt) : undefined
                 } 
               : s
           ));
-        },
-        onInsert: () => {
-          // For simplicity, refetch everything on insert to ensure proper mapping/joining
-          handleRefresh();
         },
         onDelete: (payload) => {
           setSubmissions(prev => prev.filter(s => s.id !== payload.old.id));
@@ -145,15 +245,7 @@ export default function TimesheetDashboard() {
 
     setIsLive(true);
     return () => sub.unsubscribe();
-  }, [fetchInitialData]);
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    fetchInitialData().finally(() => {
-      setLastRefresh(new Date());
-      setIsRefreshing(false);
-    });
-  }, [fetchInitialData]);
+  }, [isHrAdmin]);
 
   const handleViewDetails = (sub: TimesheetSubmission) => {
     setSelectedSubmission(sub);
@@ -167,10 +259,21 @@ export default function TimesheetDashboard() {
     setSaveError(null);
   };
 
+  const formatApprovedHours = (hours: number) => {
+    if (!Number.isFinite(hours)) return '0';
+    return Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  };
+
   const handleSaveEdit = async () => {
     if (!selectedSubmission) return;
 
-    if (editFormData.hoursLogged === undefined || editFormData.hoursLogged < 0) {
+    if (!editFormData.status) {
+      setSaveError("Status is required.");
+      return;
+    }
+
+    const hours = Number(editFormData.hoursLogged);
+    if (!Number.isFinite(hours) || hours < 0) {
       setSaveError("Hours logged must be a positive number.");
       return;
     }
@@ -180,42 +283,40 @@ export default function TimesheetDashboard() {
 
     const oldData = submissions.find(s => s.id === selectedSubmission.id);
 
-    await optimisticMutation({
-      apply: () => {
-        setSubmissions(prev => prev.map(s => 
-          s.id === selectedSubmission.id 
-            ? { ...s, ...editFormData } as TimesheetSubmission
-            : s
-        ));
-        setIsEditModalOpen(false);
-      },
-      rollback: () => {
-        if (oldData) {
-          setSubmissions(prev => prev.map(s => s.id === oldData.id ? oldData : s));
-        }
-        setSaveError("Failed to sync changes with server. Rolling back...");
-        setIsEditModalOpen(true);
-      },
-      action: () => timesheetService.updateSubmission(selectedSubmission.id, editFormData as any)
-    }).finally(() => {
+    try {
+      await optimisticMutation({
+        apply: () => {
+          setSubmissions(prev => prev.map(s => 
+            s.id === selectedSubmission.id 
+              ? { ...s, ...editFormData, hoursLogged: hours } as TimesheetSubmission
+              : s
+          ));
+          setSelectedSubmission(prev => prev ? ({ ...prev, ...editFormData, hoursLogged: hours } as TimesheetSubmission) : prev);
+          setIsEditModalOpen(false);
+        },
+        rollback: () => {
+          if (oldData) {
+            setSubmissions(prev => prev.map(s => s.id === oldData.id ? oldData : s));
+          }
+          setSaveError("Failed to sync changes with server. Rolling back...");
+          setIsEditModalOpen(true);
+        },
+        action: () => timesheetService.updateSubmission(selectedSubmission.id, { status: editFormData.status as any, hoursLogged: hours })
+      });
+    } catch (e) {
+    } finally {
       setIsSaving(false);
-    });
+    }
   };
 
-  const filteredSubmissions = useMemo(() => {
-    return submissions.filter(sub => {
-      const matchesSearch = sub.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            sub.employeeId.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === "All" || sub.status === statusFilter;
-      const matchesDept = deptFilter === "All" || sub.department === deptFilter;
-      return matchesSearch && matchesStatus && matchesDept;
-    });
-  }, [submissions, searchTerm, statusFilter, deptFilter]);
+  const displayedSubmissions = submissions;
 
   const stats = useMemo(() => {
     const total = submissions.length;
+    const headcount = new Set(submissions.map(s => s.employeeId)).size;
     const submittedCount = submissions.filter(s => ['Submitted', 'Approved', 'Rejected'].includes(s.status)).length;
     const pending = submissions.filter(s => s.status === 'Pending').length;
+    const draft = submissions.filter(s => s.status === 'Draft').length;
     const approved = submissions.filter(s => s.status === 'Approved').length;
     const rejected = submissions.filter(s => s.status === 'Rejected').length;
     const overdue = submissions.filter(s => s.status === 'Overdue').length;
@@ -226,6 +327,8 @@ export default function TimesheetDashboard() {
 
     return {
       total,
+      headcount,
+      draft,
       submitted: submittedCount,
       pending,
       approved,
@@ -251,6 +354,7 @@ export default function TimesheetDashboard() {
       case 'Pending': return 'bg-amber-50 text-amber-700 border-amber-100';
       case 'Rejected': return 'bg-rose-50 text-rose-700 border-rose-100';
       case 'Overdue': return 'bg-slate-50 text-slate-700 border-slate-100';
+      case 'Draft': return 'bg-slate-50 text-slate-700 border-slate-200';
     }
   };
 
@@ -260,8 +364,7 @@ export default function TimesheetDashboard() {
     doc.setFontSize(10);
     doc.text(`Generated on: ${format(new Date(), "PPP p")}`, 14, 22);
     
-    const tableData = filteredSubmissions.map(sub => [
-      sub.employeeId,
+    const tableData = displayedSubmissions.map(sub => [
       sub.employeeName,
       sub.department,
       sub.status,
@@ -270,12 +373,81 @@ export default function TimesheetDashboard() {
     ]);
 
     (doc as any).autoTable({
-      head: [['ID', 'Name', 'Dept', 'Status', 'Hours', 'Submitted At']],
+      head: [['Name', 'Dept', 'Status', 'Hours', 'Submitted At']],
       body: tableData,
       startY: 30,
     });
     
     doc.save("timesheet-report.pdf");
+  };
+
+  const exportExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      setExportError(null);
+
+      const XLSX = await import('xlsx');
+
+      const exportRows: TimesheetSubmission[] = [];
+      let exportPage = 1;
+      const exportPageSize = 100;
+      let exportTotal = total;
+
+      while (true) {
+        const { rows, total } = await timesheetService.listSubmissions({
+          page: exportPage,
+          pageSize: exportPageSize,
+          status: statusFilter as any,
+          department: deptFilter as any,
+          search: searchQuery,
+          payPeriodStart: payPeriodStart || undefined,
+          payPeriodEnd: payPeriodEnd || undefined,
+          sortBy,
+          sortDir,
+          admin: isHrAdmin,
+        });
+        if (exportPage === 1) exportTotal = total || 0;
+        exportRows.push(...(rows as any));
+        if (exportRows.length >= exportTotal || rows.length === 0) break;
+        exportPage += 1;
+        if (exportPage > 50) break;
+      }
+
+      const sheetRows = exportRows.map(sub => ({
+        Employee: sub.employeeName,
+        Department: sub.department,
+        'Pay Period': sub.payPeriod,
+        Hours: sub.hoursLogged,
+        Status: sub.status,
+        'Submission Date': sub.submittedAt ? formatShortDate(sub.submittedAt) : '',
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(sheetRows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Timesheets');
+
+      const bytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([bytes], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+      const stamp = format(new Date(), 'yyyyMMdd-HHmm');
+      const filename = `timesheets-${stamp}.xlsx`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error('Excel export failed:', e);
+      setExportError(e?.message || 'Excel export failed. Please try again.');
+    } finally {
+      setIsExportingExcel(false);
+    }
   };
 
   return (
@@ -299,7 +471,20 @@ export default function TimesheetDashboard() {
           </div>
           <div className="flex items-center gap-2 text-slate-500 mt-1">
             <Calendar className="w-4 h-4" />
-            <span className="text-sm">Pay Period: Feb 16 - Feb 28, 2026</span>
+            <span className="text-sm">
+              {payPeriodStart && payPeriodEnd
+                ? `Pay Period: ${formatShortDate(payPeriodStart)} - ${formatShortDate(payPeriodEnd)}`
+                : 'Pay Period: All'}
+            </span>
+            {payPeriodStart && payPeriodEnd && (
+              <button
+                onClick={clearPayPeriodFilter}
+                className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-bold border border-blue-100 hover:bg-blue-100 transition-colors"
+              >
+                Filtered
+                <X className="w-3 h-3" />
+              </button>
+            )}
             <ChevronRight className="w-4 h-4" />
             <button 
               onClick={handleRefresh}
@@ -308,6 +493,7 @@ export default function TimesheetDashboard() {
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               <span className="text-xs">Refreshed {format(lastRefresh, "h:mm a")}</span>
             </button>
+            {exportError && <span className="text-xs font-semibold text-rose-600">{exportError}</span>}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -318,9 +504,17 @@ export default function TimesheetDashboard() {
             <FileText className="w-4 h-4 text-slate-500" />
             PDF Report
           </button>
-          <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm">
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            Excel Export
+          <button
+            onClick={exportExcel}
+            disabled={isExportingExcel || isLoading}
+            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isExportingExcel ? (
+              <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+            )}
+            {isExportingExcel ? 'Exporting...' : 'Excel Export'}
           </button>
         </div>
       </div>
@@ -373,7 +567,7 @@ export default function TimesheetDashboard() {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider">Total Headcount</p>
-              <p className="text-3xl font-bold text-slate-900 mt-1">{stats.total}</p>
+              <p className="text-3xl font-bold text-slate-900 mt-1">{headcountTotal ?? stats.headcount}</p>
             </div>
             <div className="p-2 bg-slate-50 rounded-lg">
               <Users className="w-6 h-6 text-slate-600" />
@@ -384,6 +578,7 @@ export default function TimesheetDashboard() {
       </div>
 
       {/* Charts Section */}
+      {showInsights && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <h3 className="text-lg font-bold text-slate-900 mb-6">Submission Trend</h3>
@@ -435,6 +630,7 @@ export default function TimesheetDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Filters & Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -458,6 +654,7 @@ export default function TimesheetDashboard() {
                 className="appearance-none bg-white border border-slate-200 rounded-lg pl-9 pr-8 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer hover:bg-slate-50 transition-all min-w-[140px] shadow-sm"
               >
                 <option value="All">All Statuses</option>
+                <option value="Draft">Draft</option>
                 <option value="Approved">Approved</option>
                 <option value="Submitted">Submitted</option>
                 <option value="Pending">Pending</option>
@@ -476,6 +673,36 @@ export default function TimesheetDashboard() {
                 {DEPARTMENTS.map(dept => (
                   <option key={dept} value={dept}>{dept}</option>
                 ))}
+              </select>
+            </div>
+            <div className="relative">
+              <select
+                value={`${sortBy}:${sortDir}`}
+                onChange={(e) => {
+                  const [by, dir] = e.target.value.split(':');
+                  setSortBy(by as any);
+                  setSortDir(dir as any);
+                }}
+                className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer hover:bg-slate-50 transition-all min-w-[160px] shadow-sm"
+              >
+                <option value="week_start_date:desc">Newest Pay Period</option>
+                <option value="week_start_date:asc">Oldest Pay Period</option>
+                <option value="status:asc">Status (A→Z)</option>
+                <option value="status:desc">Status (Z→A)</option>
+                <option value="total_hours:desc">Hours (High→Low)</option>
+                <option value="total_hours:asc">Hours (Low→High)</option>
+              </select>
+            </div>
+            <div className="relative">
+              <select
+                value={String(pageSize)}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer hover:bg-slate-50 transition-all min-w-[110px] shadow-sm"
+              >
+                <option value="10">10 / page</option>
+                <option value="20">20 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
               </select>
             </div>
           </div>
@@ -501,8 +728,8 @@ export default function TimesheetDashboard() {
                     <td colSpan={7} className="px-6 py-4 h-16 bg-slate-50/20" />
                   </tr>
                 ))
-              ) : filteredSubmissions.length > 0 ? (
-                filteredSubmissions.map((sub) => (
+              ) : displayedSubmissions.length > 0 ? (
+                displayedSubmissions.map((sub) => (
                   <tr key={sub.id} className="group hover:bg-slate-50/80 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -510,8 +737,11 @@ export default function TimesheetDashboard() {
                           {sub.employeeName.split(" ").map(n => n[0]).join("")}
                         </div>
                         <div>
-                          <div className="text-sm font-bold text-slate-900">{sub.employeeName}</div>
-                          <div className="text-[10px] font-medium text-slate-400 font-mono">{sub.employeeId}</div>
+                          <div className="text-sm font-bold text-slate-900">
+                            {sub.status === 'Approved'
+                              ? `${sub.employeeName} - ${formatApprovedHours(sub.hoursLogged)} hours`
+                              : sub.employeeName}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -524,12 +754,12 @@ export default function TimesheetDashboard() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="text-sm font-bold text-slate-700">{sub.hoursLogged} <span className="text-[10px] text-slate-400 font-medium">hrs</span></span>
+                        <span className="text-sm font-bold text-slate-700">{formatApprovedHours(sub.hoursLogged)} <span className="text-[10px] text-slate-400 font-medium">hrs</span></span>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="text-sm font-medium text-slate-500">
-                        {sub.submittedAt ? format(parseISO(sub.submittedAt), "MMM dd, yyyy") : "-"}
+                        {sub.submittedAt ? formatShortDate(sub.submittedAt) : "-"}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -538,7 +768,7 @@ export default function TimesheetDashboard() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => handleViewDetails(sub)}
                           className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" 
@@ -573,6 +803,30 @@ export default function TimesheetDashboard() {
             </tbody>
           </table>
         </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border-t border-slate-200 bg-white">
+          <div className="text-xs font-medium text-slate-500">
+            {total === 0 ? 'No results' : `Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Prev
+            </button>
+            <div className="text-sm font-semibold text-slate-700">
+              Page {page} / {Math.max(1, Math.ceil(total / pageSize))}
+            </div>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={page >= Math.ceil(total / pageSize)}
+              className="px-3 py-1.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* View Modal */}
@@ -595,7 +849,6 @@ export default function TimesheetDashboard() {
                 </div>
                 <div>
                   <h4 className="text-xl font-bold text-slate-900">{selectedSubmission.employeeName}</h4>
-                  <p className="text-sm font-medium text-slate-400 font-mono tracking-wider uppercase">{selectedSubmission.employeeId}</p>
                 </div>
               </div>
               
@@ -618,13 +871,13 @@ export default function TimesheetDashboard() {
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Hours Logged</p>
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-slate-400" />
-                    <p className="text-sm font-bold text-slate-700">{selectedSubmission.hoursLogged} hrs</p>
+                    <p className="text-sm font-bold text-slate-700">{formatApprovedHours(selectedSubmission.hoursLogged)} hrs</p>
                   </div>
                 </div>
                 <div className="col-span-2 space-y-1.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Submission Time</p>
                   <p className="text-sm font-bold text-slate-700">
-                    {selectedSubmission.submittedAt ? format(parseISO(selectedSubmission.submittedAt), "PPPP 'at' p") : "Not submitted yet"}
+                    {selectedSubmission.submittedAt ? formatShortDate(selectedSubmission.submittedAt) : "Not submitted yet"}
                   </p>
                 </div>
               </div>
@@ -680,6 +933,7 @@ export default function TimesheetDashboard() {
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all cursor-pointer hover:bg-slate-100"
                     disabled={isSaving}
                   >
+                    <option value="Draft">Draft</option>
                     <option value="Approved">Approved</option>
                     <option value="Submitted">Submitted</option>
                     <option value="Pending">Pending</option>

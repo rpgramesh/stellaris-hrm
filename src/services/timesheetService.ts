@@ -43,9 +43,12 @@ export const timesheetService = {
     status?: TimesheetStatus | 'All';
     department?: string | 'All';
     search?: string;
+    payPeriodStart?: string;
+    payPeriodEnd?: string;
     sortBy?: 'week_start_date' | 'status' | 'total_hours';
     sortDir?: 'asc' | 'desc';
-  }): Promise<{ rows: Array<{ id: string; employeeId: string; employeeName: string; department: string; jobTitle?: string; email?: string; phone?: string; hireDate?: string; empStatus?: string; status: any; submittedAt?: string; payPeriod: string; hoursLogged: number }>; total: number }> {
+    admin?: boolean;
+  }): Promise<{ rows: Array<{ id: string; employeeId: string; employeeName: string; department: string; jobTitle?: string; email?: string; phone?: string; hireDate?: string; empStatus?: string; status: any; submittedAt?: string; payPeriod: string; hoursLogged: number }>; total: number; headcountTotal?: number }> {
     const page = Math.max(1, options?.page || 1);
     const pageSize = Math.min(100, Math.max(1, options?.pageSize || 20));
     const allowedSorts = ['week_start_date', 'status', 'total_hours'] as const;
@@ -55,15 +58,60 @@ export const timesheetService = {
       : 'week_start_date';
     const ascending = (options?.sortDir || 'desc') === 'asc';
 
+    if (options?.admin) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error('Not authenticated');
+
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
+      if (options?.status) params.set('status', String(options.status));
+      if (options?.department) params.set('department', String(options.department));
+      if (options?.search) params.set('search', options.search);
+      if (options?.payPeriodStart) params.set('payPeriodStart', options.payPeriodStart);
+      if (options?.payPeriodEnd) params.set('payPeriodEnd', options.payPeriodEnd);
+      params.set('sortBy', sortBy);
+      params.set('sortDir', ascending ? 'asc' : 'desc');
+
+      const res = await fetch(`/api/timesheets/submissions?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Failed to load submissions');
+      }
+
+      return res.json();
+    }
+
     let employeeIds: string[] | null = null;
     if ((options?.department && options.department !== 'All') || (options?.search && options.search.trim() !== '')) {
       let empQuery = supabase.from('employees').select('id');
       if (options?.department && options.department !== 'All') {
-        empQuery = empQuery.eq('department', options.department);
+        const { data: deptRow, error: deptErr } = await supabase
+          .from('departments')
+          .select('id')
+          .eq('name', options.department)
+          .limit(1)
+          .maybeSingle();
+        if (deptErr) throw deptErr;
+        if (!deptRow?.id) return { rows: [], total: 0 };
+        empQuery = empQuery.eq('department_id', deptRow.id);
       }
       if (options?.search && options.search.trim() !== '') {
         const s = options.search.trim();
-        empQuery = empQuery.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,id.ilike.%${s}%`);
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+        if (uuid) {
+          empQuery = empQuery.or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,id.eq.${s}`);
+        } else {
+          const parts = s.split(/\s+/).filter(Boolean).slice(0, 5);
+          const orClauses = parts.flatMap((p) => [`first_name.ilike.%${p}%`, `last_name.ilike.%${p}%`]).join(',');
+          empQuery = empQuery.or(orClauses || `first_name.ilike.%${s}%,last_name.ilike.%${s}%`);
+        }
       }
       const { data: emps, error: empErr } = await empQuery.limit(1000);
       if (empErr) throw empErr;
@@ -73,12 +121,18 @@ export const timesheetService = {
       }
     }
 
-    let base = supabase.from('timesheets').select('id, employee_id, week_start_date, status, total_hours', { count: 'exact' });
+    let base = supabase.from('timesheets').select('id, employee_id, week_start_date, status, total_hours, updated_at', { count: 'exact' });
     if (options?.status && options.status !== 'All') {
       base = base.eq('status', options.status);
     }
     if (employeeIds) {
       base = base.in('employee_id', employeeIds);
+    }
+    if (options?.payPeriodStart) {
+      base = base.gte('week_start_date', options.payPeriodStart);
+    }
+    if (options?.payPeriodEnd) {
+      base = base.lte('week_start_date', options.payPeriodEnd);
     }
 
     const from = (page - 1) * pageSize;
@@ -96,7 +150,7 @@ export const timesheetService = {
       if (missing.length > 0) {
         const { data: emps } = await supabase
           .from('employees')
-          .select('id, first_name, last_name, email, phone, start_date, employment_status, department:departments(name), position:job_positions(title)')
+          .select('id, first_name, last_name, email, phone, start_date, employment_status, department:departments!employees_department_id_fkey(name), position:job_positions(title)')
           .in('id', missing);
         for (const e of emps || []) {
           employeesById[e.id] = e;
@@ -104,6 +158,25 @@ export const timesheetService = {
         employeeCache.setMany((emps || []) as any);
       }
     }
+    const approvedIds = rows.filter((t: any) => t.status === 'Approved').map((t: any) => t.id);
+    const approvedHoursByTimesheetId: Record<string, number> = {};
+    if (approvedIds.length > 0) {
+      const { data: rowsWithEntries, error: rowsErr } = await supabase
+        .from('timesheet_rows')
+        .select('timesheet_id, timesheet_entries(hours)')
+        .in('timesheet_id', approvedIds);
+      if (rowsErr) {
+        console.error('Failed to aggregate approved hours:', rowsErr);
+      } else {
+        // Aggregate per timesheet
+        for (const r of rowsWithEntries || []) {
+          const tid = r.timesheet_id;
+          const sum = (r.timesheet_entries || []).reduce((acc: number, e: any) => acc + Number(e.hours || 0), 0);
+          approvedHoursByTimesheetId[tid] = (approvedHoursByTimesheetId[tid] || 0) + sum;
+        }
+      }
+    }
+
     const mapped = rows.map((t: any) => {
       const e = employeesById[t.employee_id] || {};
       const name = [e.first_name, e.last_name].filter(Boolean).join(' ') || t.employee_id;
@@ -111,6 +184,7 @@ export const timesheetService = {
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 6);
       const payPeriod = `${startDate.toISOString().slice(0, 10)} - ${endDate.toISOString().slice(0, 10)}`;
+      const derivedApprovedHours = approvedHoursByTimesheetId[t.id];
       return {
         id: t.id,
         employeeId: t.employee_id,
@@ -122,12 +196,29 @@ export const timesheetService = {
         hireDate: e?.start_date,
         empStatus: e?.employment_status,
         status: t.status,
-        submittedAt: undefined,
+        submittedAt: t.status && t.status !== 'Draft' ? (t.updated_at || undefined) : undefined,
         payPeriod,
-        hoursLogged: Number(t.total_hours || 0),
+        hoursLogged: t.status === 'Approved'
+          ? Number(derivedApprovedHours ?? t.total_hours ?? 0)
+          : Number(t.total_hours || 0),
       };
     });
-    return { rows: mapped, total: count || 0 };
+
+    let headcountTotal: number | undefined = undefined;
+    try {
+      const statusParam = options?.status && options.status !== 'All' ? String(options.status) : null;
+      const { data: hc, error: hcErr } = await supabase.rpc('timesheets_count_distinct_employees', {
+        p_status: statusParam,
+        p_employee_ids: employeeIds || null,
+        p_week_start_from: options?.payPeriodStart || null,
+        p_week_start_to: options?.payPeriodEnd || null,
+      } as any);
+      if (hcErr) throw hcErr;
+      if (typeof hc === 'number') headcountTotal = hc;
+    } catch {
+    }
+
+    return { rows: mapped, total: count || 0, headcountTotal };
   },
 
   async getEmployeeTimesheetDetail(employeeId: string): Promise<{ employee: any; timesheets: Timesheet[] }> {

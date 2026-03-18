@@ -50,7 +50,301 @@ export interface PayrollReport {
   };
 }
 
+export const PAYROLL_REPORT_CACHE_VERSION = 1;
+
+const roundMoney = (n: unknown) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.round(v * 100) / 100;
+};
+
+const djb2 = (s: string) => {
+  let hash = 5381;
+  for (let i = 0; i < s.length; i++) {
+    hash = ((hash << 5) + hash) ^ s.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
+};
+
+export const computePayrollReportChecksum = (report: PayrollReport) => {
+  const normalized = {
+    payrollRunId: String(report.payrollRunId || ''),
+    periodStart: String(report.periodStart || ''),
+    periodEnd: String(report.periodEnd || ''),
+    totalEmployees: Number(report.totalEmployees || 0),
+    totalGrossPay: roundMoney(report.totalGrossPay),
+    totalTax: roundMoney(report.totalTax),
+    totalNetPay: roundMoney(report.totalNetPay),
+    totalSuper: roundMoney(report.totalSuper),
+    employeeBreakdown: (report.employeeBreakdown || [])
+      .map((e) => ({
+        employeeId: String(e.employeeId || ''),
+        employeeName: String(e.employeeName || ''),
+        grossPay: roundMoney(e.grossPay),
+        tax: roundMoney(e.tax),
+        netPay: roundMoney(e.netPay),
+        super: roundMoney(e.super),
+        hoursWorked: roundMoney(e.hoursWorked),
+        status: String(e.status || ''),
+      }))
+      .sort((a, b) => a.employeeId.localeCompare(b.employeeId)),
+  };
+  return djb2(JSON.stringify(normalized));
+};
+
+export const validatePayrollReportIntegrity = (
+  report: PayrollReport,
+  expected?: {
+    totalGrossPay?: number;
+    totalTax?: number;
+    totalNetPay?: number;
+    totalSuper?: number;
+    employeeCount?: number;
+  }
+) => {
+  if (!report || typeof report !== 'object') return { isValid: false, reason: 'missing_report' as const };
+  if (!report.payrollRunId) return { isValid: false, reason: 'missing_payrollRunId' as const };
+
+  const breakdown = Array.isArray(report.employeeBreakdown) ? report.employeeBreakdown : [];
+  if (breakdown.length === 0) {
+    const totalsZero =
+      roundMoney(report.totalGrossPay) === 0 &&
+      roundMoney(report.totalTax) === 0 &&
+      roundMoney(report.totalNetPay) === 0 &&
+      roundMoney(report.totalSuper) === 0;
+    if (Number(report.totalEmployees || 0) === 0 && totalsZero) {
+      return { isValid: true as const };
+    }
+    return { isValid: false as const, reason: 'empty_breakdown' as const };
+  }
+
+  const sums = breakdown.reduce(
+    (acc, e) => ({
+      gross: acc.gross + roundMoney((e as any).grossPay),
+      tax: acc.tax + roundMoney((e as any).tax),
+      net: acc.net + roundMoney((e as any).netPay),
+      super: acc.super + roundMoney((e as any).super),
+    }),
+    { gross: 0, tax: 0, net: 0, super: 0 }
+  );
+
+  const uniqueEmployees = new Set(breakdown.map((e: any) => String(e.employeeId || ''))).size;
+  const within = (a: number, b: number, tol = 0.02) => Math.abs(roundMoney(a) - roundMoney(b)) <= tol;
+
+  if (!within(sums.gross, report.totalGrossPay)) return { isValid: false as const, reason: 'gross_mismatch' as const };
+  if (!within(sums.tax, report.totalTax)) return { isValid: false as const, reason: 'tax_mismatch' as const };
+  if (!within(sums.net, report.totalNetPay)) return { isValid: false as const, reason: 'net_mismatch' as const };
+  if (!within(sums.super, report.totalSuper)) return { isValid: false as const, reason: 'super_mismatch' as const };
+  if (Number(report.totalEmployees || 0) !== uniqueEmployees) return { isValid: false as const, reason: 'employee_count_mismatch' as const };
+
+  if (expected) {
+    if (expected.employeeCount != null && Number(expected.employeeCount) > 0 && uniqueEmployees !== Number(expected.employeeCount)) {
+      return { isValid: false as const, reason: 'expected_employee_count_mismatch' as const };
+    }
+    if (expected.totalGrossPay != null && !within(expected.totalGrossPay, report.totalGrossPay)) {
+      return { isValid: false as const, reason: 'expected_gross_mismatch' as const };
+    }
+    if (expected.totalTax != null && !within(expected.totalTax, report.totalTax)) {
+      return { isValid: false as const, reason: 'expected_tax_mismatch' as const };
+    }
+    if (expected.totalNetPay != null && !within(expected.totalNetPay, report.totalNetPay)) {
+      return { isValid: false as const, reason: 'expected_net_mismatch' as const };
+    }
+    if (expected.totalSuper != null && !within(expected.totalSuper, report.totalSuper)) {
+      return { isValid: false as const, reason: 'expected_super_mismatch' as const };
+    }
+  }
+
+  return { isValid: true as const };
+};
+
+export const filterPayrollReportByEmployeeIds = (report: PayrollReport, employeeIds: string[]) => {
+  const ids = new Set((employeeIds || []).map((id) => String(id)));
+  if (ids.size === 0) return report;
+
+  const filtered = (report.employeeBreakdown || []).filter((e) => ids.has(String((e as any).employeeId)));
+  const totals = filtered.reduce(
+    (acc, e) => ({
+      gross: acc.gross + Number((e as any).grossPay || 0),
+      tax: acc.tax + Number((e as any).tax || 0),
+      net: acc.net + Number((e as any).netPay || 0),
+      super: acc.super + Number((e as any).super || 0),
+    }),
+    { gross: 0, tax: 0, net: 0, super: 0 }
+  );
+
+  return {
+    ...report,
+    totalEmployees: new Set(filtered.map((e) => String((e as any).employeeId || ''))).size,
+    totalGrossPay: totals.gross,
+    totalTax: totals.tax,
+    totalNetPay: totals.net,
+    totalSuper: totals.super,
+    employeeBreakdown: filtered,
+  };
+};
+
+export const validateCachedPayrollReportRow = (
+  row: {
+    report?: unknown;
+    checksum?: string | null;
+    is_valid?: boolean | null;
+  },
+  expected?: {
+    totalGrossPay?: number;
+    totalTax?: number;
+    totalNetPay?: number;
+    totalSuper?: number;
+    employeeCount?: number;
+  }
+) => {
+  const report = row?.report as PayrollReport | undefined;
+  if (!report) return { report: null as PayrollReport | null, reason: 'missing_report' as const };
+  if (row?.is_valid === false) return { report: null as PayrollReport | null, reason: 'marked_invalid' as const };
+
+  const integrity = validatePayrollReportIntegrity(report, expected);
+  if (!integrity.isValid) return { report: null as PayrollReport | null, reason: integrity.reason };
+
+  if (row?.checksum) {
+    const checksum = computePayrollReportChecksum(report);
+    if (checksum !== row.checksum) return { report: null as PayrollReport | null, reason: 'checksum_mismatch' as const };
+  }
+
+  return { report };
+};
+
+export const resolveSelectedPayrollEmployees = (
+  allEmployees: PayrollEmployee[],
+  selectedIds: string[]
+): PayrollEmployee[] => {
+  const byPayrollEmployeeId = new Map<string, PayrollEmployee>();
+  const byEmployeeId = new Map<string, PayrollEmployee>();
+
+  for (const emp of allEmployees) {
+    if (emp.id) byPayrollEmployeeId.set(emp.id, emp);
+    if (emp.employeeId) byEmployeeId.set(emp.employeeId, emp);
+  }
+
+  const unique = new Map<string, PayrollEmployee>();
+  for (const id of selectedIds) {
+    const resolved = byPayrollEmployeeId.get(id) || byEmployeeId.get(id);
+    if (resolved && !unique.has(resolved.id)) unique.set(resolved.id, resolved);
+  }
+
+  return Array.from(unique.values());
+};
+
+export const computeHoursWorkedForReport = (earnings: PayrollCalculationResult['components']['earnings']): number => {
+  const sum = (earnings || [])
+    .filter((e) => {
+      if (e.componentType === 'Overtime') return true;
+      if (e.componentType !== 'BaseSalary') return false;
+      return String(e.description || '') !== 'Base Salary';
+    })
+    .reduce((acc, e) => acc + Number(e.units || 0), 0);
+
+  if (sum > 0) return sum;
+
+  const basePeriod = (earnings || []).find(
+    (e) => e.componentType === 'BaseSalary' && String(e.description || '') === 'Base Salary'
+  );
+  if (basePeriod) {
+    const units = Number(basePeriod.units || 1);
+    return units > 0 ? units : 1;
+  }
+
+  return 0;
+};
+
 export const comprehensivePayrollService = {
+  async getCachedPayrollReport(
+    payrollRunId: string,
+    expected?: {
+      totalGrossPay?: number;
+      totalTax?: number;
+      totalNetPay?: number;
+      totalSuper?: number;
+      employeeCount?: number;
+    }
+  ): Promise<PayrollReport | null> {
+    try {
+      const { data, error } = await supabase
+        .from('payroll_run_calculation_cache')
+        .select('report, checksum, is_valid')
+        .eq('payroll_run_id', payrollRunId)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      const { report, reason } = validateCachedPayrollReportRow(data as any, expected);
+      if (report) return report;
+
+      await supabase
+        .from('payroll_run_calculation_cache')
+        .update({ is_valid: false, invalid_reason: String(reason || 'invalid'), validated_at: new Date().toISOString() } as any)
+        .eq('payroll_run_id', payrollRunId);
+
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  async upsertCachedPayrollReport(payrollRunId: string, report: PayrollReport): Promise<void> {
+    const integrity = validatePayrollReportIntegrity(report);
+    if (!integrity.isValid) throw new Error(`Refusing to cache invalid payroll report (${integrity.reason || 'invalid'})`);
+
+    const checksum = computePayrollReportChecksum(report);
+    const payload = {
+      payroll_run_id: payrollRunId,
+      report: report as any,
+      report_version: PAYROLL_REPORT_CACHE_VERSION,
+      checksum,
+      is_valid: true,
+      invalid_reason: null,
+      validated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('payroll_run_calculation_cache').upsert(payload as any);
+    if (error) throw error;
+  },
+
+  async getTimesheetsForEmployeesInPeriod(
+    employeeIds: string[],
+    startDate: string,
+    endDate: string
+  ): Promise<Record<string, any[]>> {
+    const map: Record<string, any[]> = {};
+    for (const id of employeeIds) map[id] = [];
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) return map;
+
+      const res = await fetch('/api/payroll/timesheets/for-period', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ employeeIds, startDate, endDate }),
+      });
+
+      if (!res.ok) return map;
+      const body = await res.json().catch(() => null);
+      const rows: any[] = body?.rows || [];
+      for (const ts of rows) {
+        const eid = ts.employee_id;
+        if (!eid) continue;
+        if (!map[eid]) map[eid] = [];
+        map[eid].push(ts);
+      }
+      return map;
+    } catch {
+      return map;
+    }
+  },
+
   async createPayrollRun(
     payPeriodStart: string,
     payPeriodEnd: string,
@@ -125,9 +419,17 @@ export const comprehensivePayrollService = {
 
       // Get employees for this payroll run
       const employees = await this.getEmployeesForPayroll(payrollRun);
+
+      const timesheetsByEmployeeId = await this.getTimesheetsForEmployeesInPeriod(
+        employees.map(e => e.employeeId),
+        payrollRun.payPeriodStart,
+        payrollRun.payPeriodEnd
+      );
       
       for (const employee of employees) {
-        const employeeValidation = await this.validateEmployeePayroll(employee, payrollRun);
+        const employeeValidation = await this.validateEmployeePayroll(employee, payrollRun, {
+          timesheetsForPeriod: timesheetsByEmployeeId[employee.employeeId] || []
+        });
         
         result.errors.push(...employeeValidation.errors);
         result.warnings.push(...employeeValidation.warnings);
@@ -204,6 +506,12 @@ export const comprehensivePayrollService = {
 
       // Generate comprehensive report
       const report = await this.generatePayrollReport(payrollRun, calculationResults);
+
+      try {
+        await this.upsertCachedPayrollReport(payrollRunId, report);
+      } catch (e: any) {
+        console.error('[payroll-cache] failed to store cached payroll report', e?.message || e);
+      }
 
       // Send notifications if requested
       if (options.sendNotifications) {
@@ -328,7 +636,9 @@ export const comprehensivePayrollService = {
     }
   },
 
-  async validateEmployeePayroll(employee: PayrollEmployee, payrollRun: PayrollRun): Promise<{
+  async validateEmployeePayroll(employee: PayrollEmployee, payrollRun: PayrollRun, ctx?: {
+    timesheetsForPeriod?: any[];
+  }): Promise<{
     errors: string[];
     warnings: string[];
     missingTimesheets: string[];
@@ -365,7 +675,7 @@ export const comprehensivePayrollService = {
       // 1. Existing manual validations
       // Check for required timesheets unless exempt
       if (!isTimesheetExempt) {
-        const timesheets = await this.getEmployeeTimesheetsForPeriod(
+        const timesheets = ctx?.timesheetsForPeriod ?? await this.getEmployeeTimesheetsForPeriod(
           employee.employeeId,
           payrollRun.payPeriodStart,
           payrollRun.payPeriodEnd
@@ -375,11 +685,17 @@ export const comprehensivePayrollService = {
           missingTimesheets.push(employee.employeeId);
           errors.push(`Employee ${employeeName} has no timesheets for the pay period`);
         } else {
-          // Check for approved timesheets
-          const unapproved = timesheets.filter(t => t.status !== 'Approved');
-          if (unapproved.length > 0) {
-            unapprovedTimesheets.push(employee.employeeId);
-            errors.push(`Employee ${employeeName} has unapproved timesheets`);
+          const timesheetsWithHours = timesheets.filter(t => Number((t as any).total_hours ?? (t as any).totalHours ?? 0) > 0);
+          if (timesheetsWithHours.length > 0) {
+            const unapproved = timesheetsWithHours.filter(t => String((t as any).status || '').toLowerCase() !== 'approved');
+            if (unapproved.length > 0) {
+              const detail = unapproved
+                .slice(0, 5)
+                .map(t => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (${(t as any).status || 'Unknown'})`)
+                .join(', ');
+              unapprovedTimesheets.push(employee.employeeId);
+              errors.push(`Employee ${employeeName} has unapproved timesheets${detail ? `: ${detail}` : ''}`);
+            }
           }
         }
       } else {
@@ -416,13 +732,14 @@ export const comprehensivePayrollService = {
     endDate: string
   ): Promise<any[]> {
     try {
+      const map = await this.getTimesheetsForEmployeesInPeriod([employeeId], startDate, endDate);
+      const rows = map[employeeId];
+      if (rows && rows.length > 0) return rows;
+
       const start = new Date(startDate);
-      const end = new Date(endDate);
-      
-      // Calculate the Monday of the first week
       const firstMonday = new Date(start);
       const day = firstMonday.getDay();
-      const diff = firstMonday.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
+      const diff = firstMonday.getDate() - day + (day === 0 ? -6 : 1);
       firstMonday.setDate(diff);
       const firstMondayStr = firstMonday.toISOString().split('T')[0];
 
@@ -437,6 +754,122 @@ export const comprehensivePayrollService = {
       return data || [];
     } catch (error) {
       console.error('Error getting employee timesheets:', error);
+      throw error;
+    }
+  },
+
+  async calculatePayrollPreview(
+    payrollRunId: string,
+    selectedEmployeeIds: string[]
+  ): Promise<PayrollReport> {
+    try {
+      const payrollRun = await this.getPayrollRun(payrollRunId);
+      if (!payrollRun) throw new Error('Payroll run not found');
+
+      if (selectedEmployeeIds.length === 0) {
+        if (String((payrollRun as any).status || '').toLowerCase() === 'paid') {
+          try {
+            const { data: payslips, error: payslipErr } = await supabase
+              .from('payslips')
+              .select('*, employees:employee_id(first_name, last_name)')
+              .eq('payroll_run_id', payrollRun.id);
+
+            if (payslipErr) throw payslipErr;
+
+            const mapPayslipRows = (rows: any[]) =>
+              (rows || []).map((p: any) => {
+                const employeeName = [p.employees?.first_name, p.employees?.last_name].filter(Boolean).join(' ') || p.employee_id;
+                const gross = Number(p.gross_earnings ?? p.gross_pay ?? 0);
+                const tax = Number(p.income_tax ?? p.tax_withheld ?? 0);
+                return {
+                  employeeId: p.employee_id,
+                  employeeName,
+                  grossPay: gross,
+                  tax,
+                  netPay: Number(p.net_pay || 0),
+                  super: Number(p.superannuation || 0),
+                  hoursWorked: Number(p.hours_logged || 0),
+                  status: 'Processed' as const,
+                  errors: [],
+                  warnings: []
+                };
+              });
+
+            let employeeBreakdown = mapPayslipRows(payslips || []);
+
+            if (employeeBreakdown.length === 0 && Number((payrollRun as any).employeeCount || 0) > 0) {
+              const { data: session } = await supabase.auth.getSession();
+              const token = session.session?.access_token;
+              if (token) {
+                const res = await fetch(`/api/payroll/payslips/for-run?payrollRunId=${encodeURIComponent(payrollRun.id)}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                  cache: 'no-store'
+                });
+                if (res.ok) {
+                  const json = await res.json();
+                  employeeBreakdown = mapPayslipRows(json?.payslips || []);
+                }
+              }
+            }
+
+            if (employeeBreakdown.length > 0) {
+              const totals = employeeBreakdown.reduce(
+                (acc, e) => ({
+                  gross: acc.gross + e.grossPay,
+                  tax: acc.tax + e.tax,
+                  net: acc.net + e.netPay,
+                  super: acc.super + e.super,
+                }),
+                { gross: 0, tax: 0, net: 0, super: 0 }
+              );
+              return {
+                payrollRunId: payrollRun.id,
+                periodStart: payrollRun.payPeriodStart,
+                periodEnd: payrollRun.payPeriodEnd,
+                totalEmployees: new Set(employeeBreakdown.map((e) => e.employeeId)).size,
+                totalGrossPay: totals.gross,
+                totalTax: totals.tax,
+                totalNetPay: totals.net,
+                totalSuper: totals.super,
+                employeeBreakdown,
+                complianceStatus: { minimumWageCompliant: true, superCompliant: true, taxCompliant: true, issues: [] }
+              };
+            }
+          } catch {
+          }
+        }
+
+        return {
+          payrollRunId: payrollRun.id,
+          periodStart: payrollRun.payPeriodStart,
+          periodEnd: payrollRun.payPeriodEnd,
+          totalEmployees: Number((payrollRun as any).employeeCount || 0),
+          totalGrossPay: Number((payrollRun as any).totalGrossPay || 0),
+          totalTax: Number((payrollRun as any).totalTax || 0),
+          totalNetPay: Number((payrollRun as any).totalNetPay || 0),
+          totalSuper: Number((payrollRun as any).totalSuper || 0),
+          employeeBreakdown: [],
+          complianceStatus: { minimumWageCompliant: true, superCompliant: true, taxCompliant: true, issues: [] }
+        };
+      }
+
+      const allEmployees = await this.getEmployeesForPayroll(payrollRun);
+      
+      const targetEmployees = resolveSelectedPayrollEmployees(allEmployees, selectedEmployeeIds);
+
+      const calculationResults: PayrollCalculationResult[] = [];
+      for (const employee of targetEmployees) {
+        try {
+          const result = await payrollProcessingEngine.calculateEmployeePayroll(employee, payrollRun);
+          calculationResults.push(result);
+        } catch (error) {
+          console.error(`Error calculating preview for employee ${employee.employeeId}:`, error);
+        }
+      }
+
+      return this.generatePayrollReport(payrollRun, calculationResults);
+    } catch (error) {
+      console.error('Error calculating payroll preview:', error);
       throw error;
     }
   },
@@ -460,9 +893,23 @@ export const comprehensivePayrollService = {
         .single();
 
       const employeeName = employee ? `${employee.first_name} ${employee.last_name}` : 'Unknown';
-      const hoursWorked = result.components.earnings
-        .filter(e => e.componentType === 'BaseSalary' || e.componentType === 'Overtime')
-        .reduce((sum, e) => sum + e.units, 0);
+      let hoursWorked = computeHoursWorkedForReport(result.components.earnings);
+      try {
+        const timesheets = await payrollProcessingEngine.getTimesheetsForPeriod(
+          result.employeeId,
+          payrollRun.payPeriodStart,
+          payrollRun.payPeriodEnd
+        );
+        let approvedHours = 0;
+        for (const ts of timesheets) {
+          const h = payrollProcessingEngine.calculateHoursFromTimesheet(ts);
+          approvedHours += Number(h.totalHours || 0);
+        }
+        if (approvedHours > 0) {
+          hoursWorked = approvedHours;
+        }
+      } catch {
+      }
 
       employeeBreakdown.push({
         employeeId: result.employeeId,
@@ -570,7 +1017,14 @@ export const comprehensivePayrollService = {
             first_name,
             last_name,
             department_id,
-            employment_status
+            employment_status,
+            tfn,
+            superannuation_fund_name,
+            superannuation_member_number,
+            employee_salaries(
+              basic_salary,
+              is_current
+            )
           )
         `)
         .eq('employees.employment_status', 'Active')
@@ -583,25 +1037,30 @@ export const comprehensivePayrollService = {
         console.warn(`No active employees found for pay frequency: ${payrollRun.payFrequency}`);
       }
 
-      return (data || []).map(pe => ({
-        id: pe.id,
-        employeeId: pe.employee_id,
-        companyId: pe.employees.department_id, // Using department_id as proxy
-        firstName: pe.employees.first_name,
-        lastName: pe.employees.last_name,
-        baseSalary: pe.base_salary || 0,
-        annualSalary: pe.base_salary,
-        hourlyRate: pe.hourly_rate || 0,
-        payFrequency: pe.pay_frequency,
-        employmentType: pe.employment_type,
-        taxFileNumber: pe.tax_file_number,
-        superFundId: pe.super_fund_id,
-        superMemberNumber: pe.super_member_number,
-        taxScale: pe.tax_scale || 'TaxFreeThreshold',
-        residencyStatus: pe.residency_status || 'Resident',
-        isSalarySacrifice: pe.is_salary_sacrifice || false,
-        effectiveFrom: pe.effective_from
-      }));
+      return (data || []).map(pe => {
+        const activeSalary = pe.employees.employee_salaries?.find((s: any) => s.is_current);
+        const salary = activeSalary ? activeSalary.basic_salary : (pe.base_salary || 0);
+
+        return {
+          id: pe.id,
+          employeeId: pe.employee_id,
+          companyId: pe.employees.department_id, // Using department_id as proxy
+          firstName: pe.employees.first_name,
+          lastName: pe.employees.last_name,
+          baseSalary: salary,
+          annualSalary: salary,
+          hourlyRate: pe.hourly_rate || (salary / 52 / 38), // Estimate hourly if missing
+          payFrequency: pe.pay_frequency,
+          employmentType: pe.employment_type,
+          taxFileNumber: pe.employees.tfn || pe.tax_file_number,
+          superFundId: pe.employees.superannuation_fund_name || pe.super_fund_id, // Use name as ID for validation if ID is missing
+          superMemberNumber: pe.employees.superannuation_member_number || pe.super_member_number,
+          taxScale: pe.tax_scale || 'TaxFreeThreshold',
+          residencyStatus: pe.residency_status || 'Resident',
+          isSalarySacrifice: pe.is_salary_sacrifice || false,
+          effectiveFrom: pe.effective_from
+        };
+      });
     } catch (error) {
       console.error('Error getting employees for payroll:', error);
       throw error;

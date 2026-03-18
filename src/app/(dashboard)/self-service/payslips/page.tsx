@@ -11,9 +11,10 @@ import {
   AlertCircle,
   CheckCircle
 } from 'lucide-react';
-import { payrollService } from '@/services/payrollService';
 import { supabase } from '@/lib/supabase';
-import { comprehensivePayrollService } from '@/services/comprehensivePayrollService';
+import { auditService } from '@/services/auditService';
+import { pdfGeneratorService } from '@/services/pdfGeneratorService';
+import { computeCalendarYearYtdTotals, getPayslipAmounts, getPayslipDates, validatePayslip } from '@/lib/payroll/payslipUtils';
 
 interface Payslip {
   id: string;
@@ -64,39 +65,41 @@ export default function EmployeePayslipsPage() {
   const loadEmployeePayslips = async () => {
     try {
       setLoading(true);
-      
-      // In a real implementation, this would get the current employee ID from auth context
-      const currentEmployeeId = 'current-employee-id'; // Placeholder
-      
-      // Load employee details
-      const { data: employeeData } = await supabase
-        .from('employees')
-        .select(`
-          id,
-          first_name,
-          last_name,
-          employee_code,
-          departments:name,
-          job_positions:title,
-          employment_type
-        `)
-        .eq('user_id', 'current-user-id') // Would get from auth
-        .single();
 
-      if (employeeData) {
-        setEmployee({
-          ...employeeData,
-          department: employeeData.departments?.name,
-          position: employeeData.job_positions?.title
-        });
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      const user = userData?.user;
+      if (!user) {
+        setEmployee(null);
+        setPayslips([]);
+        return;
       }
 
-      // Load payslips for the employee
-      const employeePayslips = await payrollService.getPayslipsByEmployeeId(currentEmployeeId);
-      
-      // Load detailed pay components for each payslip
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employees')
+        .select('id, first_name, last_name, employee_code, employment_type, email')
+        .eq('user_id', user.id)
+        .single();
+
+      if (employeeError) throw employeeError;
+      if (!employeeData) {
+        setEmployee(null);
+        setPayslips([]);
+        return;
+      }
+
+      setEmployee(employeeData as any);
+
+      const { data: payslipRows, error: payslipError } = await supabase
+        .from('payslips')
+        .select('*')
+        .eq('employee_id', employeeData.id)
+        .order('payment_date', { ascending: false });
+
+      if (payslipError) throw payslipError;
+
       const payslipsWithDetails: Payslip[] = await Promise.all(
-        employeePayslips.map(async (p) => {
+        ((payslipRows as any[]) || []).map(async (p) => {
           const { data: components } = await supabase
             .from('pay_components')
             .select('*')
@@ -104,16 +107,16 @@ export default function EmployeePayslipsPage() {
 
           const mapped: Payslip = {
             id: p.id,
-            period_start: (p as any).period_start ?? (p as any).periodStart,
-            period_end: (p as any).period_end ?? (p as any).periodEnd,
-            gross_pay: (p as any).gross_pay ?? (p as any).grossPay ?? 0,
-            net_pay: (p as any).net_pay ?? (p as any).netPay ?? 0,
-            tax_withheld: (p as any).tax_withheld ?? (p as any).paygTax ?? 0,
-            superannuation: (p as any).superannuation ?? 0,
-            allowances: (p as any).allowances ?? 0,
-            overtime: (p as any).overtime ?? 0,
-            payment_date: (p as any).payment_date ?? (p as any).paymentDate,
-            status: (p as any).status,
+            period_start: p.period_start,
+            period_end: p.period_end,
+            gross_pay: Number(p.gross_pay || 0),
+            net_pay: Number(p.net_pay || 0),
+            tax_withheld: Number(p.tax_withheld ?? p.payg_tax ?? 0),
+            superannuation: Number(p.superannuation || 0),
+            allowances: Number(p.allowances || 0),
+            overtime: Number(p.overtime || 0),
+            payment_date: p.payment_date,
+            status: p.status as any,
             pay_components: (components as any) || []
           };
           return mapped;
@@ -131,24 +134,23 @@ export default function EmployeePayslipsPage() {
   const downloadPayslip = async (payslipId: string) => {
     try {
       setDownloading(payslipId);
-      
-      // Generate PDF for the payslip
-      const pdfBuffer = await comprehensivePayrollService.generatePayslipPDF(payslipId);
-      
-      // Create blob and download
-      const arrayBuffer: ArrayBuffer = (pdfBuffer as any)?.buffer instanceof ArrayBuffer 
-        ? (pdfBuffer as any).buffer 
-        : (pdfBuffer as unknown as ArrayBuffer);
-      const blob = new Blob([pdfBuffer as any], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `payslip-${selectedPayslip?.period_start}-${selectedPayslip?.period_end}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      
+
+      const payslip = payslips.find((p) => p.id === payslipId);
+      if (!payslip) throw new Error('Payslip not found');
+
+      const integrity = validatePayslip(payslip as any);
+      if (!integrity.isValid) throw new Error('Payslip data is incomplete or corrupted');
+
+      const { paymentDate } = getPayslipDates(payslip as any);
+      const ytd = paymentDate ? computeCalendarYearYtdTotals(payslips as any, paymentDate) : undefined;
+
+      pdfGeneratorService.generatePayslipPdf({
+        payslip,
+        employee,
+        ytd: ytd || undefined,
+      });
+
+      await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF' });
     } catch (error) {
       console.error('Error downloading payslip:', error);
       alert('Error downloading payslip. Please try again.');
@@ -159,6 +161,7 @@ export default function EmployeePayslipsPage() {
 
   const viewPayslipDetails = (payslip: Payslip) => {
     setSelectedPayslip(payslip);
+    auditService.logAction('payslips', payslip.id, 'SYSTEM_ACTION', null, { event: 'VIEW' }).catch(() => {});
   };
 
   const formatCurrency = (amount: number) => {
@@ -388,14 +391,8 @@ export default function EmployeePayslipsPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-700">Tax Withheld</span>
-                      <span className="font-medium">{formatCurrency(selectedPayslip.tax_withheld)}</span>
+                      <span className="font-medium">{formatCurrency(getPayslipAmounts(selectedPayslip as any).taxWithheld)}</span>
                     </div>
-                    {selectedPayslip.allowances > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-700">Allowances</span>
-                        <span className="font-medium">{formatCurrency(selectedPayslip.allowances)}</span>
-                      </div>
-                    )}
                   </div>
                   <div className="border-t border-gray-200 mt-3 pt-3">
                     <div className="flex justify-between text-sm font-medium">
@@ -432,6 +429,47 @@ export default function EmployeePayslipsPage() {
                   </div>
                 </div>
               </div>
+
+              {(() => {
+                const integrity = validatePayslip(selectedPayslip as any);
+                if (integrity.isValid) return null;
+                return (
+                  <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
+                    This payslip appears to be incomplete. Please contact HR.
+                  </div>
+                );
+              })()}
+
+              {(() => {
+                const { paymentDate } = getPayslipDates(selectedPayslip as any);
+                if (!paymentDate) return null;
+                const ytd = computeCalendarYearYtdTotals(payslips as any, paymentDate);
+                return (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Year-to-date Totals</h3>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">YTD Gross</span>
+                          <span className="font-medium">{formatCurrency(ytd.gross)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">YTD Tax</span>
+                          <span className="font-medium">{formatCurrency(ytd.tax)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">YTD Net</span>
+                          <span className="font-medium">{formatCurrency(ytd.net)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">YTD Super</span>
+                          <span className="font-medium">{formatCurrency(ytd.super)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Actions */}
               <div className="flex justify-end space-x-3">
