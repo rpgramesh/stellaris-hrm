@@ -289,7 +289,10 @@ export default function PayrollProcessingPage() {
     const selectedPayrollEmployeeIds = employees.filter(e => e.selected).map(e => e.id);
     const selectedEmployeeIds = employees.filter(e => e.selected).map(e => e.employee_id);
 
-    if (selectedPayrollEmployeeIds.length === 0) {
+    const effectivePayrollEmployeeIds =
+      selectedPayrollEmployeeIds.length > 0 ? selectedPayrollEmployeeIds : isFinalisedRun ? employees.map((e) => e.id) : [];
+
+    if (!isFinalisedRun && selectedPayrollEmployeeIds.length === 0) {
       setPayrollReport(null);
       return;
     }
@@ -304,7 +307,7 @@ export default function PayrollProcessingPage() {
       try {
         console.info('[payroll-process] recalculating payroll preview', {
           payrollRunId: selectedRun.id,
-          selectedCount: selectedPayrollEmployeeIds.length,
+          selectedCount: effectivePayrollEmployeeIds.length,
           finalised: isFinalisedRun,
         });
         if (isFinalisedRun) {
@@ -354,12 +357,12 @@ export default function PayrollProcessingPage() {
               }
               setPayrollReport(applyEmployeeFilter(rebuilt));
             } else {
-              const fallback = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, selectedPayrollEmployeeIds);
+              const fallback = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, effectivePayrollEmployeeIds);
               setPayrollReport(applyEmployeeFilter(fallback as any));
             }
           }
         } else {
-          const report = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, selectedPayrollEmployeeIds);
+          const report = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, effectivePayrollEmployeeIds);
           setPayrollReport(report);
         }
         setLastPreviewUpdatedAt(new Date().toLocaleTimeString());
@@ -1118,6 +1121,7 @@ export default function PayrollProcessingPage() {
             {payrollRuns.map((run) => (
               <div
                 key={run.id}
+                data-testid={`payroll-run-${run.id}`}
                 className={`p-4 border rounded-lg cursor-pointer transition-colors ${
                   selectedRun?.id === run.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
                 }`}
@@ -1184,6 +1188,7 @@ export default function PayrollProcessingPage() {
                 {payrollRuns.map((run) => (
                   <tr 
                     key={run.id}
+                    data-testid={`payroll-run-${run.id}`}
                     onClick={() => {
                       setSelectedRun(run);
                       loadEmployees(run.pay_frequency).then(emps => {
@@ -1720,7 +1725,7 @@ export default function PayrollProcessingPage() {
 
       {/* Payroll Report */}
       {payrollReport && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border relative transition-opacity duration-200">
+        <div className="bg-white p-6 rounded-lg shadow-sm border relative transition-opacity duration-200" data-testid="payroll-summary-panel">
           {calculating && (
             <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center rounded-lg backdrop-blur-[1px]">
               <div className="bg-white p-3 rounded-full shadow-lg border border-gray-100">
@@ -1729,7 +1734,7 @@ export default function PayrollProcessingPage() {
             </div>
           )}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Payroll Summary (Preview)</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{isFinalisedRun ? 'Payroll Summary' : 'Payroll Summary (Preview)'}</h2>
             <div className="flex items-center gap-3">
               {lastPreviewUpdatedAt && (
                 <span className="text-xs text-gray-500">Last updated: {lastPreviewUpdatedAt}</span>
