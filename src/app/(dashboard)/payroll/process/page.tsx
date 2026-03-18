@@ -195,11 +195,13 @@ export default function PayrollProcessingPage() {
       })();
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) return null;
-        console.error('[payroll-process] failed to load payslips for run', {
-          payrollRunId,
-          status: res.status,
-          body: json,
-        });
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[payroll-process] failed to load payslips for run', {
+            payrollRunId,
+            status: res.status,
+            body: json,
+          });
+        }
         return null;
       }
 
