@@ -185,9 +185,21 @@ export default function PayrollProcessingPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      const json = await res.json().catch(() => ({}));
+      const raw = await res.text().catch(() => '');
+      const json = (() => {
+        try {
+          return raw ? JSON.parse(raw) : {};
+        } catch {
+          return { raw };
+        }
+      })();
       if (!res.ok) {
-        console.error('[payroll-process] failed to load payslips for run', { payrollRunId, status: res.status, json });
+        if (res.status === 401 || res.status === 403) return null;
+        console.error('[payroll-process] failed to load payslips for run', {
+          payrollRunId,
+          status: res.status,
+          body: json,
+        });
         return null;
       }
 
@@ -348,7 +360,7 @@ export default function PayrollProcessingPage() {
             setPayrollReport(applyEmployeeFilter(cached as any));
           } else {
             console.info('[payroll-cache] preview cache miss; rebuilding from payslips', { payrollRunId: selectedRun.id });
-            const rebuilt = await loadReportFromPayslips(selectedRun.id, []);
+            const rebuilt = isHrAdmin ? await loadReportFromPayslips(selectedRun.id, []) : null;
             if (rebuilt) {
               try {
                 await comprehensivePayrollService.upsertCachedPayrollReport(selectedRun.id, rebuilt as any);
