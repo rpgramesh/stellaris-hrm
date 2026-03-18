@@ -129,6 +129,7 @@ export default function PayrollProcessingPage() {
   const [processing, setProcessing] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [requestingApprovals, setRequestingApprovals] = useState(false);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
   const [isHrAdmin, setIsHrAdmin] = useState(false);
   const [paidEmployeeIdsForPeriod, setPaidEmployeeIdsForPeriod] = useState<Set<string>>(new Set());
@@ -272,13 +273,14 @@ export default function PayrollProcessingPage() {
     if (!selectedRun) return;
     if (!hasSelectedEmployees) return;
     if (isFinalisedRun) return;
+    if (validationResult?.isValid !== true) return;
 
     const id = window.setInterval(() => {
       setAutoRefreshTick((t) => t + 1);
     }, 20000);
 
     return () => window.clearInterval(id);
-  }, [selectedRun?.id, hasSelectedEmployees]);
+  }, [selectedRun?.id, hasSelectedEmployees, validationResult?.isValid]);
 
   // Trigger recalculation when employee selection changes
   useEffect(() => {
@@ -286,7 +288,17 @@ export default function PayrollProcessingPage() {
 
     const selectedPayrollEmployeeIds = employees.filter(e => e.selected).map(e => e.id);
     const selectedEmployeeIds = employees.filter(e => e.selected).map(e => e.employee_id);
-    
+
+    if (selectedPayrollEmployeeIds.length === 0) {
+      setPayrollReport(null);
+      return;
+    }
+
+    if (!isFinalisedRun && validationResult?.isValid !== true) {
+      setPayrollReport(null);
+      return;
+    }
+
     setCalculating(true);
     const timer = setTimeout(async () => {
       try {
@@ -359,7 +371,7 @@ export default function PayrollProcessingPage() {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [employees, selectedRun, autoRefreshTick, approvedHoursByEmployeeId]);
+  }, [employees, selectedRun, autoRefreshTick, approvedHoursByEmployeeId, validationResult?.isValid]);
 
   useEffect(() => {
     if (!selectedRun) {
@@ -528,11 +540,9 @@ export default function PayrollProcessingPage() {
       if (draftRun) {
         setSelectedRun(draftRun);
         // Load employees matching the pay frequency of the draft run
-        const emps = await loadEmployees(draftRun.pay_frequency, draftRun.employee_count);
+        const emps = await loadEmployees(draftRun.pay_frequency);
         setEmployees(emps);
-        if (emps.length > 0) {
-          await validatePayrollRun(draftRun.id);
-        }
+        setValidationResult(null);
       } else {
         // Load all active employees if no draft run is selected
         const emps = await loadEmployees();
@@ -560,7 +570,7 @@ export default function PayrollProcessingPage() {
     }
   };
 
-  const loadEmployees = async (payFrequency?: string, autoSelectCount?: number): Promise<Employee[]> => {
+  const loadEmployees = async (payFrequency?: string): Promise<Employee[]> => {
     try {
       let query = supabase
         .from('employees')
@@ -602,30 +612,7 @@ export default function PayrollProcessingPage() {
         };
       });
 
-      const shouldAutoSelect = Boolean(payFrequency);
-      const targetCount =
-        shouldAutoSelect && typeof autoSelectCount === 'number' && autoSelectCount > 0
-          ? autoSelectCount
-          : shouldAutoSelect
-            ? mapped.length
-            : 0;
-
-      const withSelection = mapped.map((emp, index) => ({
-        ...emp,
-        selected: shouldAutoSelect ? index < targetCount : emp.selected
-      }));
-
-      if (shouldAutoSelect) {
-        const selectedIds = withSelection.filter(e => e.selected).map(e => e.id);
-        console.info('[payroll-process] auto-selected employees', {
-          payFrequency,
-          autoSelectCount,
-          totalLoaded: withSelection.length,
-          selectedCount: selectedIds.length
-        });
-      }
-
-      return withSelection;
+      return mapped;
     } catch (error: any) {
       console.error('Error details:', {
         message: error.message,
@@ -638,10 +625,10 @@ export default function PayrollProcessingPage() {
     }
   };
 
-  const validatePayrollRun = async (payrollRunId: string) => {
+  const validatePayrollRun = async (payrollRunId: string, selectedEmployeeIds?: string[]) => {
     try {
       setValidating(true);
-      const result = await comprehensivePayrollService.validatePayrollRun(payrollRunId);
+      const result = await comprehensivePayrollService.validatePayrollRun(payrollRunId, selectedEmployeeIds);
       setValidationResult(result);
     } catch (error) {
       console.error('Error validating payroll run:', error);
@@ -649,6 +636,98 @@ export default function PayrollProcessingPage() {
       setValidating(false);
     }
   };
+
+  const requestManagerApprovals = async () => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) {
+      alert('Read-only access. Only HR administrators can request approvals.');
+      return;
+    }
+
+    const employeeIds = (validationResult?.unapprovedTimesheets || []).filter(Boolean);
+    if (employeeIds.length === 0) {
+      alert('No unapproved timesheets found for the current selection.');
+      return;
+    }
+
+    try {
+      setRequestingApprovals(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        alert('Not authenticated');
+        return;
+      }
+
+      const res = await fetch('/api/payroll/timesheets/request-approvals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          employeeIds,
+          startDate: selectedRun.pay_period_start,
+          endDate: selectedRun.pay_period_end,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(String(json?.error || 'Failed to send approval requests'));
+        return;
+      }
+
+      const sent = Number(json?.sent || 0);
+      alert(sent > 0 ? `Sent ${sent} approval request(s) to managers.` : 'No manager requests were sent (missing line manager assignments).');
+    } finally {
+      setRequestingApprovals(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) {
+      setValidationResult(null);
+      return;
+    }
+    if (selectedRun.status === 'Paid') return;
+
+    const selectedIds = employees.filter((e) => e.selected && !isEmployeeLocked(e)).map((e) => e.id);
+    if (selectedIds.length === 0) {
+      setValidationResult(null);
+      return;
+    }
+
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      if (cancelled) return;
+      validatePayrollRun(selectedRun.id, selectedIds);
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees]);
+
+  useEffect(() => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) return;
+    if (selectedRun.status === 'Paid') return;
+
+    const hasUnapproved = (validationResult?.unapprovedTimesheets || []).length > 0;
+    const hasMissing = (validationResult?.missingTimesheets || []).length > 0;
+    if (!hasUnapproved && !hasMissing) return;
+
+    const id = window.setInterval(() => {
+      const selectedIds = employees.filter((e) => e.selected && !isEmployeeLocked(e)).map((e) => e.id);
+      if (selectedIds.length === 0) return;
+      validatePayrollRun(selectedRun.id, selectedIds);
+    }, 10000);
+
+    return () => window.clearInterval(id);
+  }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees, validationResult?.unapprovedTimesheets?.length, validationResult?.missingTimesheets?.length]);
 
   useEffect(() => {
     const loadPaidLocks = async () => {
@@ -728,6 +807,14 @@ export default function PayrollProcessingPage() {
       
       if (selectedEmployeeIds.length === 0) {
         alert('Please select at least one employee to process payroll.');
+        setProcessing(false);
+        return;
+      }
+
+      const gate = await comprehensivePayrollService.validatePayrollRun(selectedRun.id, selectedEmployeeIds);
+      setValidationResult(gate);
+      if (!gate.isValid) {
+        alert('Payroll validation failed. Please resolve the issues before processing.');
         setProcessing(false);
         return;
       }
@@ -1036,11 +1123,9 @@ export default function PayrollProcessingPage() {
                 }`}
                 onClick={() => {
                   setSelectedRun(run);
-                  loadEmployees(run.pay_frequency, run.employee_count).then(emps => {
+                  loadEmployees(run.pay_frequency).then(emps => {
                     setEmployees(emps);
-                    if (emps.length > 0) {
-                      validatePayrollRun(run.id);
-                    }
+                    setValidationResult(null);
                   });
                 }}
               >
@@ -1101,11 +1186,9 @@ export default function PayrollProcessingPage() {
                     key={run.id}
                     onClick={() => {
                       setSelectedRun(run);
-                      loadEmployees(run.pay_frequency, run.employee_count).then(emps => {
+                      loadEmployees(run.pay_frequency).then(emps => {
                         setEmployees(emps);
-                        if (emps.length > 0) {
-                          validatePayrollRun(run.id);
-                        }
+                        setValidationResult(null);
                       });
                     }}
                     className={`cursor-pointer hover:bg-gray-50 ${selectedRun?.id === run.id ? 'bg-blue-50' : ''}`}
@@ -1361,6 +1444,17 @@ export default function PayrollProcessingPage() {
                           <div className="text-sm text-yellow-700">{validationResult.unapprovedTimesheets.length} employees</div>
                         </div>
                       )}
+
+                      {validationResult.unapprovedTimesheets.length > 0 && isHrAdmin && selectedRun.status !== 'Paid' && (
+                        <button
+                          type="button"
+                          onClick={requestManagerApprovals}
+                          disabled={requestingApprovals}
+                          className="w-full mt-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-100 disabled:opacity-60"
+                        >
+                          {requestingApprovals ? 'Requesting approvals...' : 'Request manager approvals'}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1521,8 +1615,8 @@ export default function PayrollProcessingPage() {
                     <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3">
                       <input
                         type="checkbox"
-                        checked={options.validateTimesheets}
-                        onChange={(e) => setOptions(prev => ({ ...prev, validateTimesheets: e.target.checked }))}
+                        checked={true}
+                        disabled
                         className="mt-1"
                       />
                       <span className="text-sm text-gray-700">Validate timesheets before processing</span>
@@ -1530,8 +1624,8 @@ export default function PayrollProcessingPage() {
                     <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3">
                       <input
                         type="checkbox"
-                        checked={options.requireManagerApproval}
-                        onChange={(e) => setOptions(prev => ({ ...prev, requireManagerApproval: e.target.checked }))}
+                        checked={true}
+                        disabled
                         className="mt-1"
                       />
                       <span className="text-sm text-gray-700">Require manager approval for processing</span>

@@ -402,7 +402,7 @@ export const comprehensivePayrollService = {
     }
   },
 
-  async validatePayrollRun(payrollRunId: string): Promise<PayrollValidationResult> {
+  async validatePayrollRun(payrollRunId: string, selectedEmployeeIds?: string[]): Promise<PayrollValidationResult> {
     try {
       const payrollRun = await this.getPayrollRun(payrollRunId);
       if (!payrollRun) {
@@ -418,7 +418,24 @@ export const comprehensivePayrollService = {
       };
 
       // Get employees for this payroll run
-      const employees = await this.getEmployeesForPayroll(payrollRun);
+      const allEmployees = await this.getEmployeesForPayroll(payrollRun);
+      const employees =
+        Array.isArray(selectedEmployeeIds) && selectedEmployeeIds.length > 0
+          ? resolveSelectedPayrollEmployees(allEmployees, selectedEmployeeIds)
+          : allEmployees;
+
+      if (Array.isArray(selectedEmployeeIds)) {
+        if (selectedEmployeeIds.length === 0) {
+          result.isValid = false;
+          result.errors.push('No employees selected for this payroll run.');
+          return result;
+        }
+        if (employees.length === 0) {
+          result.isValid = false;
+          result.errors.push('Selected employees could not be resolved for this payroll run.');
+          return result;
+        }
+      }
 
       const timesheetsByEmployeeId = await this.getTimesheetsForEmployeesInPeriod(
         employees.map(e => e.employeeId),
@@ -483,7 +500,7 @@ export const comprehensivePayrollService = {
       }
 
       // Validate payroll run first
-      const validation = await this.validatePayrollRun(payrollRunId);
+      const validation = await this.validatePayrollRun(payrollRunId, options.selectedEmployeeIds);
       if (!validation.isValid) {
         throw new Error(`Payroll validation failed: ${validation.errors.join(', ')}`);
       }

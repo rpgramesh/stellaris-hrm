@@ -33,6 +33,10 @@ export const payrollProcessingEngine = {
         }
     }
 
+    if (!Array.isArray(selectedEmployeeIds) || selectedEmployeeIds.length === 0) {
+      throw new Error('No employees selected for processing');
+    }
+
     // Get all employees for this payroll run
     const employees = await this.getEmployeesForPayroll(payrollRun, selectedEmployeeIds);
     if (employees.length === 0) {

@@ -14,6 +14,14 @@ vi.mock('../payrollProcessingEngine', () => {
   };
 });
 
+vi.mock('../auditService', () => {
+  return {
+    auditService: {
+      logAction: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+});
+
 vi.mock('@/lib/supabase', () => {
   return {
     supabase: {
@@ -138,5 +146,54 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
     expect(report.totalTax).toBe(200);
     expect(report.totalNetPay).toBe(800);
     expect(report.totalSuper).toBe(100);
+  });
+});
+
+describe('comprehensivePayrollService.validatePayrollRun (selected employees)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns invalid when selection is provided but empty', async () => {
+    vi.spyOn(comprehensivePayrollService as any, 'getPayrollRun').mockResolvedValue({
+      id: 'run1',
+      payPeriodStart: '2026-02-01',
+      payPeriodEnd: '2026-02-28',
+      payFrequency: 'Fortnightly',
+    });
+    vi.spyOn(comprehensivePayrollService as any, 'getEmployeesForPayroll').mockResolvedValue([
+      { id: 'pe1', employeeId: 'e1' },
+    ]);
+
+    const res = await (comprehensivePayrollService as any).validatePayrollRun('run1', []);
+    expect(res.isValid).toBe(false);
+    expect(res.errors.join(' ')).toContain('No employees selected');
+  });
+
+  it('validates only the selected employees', async () => {
+    vi.spyOn(comprehensivePayrollService as any, 'getPayrollRun').mockResolvedValue({
+      id: 'run1',
+      payPeriodStart: '2026-02-01',
+      payPeriodEnd: '2026-02-28',
+      payFrequency: 'Fortnightly',
+    });
+
+    const allEmployees = [
+      { id: 'pe1', employeeId: 'e1', firstName: 'A', lastName: 'One' },
+      { id: 'pe2', employeeId: 'e2', firstName: 'B', lastName: 'Two' },
+    ];
+    vi.spyOn(comprehensivePayrollService as any, 'getEmployeesForPayroll').mockResolvedValue(allEmployees);
+    vi.spyOn(comprehensivePayrollService as any, 'getTimesheetsForEmployeesInPeriod').mockResolvedValue({
+      e2: [{ status: 'Approved', week_start_date: '2026-02-03', total_hours: 8 }],
+    });
+    const validateSpy = vi
+      .spyOn(comprehensivePayrollService as any, 'validateEmployeePayroll')
+      .mockResolvedValue({ errors: [], warnings: [], missingTimesheets: [], unapprovedTimesheets: [] });
+
+    const res = await (comprehensivePayrollService as any).validatePayrollRun('run1', ['pe2']);
+    expect(res.isValid).toBe(true);
+    expect(validateSpy).toHaveBeenCalledTimes(1);
+    const firstArg = (validateSpy.mock.calls[0]?.[0] as any) || {};
+    expect(firstArg.employeeId).toBe('e2');
   });
 });
