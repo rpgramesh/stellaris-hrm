@@ -154,6 +154,8 @@ export default function PayrollProcessingPage() {
   const [timesheetPopupOpen, setTimesheetPopupOpen] = useState(false);
   const [timesheetPopupLoading, setTimesheetPopupLoading] = useState(false);
   const [timesheetPopupError, setTimesheetPopupError] = useState<string | null>(null);
+  const [timesheetEmailStatuses, setTimesheetEmailStatuses] = useState<Record<string, Record<string, any>>>({});
+  const [sendingTimesheetEmails, setSendingTimesheetEmails] = useState<Record<string, boolean>>({});
   const [autoRefreshTick, setAutoRefreshTick] = useState(0);
   const [lastPreviewUpdatedAt, setLastPreviewUpdatedAt] = useState<string | null>(null);
 
@@ -168,6 +170,7 @@ export default function PayrollProcessingPage() {
   const hasSelectedEmployees = useMemo(() => employees.some((e) => e.selected), [employees]);
 
   const normalizeStatus = (s: unknown) => String(s || '').trim().toLowerCase();
+  const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   const isPaidRun = selectedRun ? normalizeStatus(selectedRun.status) === 'paid' : false;
   const isFinalisedRun = selectedRun ? ['paid', 'stpsubmitted'].includes(normalizeStatus(selectedRun.status)) : false;
 
@@ -678,6 +681,123 @@ export default function PayrollProcessingPage() {
     }
   };
 
+  const loadTimesheetEmailStatuses = async () => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) return;
+    if (!showErrorDetails) return;
+
+    const rawIds = [
+      ...(validationResult?.missingTimesheets || []),
+      ...(validationResult?.unapprovedTimesheets || []),
+      ...(validationResult?.incompleteTimesheets || []),
+    ]
+      .map(String)
+      .filter(Boolean);
+
+    const employeeIds = Array.from(
+      new Set(
+        rawIds
+          .map((msg) => {
+            const emp = employees.find((e) => e.employee_id === msg || e.id === msg);
+            return emp?.employee_id || (isUuid(msg) ? msg : null);
+          })
+          .filter(Boolean) as string[]
+      )
+    );
+
+    if (employeeIds.length === 0) return;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+
+    const qs = new URLSearchParams();
+    qs.set('employeeIds', employeeIds.join(','));
+    qs.set('startDate', selectedRun.pay_period_start);
+    qs.set('endDate', selectedRun.pay_period_end);
+
+    const res = await fetch(`/api/payroll/timesheets/notification-status?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const json = await res.json().catch(() => ({}));
+    const statuses = json?.statuses || {};
+    setTimesheetEmailStatuses(statuses);
+  };
+
+  const sendTimesheetNotifications = async (kind: 'MISSING' | 'UNAPPROVED', employeeIds: string[]) => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) return;
+    const ids = Array.from(new Set(employeeIds.filter(Boolean)));
+    if (ids.length === 0) return;
+
+    const confirmMsg =
+      kind === 'MISSING'
+        ? `Send missing timesheet email(s) to managers for ${ids.length} employee(s)?`
+        : `Send approval required email(s) to managers for ${ids.length} employee(s)?`;
+    if (!confirm(confirmMsg)) return;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      alert('Not authenticated');
+      return;
+    }
+
+    setSendingTimesheetEmails((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[`${kind}:${id}`] = true;
+      return next;
+    });
+
+    try {
+      const res = await fetch('/api/payroll/timesheets/send-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          kind,
+          employeeIds: ids,
+          startDate: selectedRun.pay_period_start,
+          endDate: selectedRun.pay_period_end,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(String(json?.error || 'Failed to send email notifications'));
+        return;
+      }
+
+      const emailType = kind === 'MISSING' ? 'TIMESHEET_MISSING' : 'TIMESHEET_APPROVAL_REQUIRED';
+      const results = Array.isArray(json?.results) ? json.results : [];
+
+      setTimesheetEmailStatuses((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          const employeeId = String(r?.employeeId || '');
+          if (!employeeId) continue;
+          if (!next[employeeId]) next[employeeId] = {};
+          next[employeeId][emailType] = {
+            status: r.status,
+            sentAt: r.sentAt || null,
+            error: r.error || null,
+            logId: r.logId || null,
+          };
+        }
+        return next;
+      });
+    } finally {
+      setSendingTimesheetEmails((prev) => {
+        const next = { ...prev };
+        for (const id of ids) next[`${kind}:${id}`] = false;
+        return next;
+      });
+    }
+  };
+
   useEffect(() => {
     if (!selectedRun) return;
     if (!isHrAdmin) {
@@ -766,6 +886,20 @@ export default function PayrollProcessingPage() {
     employees,
     validationResult?.unapprovedTimesheets?.length,
     validationResult?.missingTimesheets?.length,
+    validationResult?.incompleteTimesheets?.length,
+  ]);
+
+  useEffect(() => {
+    loadTimesheetEmailStatuses();
+  }, [
+    showErrorDetails,
+    selectedRun?.id,
+    selectedRun?.pay_period_start,
+    selectedRun?.pay_period_end,
+    isHrAdmin,
+    employees,
+    validationResult?.missingTimesheets?.length,
+    validationResult?.unapprovedTimesheets?.length,
     validationResult?.incompleteTimesheets?.length,
   ]);
 
@@ -1331,20 +1465,81 @@ export default function PayrollProcessingPage() {
 
               {validationResult.missingTimesheets.length > 0 && (
                 <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
-                  <h3 className="text-lg font-medium text-orange-800 mb-3">Missing Timesheets ({validationResult.missingTimesheets.length})</h3>
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h3 className="text-lg font-medium text-orange-800">
+                      Missing Timesheets ({validationResult.missingTimesheets.length})
+                    </h3>
+                    {isHrAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ids = validationResult.missingTimesheets
+                            .map((msg) => {
+                              const emp = employees.find((e) => e.employee_id === msg || e.id === msg);
+                              return emp?.employee_id || (isUuid(msg) ? msg : null);
+                            })
+                            .filter(Boolean) as string[];
+                          sendTimesheetNotifications('MISSING', ids);
+                        }}
+                        className="text-sm text-orange-800 hover:text-orange-900 font-medium whitespace-nowrap"
+                      >
+                        Send all emails
+                      </button>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {validationResult.missingTimesheets.map((msg, idx) => (
                       <div key={idx} className="flex items-start bg-white p-3 rounded border border-orange-200 shadow-sm">
                         <Clock className="h-5 w-5 text-orange-500 mr-3 flex-shrink-0 mt-0.5" />
                         <span className="text-orange-700">
                           {(() => {
-                            const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(msg);
                             const emp = employees.find(e => e.employee_id === msg || e.id === msg);
                             if (emp) return `${emp.first_name} ${emp.last_name}`;
-                            if (looksUuid) return 'Unknown employee';
+                            if (isUuid(msg)) return 'Unknown employee';
                             return msg;
                           })()}
                         </span>
+                        {(() => {
+                          if (!isHrAdmin) return null;
+                          const emp = employees.find(e => e.employee_id === msg || e.id === msg);
+                          const employeeId = emp?.employee_id || (isUuid(msg) ? msg : '');
+                          if (!employeeId) return null;
+                          const status = timesheetEmailStatuses?.[employeeId]?.TIMESHEET_MISSING;
+                          const sending = !!sendingTimesheetEmails?.[`MISSING:${employeeId}`];
+                          if (!status?.status) return (
+                            <button
+                              type="button"
+                              disabled={sending}
+                              onClick={() => sendTimesheetNotifications('MISSING', [employeeId])}
+                              className="ml-auto mr-3 text-sm text-orange-800 hover:text-orange-900 font-medium whitespace-nowrap disabled:opacity-60"
+                            >
+                              {sending ? 'Sending…' : 'Send Email'}
+                            </button>
+                          );
+                          return (
+                            <div className="ml-auto mr-3 flex items-center gap-2">
+                              <span
+                                className={`text-xs px-2 py-1 rounded border ${
+                                  status.status === 'SENT'
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : status.status === 'FAILED'
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-gray-50 text-gray-700 border-gray-200'
+                                }`}
+                              >
+                                {status.status === 'SKIPPED_DUPLICATE' ? 'Sent recently' : String(status.status)}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={sending}
+                                onClick={() => sendTimesheetNotifications('MISSING', [employeeId])}
+                                className="text-sm text-orange-800 hover:text-orange-900 font-medium whitespace-nowrap disabled:opacity-60"
+                              >
+                                {sending ? 'Sending…' : 'Resend'}
+                              </button>
+                            </div>
+                          );
+                        })()}
                         <button
                            onClick={() => {
                              setShowErrorDetails(false);
@@ -1365,15 +1560,35 @@ export default function PayrollProcessingPage() {
               
                {validationResult.unapprovedTimesheets.length > 0 && (
                 <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-100">
-                  <h3 className="text-lg font-medium text-yellow-800 mb-3">Unapproved Timesheets ({validationResult.unapprovedTimesheets.length})</h3>
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h3 className="text-lg font-medium text-yellow-800">
+                      Unapproved Timesheets ({validationResult.unapprovedTimesheets.length})
+                    </h3>
+                    {isHrAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ids = validationResult.unapprovedTimesheets
+                            .map((msg) => {
+                              const emp = employees.find((e) => e.employee_id === msg || e.id === msg);
+                              return emp?.employee_id || (isUuid(msg) ? msg : null);
+                            })
+                            .filter(Boolean) as string[];
+                          sendTimesheetNotifications('UNAPPROVED', ids);
+                        }}
+                        className="text-sm text-yellow-800 hover:text-yellow-900 font-medium whitespace-nowrap"
+                      >
+                        Send all emails
+                      </button>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {validationResult.unapprovedTimesheets.map((msg, idx) => (
                       <div key={idx} className="flex items-start bg-white p-3 rounded border border-yellow-200 shadow-sm">
                         <Clock className="h-5 w-5 text-yellow-500 mr-3 flex-shrink-0 mt-0.5" />
                         <span className="text-yellow-700">
                           {(() => {
-                            const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(msg);
-                            if (looksUuid) {
+                            if (isUuid(msg)) {
                               const emp = employees.find(e => e.employee_id === msg || e.id === msg);
                               if (emp) return `${emp.first_name} ${emp.last_name}`;
                               return 'Unknown employee';
@@ -1381,6 +1596,47 @@ export default function PayrollProcessingPage() {
                             return msg;
                           })()}
                         </span>
+                        {(() => {
+                          if (!isHrAdmin) return null;
+                          const emp = employees.find(e => e.employee_id === msg || e.id === msg);
+                          const employeeId = emp?.employee_id || (isUuid(msg) ? msg : '');
+                          if (!employeeId) return null;
+                          const status = timesheetEmailStatuses?.[employeeId]?.TIMESHEET_APPROVAL_REQUIRED;
+                          const sending = !!sendingTimesheetEmails?.[`UNAPPROVED:${employeeId}`];
+                          if (!status?.status) return (
+                            <button
+                              type="button"
+                              disabled={sending}
+                              onClick={() => sendTimesheetNotifications('UNAPPROVED', [employeeId])}
+                              className="ml-auto mr-3 text-sm text-yellow-800 hover:text-yellow-900 font-medium whitespace-nowrap disabled:opacity-60"
+                            >
+                              {sending ? 'Sending…' : 'Send Email'}
+                            </button>
+                          );
+                          return (
+                            <div className="ml-auto mr-3 flex items-center gap-2">
+                              <span
+                                className={`text-xs px-2 py-1 rounded border ${
+                                  status.status === 'SENT'
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : status.status === 'FAILED'
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-gray-50 text-gray-700 border-gray-200'
+                                }`}
+                              >
+                                {status.status === 'SKIPPED_DUPLICATE' ? 'Sent recently' : String(status.status)}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={sending}
+                                onClick={() => sendTimesheetNotifications('UNAPPROVED', [employeeId])}
+                                className="text-sm text-yellow-800 hover:text-yellow-900 font-medium whitespace-nowrap disabled:opacity-60"
+                              >
+                                {sending ? 'Sending…' : 'Resend'}
+                              </button>
+                            </div>
+                          );
+                        })()}
                          <button
                            onClick={() => {
                              setShowErrorDetails(false);

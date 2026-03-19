@@ -4,6 +4,8 @@ export type EmailType =
   | 'WELCOME'
   | 'PASSWORD_RESET'
   | 'PAYSLIP_NOTIFICATION'
+  | 'TIMESHEET_MISSING'
+  | 'TIMESHEET_APPROVAL_REQUIRED'
   | 'LEAVE_REQUEST_APPROVAL'
   | 'LEAVE_REQUEST_REJECTION'
   | 'DOCUMENT_SUBMISSION_REMINDER'
@@ -42,6 +44,8 @@ export const AVAILABLE_EMAIL_TYPES: { value: EmailType; label: string }[] = [
   { value: 'WELCOME', label: 'Welcome Email' },
   { value: 'PASSWORD_RESET', label: 'Password Reset' },
   { value: 'PAYSLIP_NOTIFICATION', label: 'Payslip Notification' },
+  { value: 'TIMESHEET_MISSING', label: 'Timesheet Missing Notification' },
+  { value: 'TIMESHEET_APPROVAL_REQUIRED', label: 'Timesheet Approval Required' },
   { value: 'LEAVE_REQUEST_APPROVAL', label: 'Leave Request Approved' },
   { value: 'LEAVE_REQUEST_REJECTION', label: 'Leave Request Rejected' },
   { value: 'DOCUMENT_SUBMISSION_REMINDER', label: 'Document Submission Reminder' },

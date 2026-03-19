@@ -103,7 +103,23 @@ const makeEmployeesQuery = (employeeRows: any[]) => {
 describe('Payroll processing draft validation + summary restriction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: [] }) });
+    (globalThis as any).fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      if (u.includes('/api/payroll/timesheets/notification-status')) {
+        return { ok: true, json: async () => ({ statuses: {} }) } as any;
+      }
+      if (u.includes('/api/payroll/timesheets/send-notification')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [
+              { employeeId: '22222222-2222-2222-2222-222222222222', status: 'SENT' },
+            ],
+          }),
+        } as any;
+      }
+      return { ok: true, json: async () => ({}) } as any;
+    });
   });
 
   afterEach(() => cleanup());
@@ -127,7 +143,7 @@ describe('Payroll processing draft validation + summary restriction', () => {
 
     const employees = [
       {
-        id: 'e1',
+        id: '11111111-1111-1111-1111-111111111111',
         first_name: 'Alice',
         last_name: 'Smith',
         employee_code: 'EMP001',
@@ -135,7 +151,7 @@ describe('Payroll processing draft validation + summary restriction', () => {
         payroll_employees: [{ id: 'pe1', employment_type: 'FullTime', pay_frequency: 'Fortnightly' }],
       },
       {
-        id: 'e2',
+        id: '22222222-2222-2222-2222-222222222222',
         first_name: 'Bob',
         last_name: 'Jones',
         employee_code: 'EMP002',
@@ -155,9 +171,9 @@ describe('Payroll processing draft validation + summary restriction', () => {
       isValid: false,
       errors: [],
       warnings: [],
-      missingTimesheets: ['e2'],
+      missingTimesheets: ['22222222-2222-2222-2222-222222222222'],
       unapprovedTimesheets: [],
-      incompleteTimesheets: ['e1'],
+      incompleteTimesheets: ['11111111-1111-1111-1111-111111111111'],
     });
 
     render(<PayrollProcessingPage />);
@@ -204,5 +220,72 @@ describe('Payroll processing draft validation + summary restriction', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('payroll-summary-panel')).not.toBeInTheDocument();
     });
+  });
+
+  it('allows sending a missing-timesheet email from the validation error modal and shows a status indicator', async () => {
+    (window as any).confirm = vi.fn(() => true);
+    const runs = [
+      {
+        id: 'draft-1',
+        pay_period_start: '2026-03-03',
+        pay_period_end: '2026-03-15',
+        pay_frequency: 'Fortnightly',
+        status: 'Draft',
+        employee_count: 0,
+        total_gross_pay: 0,
+        total_tax: 0,
+        total_net_pay: 0,
+        total_super: 0,
+        created_at: '2026-03-10T04:46:00.000Z',
+      },
+    ];
+
+    const employeeRows = [
+      {
+        id: '11111111-1111-1111-1111-111111111111',
+        first_name: 'Alice',
+        last_name: 'Smith',
+        employee_code: 'EMP001',
+        employment_status: 'Active',
+        payroll_employees: [{ id: 'pe1', employment_type: 'FullTime', pay_frequency: 'Fortnightly' }],
+      },
+      {
+        id: '22222222-2222-2222-2222-222222222222',
+        first_name: 'Bob',
+        last_name: 'Jones',
+        employee_code: 'EMP002',
+        employment_status: 'Active',
+        payroll_employees: [{ id: 'pe2', employment_type: 'FullTime', pay_frequency: 'Fortnightly' }],
+      },
+    ];
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'payroll_runs') return makePayrollRunsQuery(runs);
+      if (table === 'employees') return makeEmployeesQuery(employeeRows);
+      if (table === 'payslips') return { select: vi.fn(() => ({ in: vi.fn().mockResolvedValue({ data: [], error: null }) })) };
+      return { select: vi.fn(() => ({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) })) };
+    });
+
+    serviceMocks.validatePayrollRun.mockResolvedValue({
+      isValid: false,
+      errors: ['Employee Bob Jones Week 1 timesheet (2026-03-03 to 2026-03-08) is missing'],
+      warnings: [],
+      missingTimesheets: ['22222222-2222-2222-2222-222222222222'],
+      unapprovedTimesheets: [],
+      incompleteTimesheets: [],
+    });
+
+    render(<PayrollProcessingPage />);
+    await screen.findByText('Employees');
+    await waitFor(() => expect(screen.getByText('Select All')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByText('Bob Jones'));
+    await waitFor(() => expect(screen.getByText('Details')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Details'));
+    await screen.findByText('Payroll Validation Errors');
+
+    fireEvent.click(screen.getByText('Send Email'));
+    await screen.findByText('SENT');
   });
 });
