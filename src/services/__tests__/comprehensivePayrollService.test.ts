@@ -57,10 +57,17 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
     };
 
     const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
-      timesheetsForPeriod: [{ status: 'Approved', week_start_date: '2026-02-02' }],
+      timesheetsForPeriod: [
+        { status: 'Approved', week_start_date: '2026-01-26', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-09', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-16', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-23', total_hours: 32, approved_hours: 32 },
+      ],
     });
 
     expect(res.missingTimesheets).toEqual([]);
+    expect(res.incompleteTimesheets).toEqual([]);
     expect(res.errors).toEqual([]);
   });
 
@@ -77,12 +84,17 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
 
     const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
       timesheetsForPeriod: [
-        { status: 'Draft', week_start_date: '2026-01-26', total_hours: 0 },
-        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-01-26', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-09', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-16', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-23', total_hours: 32, approved_hours: 32 },
+        { status: 'Draft', week_start_date: '2026-03-02', total_hours: 0, approved_hours: 0 },
       ],
     });
 
     expect(res.unapprovedTimesheets).toEqual([]);
+    expect(res.incompleteTimesheets).toEqual([]);
     expect(res.errors).toEqual([]);
   });
 
@@ -98,7 +110,13 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
     };
 
     const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
-      timesheetsForPeriod: [{ status: 'Submitted', week_start_date: '2026-02-02', total_hours: 8 }],
+      timesheetsForPeriod: [
+        { status: 'Approved', week_start_date: '2026-01-26', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40, approved_hours: 40 },
+        { status: 'Submitted', week_start_date: '2026-02-09', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-16', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-23', total_hours: 32, approved_hours: 32 },
+      ],
     });
 
     expect(res.unapprovedTimesheets).toEqual(['e-employee']);
@@ -118,13 +136,41 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
 
     const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
       timesheetsForPeriod: [
-        { status: 'Draft', week_start_date: '2026-02-09', total_hours: 5 },
-        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-01-26', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40, approved_hours: 40 },
+        { status: 'Draft', week_start_date: '2026-02-09', total_hours: 5, approved_hours: 5 },
+        { status: 'Approved', week_start_date: '2026-02-16', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-23', total_hours: 32, approved_hours: 32 },
       ],
     });
 
     expect(res.unapprovedTimesheets).toEqual(['e-employee']);
     expect(res.errors.join(' ')).toContain('2026-02-09');
+  });
+
+  it('reports incomplete timesheets when approved timesheets have no derived entry hours', async () => {
+    const employee: any = {
+      employeeId: 'e-employee',
+      firstName: 'Ramesh',
+      lastName: 'P',
+    };
+    const payrollRun: any = {
+      payPeriodStart: '2026-02-01',
+      payPeriodEnd: '2026-02-28',
+    };
+
+    const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
+      timesheetsForPeriod: [
+        { status: 'Approved', week_start_date: '2026-01-26', total_hours: 8, approved_hours: 8 },
+        { status: 'Approved', week_start_date: '2026-02-02', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-09', total_hours: 40, approved_hours: 0 },
+        { status: 'Approved', week_start_date: '2026-02-16', total_hours: 40, approved_hours: 40 },
+        { status: 'Approved', week_start_date: '2026-02-23', total_hours: 32, approved_hours: 32 },
+      ],
+    });
+
+    expect(res.incompleteTimesheets).toEqual(['e-employee']);
+    expect(res.errors.join(' ')).toContain('incomplete approved timesheets');
   });
 
   it('calculatePayrollPreview returns run totals when no employees are selected', async () => {

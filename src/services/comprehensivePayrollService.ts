@@ -19,6 +19,7 @@ export interface PayrollValidationResult {
   warnings: string[];
   missingTimesheets: string[];
   unapprovedTimesheets: string[];
+  incompleteTimesheets: string[];
 }
 
 export interface PayrollReport {
@@ -414,7 +415,8 @@ export const comprehensivePayrollService = {
         errors: [],
         warnings: [],
         missingTimesheets: [],
-        unapprovedTimesheets: []
+        unapprovedTimesheets: [],
+        incompleteTimesheets: []
       };
 
       // Get employees for this payroll run
@@ -452,6 +454,7 @@ export const comprehensivePayrollService = {
         result.warnings.push(...employeeValidation.warnings);
         result.missingTimesheets.push(...employeeValidation.missingTimesheets);
         result.unapprovedTimesheets.push(...employeeValidation.unapprovedTimesheets);
+        result.incompleteTimesheets.push(...(employeeValidation.incompleteTimesheets || []));
       }
 
       // Set overall validity
@@ -660,11 +663,13 @@ export const comprehensivePayrollService = {
     warnings: string[];
     missingTimesheets: string[];
     unapprovedTimesheets: string[];
+    incompleteTimesheets: string[];
   }> {
     const errors: string[] = [];
     const warnings: string[] = [];
     const missingTimesheets: string[] = [];
     const unapprovedTimesheets: string[] = [];
+    const incompleteTimesheets: string[] = [];
 
     try {
       const employeeName = employee.firstName && employee.lastName 
@@ -702,17 +707,69 @@ export const comprehensivePayrollService = {
           missingTimesheets.push(employee.employeeId);
           errors.push(`Employee ${employeeName} has no timesheets for the pay period`);
         } else {
-          const timesheetsWithHours = timesheets.filter(t => Number((t as any).total_hours ?? (t as any).totalHours ?? 0) > 0);
-          if (timesheetsWithHours.length > 0) {
-            const unapproved = timesheetsWithHours.filter(t => String((t as any).status || '').toLowerCase() !== 'approved');
-            if (unapproved.length > 0) {
-              const detail = unapproved
-                .slice(0, 5)
-                .map(t => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (${(t as any).status || 'Unknown'})`)
-                .join(', ');
-              unapprovedTimesheets.push(employee.employeeId);
-              errors.push(`Employee ${employeeName} has unapproved timesheets${detail ? `: ${detail}` : ''}`);
+          const start = new Date(`${payrollRun.payPeriodStart}T00:00:00.000Z`);
+          const end = new Date(`${payrollRun.payPeriodEnd}T00:00:00.000Z`);
+
+          const firstMonday = new Date(start);
+          const day = firstMonday.getUTCDay();
+          const diff = firstMonday.getUTCDate() - day + (day === 0 ? -6 : 1);
+          firstMonday.setUTCDate(diff);
+
+          const expectedWeekStarts: string[] = [];
+          for (let d = new Date(firstMonday); d <= end; d.setUTCDate(d.getUTCDate() + 7)) {
+            expectedWeekStarts.push(d.toISOString().slice(0, 10));
+          }
+
+          const byWeekStart = new Map<string, any>();
+          for (const t of timesheets) {
+            const weekStart = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
+            if (!weekStart) continue;
+            byWeekStart.set(weekStart, t);
+          }
+
+          const missingWeeks = expectedWeekStarts.filter((ws) => !byWeekStart.has(ws));
+          if (missingWeeks.length > 0) {
+            missingTimesheets.push(employee.employeeId);
+            const detail = missingWeeks.slice(0, 5).join(', ');
+            errors.push(`Employee ${employeeName} is missing timesheets for week(s) starting ${detail}${missingWeeks.length > 5 ? '…' : ''}`);
+          }
+
+          const unapproved: any[] = [];
+          const incompleteApproved: any[] = [];
+
+          for (const t of timesheets) {
+            const status = String((t as any).status || '').toLowerCase();
+            const totalHours = Number((t as any).total_hours ?? (t as any).totalHours ?? 0);
+            const approvedHours = Number((t as any).approved_hours ?? (t as any).approvedHours);
+
+            if (status === 'approved') {
+              if (totalHours > 0 && (!Number.isFinite(approvedHours) || approvedHours <= 0)) {
+                incompleteApproved.push(t);
+              }
+              continue;
             }
+
+            if (totalHours > 0) {
+              unapproved.push(t);
+            }
+          }
+
+          if (unapproved.length > 0) {
+            const detail = unapproved
+              .slice(0, 5)
+              .map(t => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (${(t as any).status || 'Unknown'})`)
+              .join(', ');
+            unapprovedTimesheets.push(employee.employeeId);
+            errors.push(`Employee ${employeeName} has unapproved timesheets${detail ? `: ${detail}` : ''}`);
+          }
+
+          if (incompleteApproved.length > 0) {
+            const detail = incompleteApproved
+              .slice(0, 5)
+              .map((t) => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (0 hours)`)
+              .join(', ');
+            incompleteTimesheets.push(employee.employeeId);
+            errors.push(`Employee ${employeeName} has incomplete approved timesheets${detail ? `: ${detail}` : ''}`);
           }
         }
       } else {
@@ -740,7 +797,7 @@ export const comprehensivePayrollService = {
       errors.push(`Error validating employee ${employeeName}: ${error.message}`);
     }
 
-    return { errors, warnings, missingTimesheets, unapprovedTimesheets };
+    return { errors, warnings, missingTimesheets, unapprovedTimesheets, incompleteTimesheets };
   },
 
   async getEmployeeTimesheetsForPeriod(

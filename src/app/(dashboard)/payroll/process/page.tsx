@@ -64,6 +64,7 @@ interface ValidationResult {
   warnings: string[];
   missingTimesheets: string[];
   unapprovedTimesheets: string[];
+  incompleteTimesheets: string[];
 }
 
 interface PayrollReport {
@@ -124,6 +125,7 @@ export default function PayrollProcessingPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedRun, setSelectedRun] = useState<PayrollRun | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [payrollReport, setPayrollReport] = useState<PayrollReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -165,6 +167,7 @@ export default function PayrollProcessingPage() {
   const hasSelectedEmployees = useMemo(() => employees.some((e) => e.selected), [employees]);
 
   const normalizeStatus = (s: unknown) => String(s || '').trim().toLowerCase();
+  const isPaidRun = selectedRun ? normalizeStatus(selectedRun.status) === 'paid' : false;
   const isFinalisedRun = selectedRun ? ['paid', 'stpsubmitted'].includes(normalizeStatus(selectedRun.status)) : false;
 
   const employeeIdsKey = useMemo(() => {
@@ -300,21 +303,15 @@ export default function PayrollProcessingPage() {
   useEffect(() => {
     if (!selectedRun) return;
 
+    if (!isPaidRun) {
+      setPayrollReport(null);
+      return;
+    }
+
     const selectedPayrollEmployeeIds = employees.filter(e => e.selected).map(e => e.id);
     const selectedEmployeeIds = employees.filter(e => e.selected).map(e => e.employee_id);
 
-    const effectivePayrollEmployeeIds =
-      selectedPayrollEmployeeIds.length > 0 ? selectedPayrollEmployeeIds : isFinalisedRun ? employees.map((e) => e.id) : [];
-
-    if (!isFinalisedRun && selectedPayrollEmployeeIds.length === 0) {
-      setPayrollReport(null);
-      return;
-    }
-
-    if (!isFinalisedRun && validationResult?.isValid !== true) {
-      setPayrollReport(null);
-      return;
-    }
+    const effectivePayrollEmployeeIds = employees.map((e) => e.id);
 
     setCalculating(true);
     const timer = setTimeout(async () => {
@@ -322,62 +319,38 @@ export default function PayrollProcessingPage() {
         console.info('[payroll-process] recalculating payroll preview', {
           payrollRunId: selectedRun.id,
           selectedCount: effectivePayrollEmployeeIds.length,
-          finalised: isFinalisedRun,
+          finalised: true,
         });
-        if (isFinalisedRun) {
-          const expected = {
-            totalGrossPay: Number(selectedRun.total_gross_pay || 0),
-            totalTax: Number(selectedRun.total_tax || 0),
-            totalNetPay: Number(selectedRun.total_net_pay || 0),
-            totalSuper: Number(selectedRun.total_super || 0),
-            employeeCount: Number(selectedRun.employee_count || 0),
-          };
 
-          const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+        const expected = {
+          totalGrossPay: Number(selectedRun.total_gross_pay || 0),
+          totalTax: Number(selectedRun.total_tax || 0),
+          totalNetPay: Number(selectedRun.total_net_pay || 0),
+          totalSuper: Number(selectedRun.total_super || 0),
+          employeeCount: Number(selectedRun.employee_count || 0),
+        };
 
-          const applyEmployeeFilter = (report: PayrollReport) => {
-            if (!selectedEmployeeIds || selectedEmployeeIds.length === 0) return report;
-            const idSet = new Set(selectedEmployeeIds.map((id) => String(id)));
-            const filtered = (report.employeeBreakdown || []).filter((e) => idSet.has(String(e.employeeId)));
-            const sum = (pick: (e: any) => number) => filtered.reduce((acc, e) => acc + Number(pick(e) || 0), 0);
-            const totalGrossPay = sum((e) => e.grossPay);
-            const totalTax = sum((e) => e.tax);
-            const totalNetPay = sum((e) => e.netPay);
-            const totalSuper = sum((e) => e.super);
-            return {
-              ...report,
-              totalEmployees: new Set(filtered.map((e) => String(e.employeeId))).size,
-              totalGrossPay,
-              totalTax,
-              totalNetPay,
-              totalSuper,
-              employeeBreakdown: filtered,
-            };
-          };
+        const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 
-          const cached = await comprehensivePayrollService.getCachedPayrollReport(selectedRun.id, expected);
-          if (cached) {
-            const endedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
-            console.info('[payroll-cache] preview cache hit', { payrollRunId: selectedRun.id, ms: Math.round((endedAt as any) - (startedAt as any)) });
-            setPayrollReport(applyEmployeeFilter(cached as any));
-          } else {
-            console.info('[payroll-cache] preview cache miss; rebuilding from payslips', { payrollRunId: selectedRun.id });
-            const rebuilt = isHrAdmin ? await loadReportFromPayslips(selectedRun.id, []) : null;
-            if (rebuilt) {
-              try {
-                await comprehensivePayrollService.upsertCachedPayrollReport(selectedRun.id, rebuilt as any);
-              } catch (e: any) {
-                console.error('[payroll-cache] failed to persist rebuilt cache', e?.message || e);
-              }
-              setPayrollReport(applyEmployeeFilter(rebuilt));
-            } else {
-              const fallback = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, effectivePayrollEmployeeIds);
-              setPayrollReport(applyEmployeeFilter(fallback as any));
-            }
-          }
+        const cached = await comprehensivePayrollService.getCachedPayrollReport(selectedRun.id, expected);
+        if (cached) {
+          const endedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+          console.info('[payroll-cache] preview cache hit', { payrollRunId: selectedRun.id, ms: Math.round((endedAt as any) - (startedAt as any)) });
+          setPayrollReport(cached as any);
         } else {
-          const report = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, effectivePayrollEmployeeIds);
-          setPayrollReport(report);
+          console.info('[payroll-cache] preview cache miss; rebuilding from payslips', { payrollRunId: selectedRun.id });
+          const rebuilt = isHrAdmin ? await loadReportFromPayslips(selectedRun.id, []) : null;
+          if (rebuilt) {
+            try {
+              await comprehensivePayrollService.upsertCachedPayrollReport(selectedRun.id, rebuilt as any);
+            } catch (e: any) {
+              console.error('[payroll-cache] failed to persist rebuilt cache', e?.message || e);
+            }
+            setPayrollReport(rebuilt);
+          } else {
+            const fallback = await comprehensivePayrollService.calculatePayrollPreview(selectedRun.id, effectivePayrollEmployeeIds);
+            setPayrollReport(fallback as any);
+          }
         }
         setLastPreviewUpdatedAt(new Date().toLocaleTimeString());
       } catch (error) {
@@ -388,7 +361,7 @@ export default function PayrollProcessingPage() {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [employees, selectedRun, autoRefreshTick, approvedHoursByEmployeeId, validationResult?.isValid]);
+  }, [employees, selectedRun, autoRefreshTick, approvedHoursByEmployeeId, isPaidRun, isHrAdmin]);
 
   useEffect(() => {
     if (!selectedRun) {
@@ -645,10 +618,12 @@ export default function PayrollProcessingPage() {
   const validatePayrollRun = async (payrollRunId: string, selectedEmployeeIds?: string[]) => {
     try {
       setValidating(true);
+      setValidationError(null);
       const result = await comprehensivePayrollService.validatePayrollRun(payrollRunId, selectedEmployeeIds);
       setValidationResult(result);
     } catch (error) {
       console.error('Error validating payroll run:', error);
+      setValidationError('Validation failed due to a network or server error. Please retry.');
     } finally {
       setValidating(false);
     }
@@ -735,7 +710,8 @@ export default function PayrollProcessingPage() {
 
     const hasUnapproved = (validationResult?.unapprovedTimesheets || []).length > 0;
     const hasMissing = (validationResult?.missingTimesheets || []).length > 0;
-    if (!hasUnapproved && !hasMissing) return;
+    const hasIncomplete = (validationResult?.incompleteTimesheets || []).length > 0;
+    if (!hasUnapproved && !hasMissing && !hasIncomplete) return;
 
     const id = window.setInterval(() => {
       const selectedIds = employees.filter((e) => e.selected && !isEmployeeLocked(e)).map((e) => e.id);
@@ -744,7 +720,15 @@ export default function PayrollProcessingPage() {
     }, 10000);
 
     return () => window.clearInterval(id);
-  }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees, validationResult?.unapprovedTimesheets?.length, validationResult?.missingTimesheets?.length]);
+  }, [
+    selectedRun?.id,
+    selectedRun?.status,
+    isHrAdmin,
+    employees,
+    validationResult?.unapprovedTimesheets?.length,
+    validationResult?.missingTimesheets?.length,
+    validationResult?.incompleteTimesheets?.length,
+  ]);
 
   useEffect(() => {
     const loadPaidLocks = async () => {
@@ -831,7 +815,21 @@ export default function PayrollProcessingPage() {
       const gate = await comprehensivePayrollService.validatePayrollRun(selectedRun.id, selectedEmployeeIds);
       setValidationResult(gate);
       if (!gate.isValid) {
-        alert('Payroll validation failed. Please resolve the issues before processing.');
+        const resolveName = (msg: string) => {
+          const emp = employees.find((e) => e.employee_id === msg || e.id === msg);
+          if (emp) return `${emp.first_name} ${emp.last_name}`.trim();
+          return msg;
+        };
+        const missing = (gate.missingTimesheets || []).map(resolveName);
+        const unapproved = (gate.unapprovedTimesheets || []).map(resolveName);
+        const incomplete = ((gate as any).incompleteTimesheets || []).map(resolveName);
+        const parts = [
+          missing.length > 0 ? `Missing timesheets: ${missing.join(', ')}` : null,
+          incomplete.length > 0 ? `Incomplete timesheets: ${incomplete.join(', ')}` : null,
+          unapproved.length > 0 ? `Unapproved timesheets: ${unapproved.join(', ')}` : null,
+          gate.errors?.length ? `Errors: ${gate.errors.join(' • ')}` : null,
+        ].filter(Boolean);
+        alert(`Payment blocked. Fix timesheet issues before completing payroll.\n\n${parts.join('\n')}`);
         setProcessing(false);
         return;
       }
@@ -847,11 +845,14 @@ export default function PayrollProcessingPage() {
         processingOptions
       );
 
-      setPayrollReport(report);
+      setSelectedRun((prev) => (prev && prev.id === selectedRun.id ? { ...prev, status: 'Paid' as any } : prev));
       
       // Refresh payroll runs
       const updatedRuns = await loadPayrollRuns();
       setPayrollRuns(updatedRuns);
+      const updated = updatedRuns.find((r) => r.id === selectedRun.id);
+      if (updated) setSelectedRun(updated);
+      setPayrollReport(report);
       
     } catch (error: any) {
       console.error('Error details:', {
@@ -1383,6 +1384,12 @@ export default function PayrollProcessingPage() {
                       <h2 className="text-base font-semibold text-gray-900">
                         Validation {validating && <span className="text-sm text-gray-500 font-normal">(Validating...)</span>}
                       </h2>
+                      {validationError && !validationResult && (
+                        <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                          <div className="text-sm font-medium text-red-800">Validation error</div>
+                          <div className="text-sm text-red-700">{validationError}</div>
+                        </div>
+                      )}
                       {validationResult ? (
                         validationResult.isValid ? (
                           <div className="flex items-center text-green-700">
@@ -1424,6 +1431,57 @@ export default function PayrollProcessingPage() {
 
                   {validationResult && (
                     <div className="space-y-2">
+                      {validationError && (
+                        <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                          <div className="text-sm font-medium text-red-800">Validation error</div>
+                          <div className="text-sm text-red-700">{validationError}</div>
+                        </div>
+                      )}
+
+                      {(() => {
+                        if (validationResult.isValid) return null;
+                        const ids = Array.from(
+                          new Set([
+                            ...(validationResult.missingTimesheets || []),
+                            ...(validationResult.unapprovedTimesheets || []),
+                            ...(validationResult.incompleteTimesheets || []),
+                          ].map(String))
+                        );
+                        if (ids.length === 0) return null;
+                        const names = ids
+                          .map((id) => {
+                            const emp = employees.find((e) => e.employee_id === id || e.id === id);
+                            return emp ? `${emp.first_name} ${emp.last_name}`.trim() : id;
+                          })
+                          .filter(Boolean);
+                        const shown = names.slice(0, 8);
+                        const more = names.length > 8 ? ` (+${names.length - 8} more)` : '';
+                        return (
+                          <div className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-2" data-testid="timesheet-issues-warning">
+                            <div className="text-sm font-medium text-orange-800">Timesheet issues detected</div>
+                            <div className="text-sm text-orange-700">
+                              {shown.join(', ')}
+                              {more}
+                            </div>
+                            <div className="text-xs text-orange-700 mt-1">
+                              Fix missing/incomplete entries and ensure timesheets are Approved for this pay period.
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const params = new URLSearchParams();
+                                if (selectedRun?.pay_period_start) params.set('payPeriodStart', selectedRun.pay_period_start);
+                                if (selectedRun?.pay_period_end) params.set('payPeriodEnd', selectedRun.pay_period_end);
+                                router.push(`/attendance/timesheets${params.toString() ? `?${params.toString()}` : ''}`);
+                              }}
+                              className="mt-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-100 px-3 py-2 w-full"
+                            >
+                              Open Timesheets to fix
+                            </button>
+                          </div>
+                        );
+                      })()}
+
                       {validationResult.errors.length > 0 && (
                         <details className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
                           <summary className="cursor-pointer text-sm font-medium text-red-800">
@@ -1454,6 +1512,13 @@ export default function PayrollProcessingPage() {
                         <div className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
                           <div className="text-sm font-medium text-orange-800">Missing Timesheets</div>
                           <div className="text-sm text-orange-700">{validationResult.missingTimesheets.length} employees</div>
+                        </div>
+                      )}
+
+                      {validationResult.incompleteTimesheets.length > 0 && (
+                        <div className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
+                          <div className="text-sm font-medium text-orange-800">Incomplete Timesheets</div>
+                          <div className="text-sm text-orange-700">{validationResult.incompleteTimesheets.length} employees</div>
                         </div>
                       )}
 
@@ -1738,7 +1803,7 @@ export default function PayrollProcessingPage() {
       )}
 
       {/* Payroll Report */}
-      {payrollReport && (
+      {isPaidRun && payrollReport && (
         <div className="bg-white p-6 rounded-lg shadow-sm border relative transition-opacity duration-200" data-testid="payroll-summary-panel">
           {calculating && (
             <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center rounded-lg backdrop-blur-[1px]">
@@ -1748,7 +1813,7 @@ export default function PayrollProcessingPage() {
             </div>
           )}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">{isFinalisedRun ? 'Payroll Summary' : 'Payroll Summary (Preview)'}</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Payroll Summary</h2>
             <div className="flex items-center gap-3">
               {lastPreviewUpdatedAt && (
                 <span className="text-xs text-gray-500">Last updated: {lastPreviewUpdatedAt}</span>
