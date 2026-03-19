@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   ClockIcon, 
   MapPinIcon, 
   ShieldCheckIcon, 
   Cog6ToothIcon
 } from "@heroicons/react/24/outline";
+import { settingsService } from "@/services/settingsService";
 
 export default function AttendanceSettingsPage() {
   const [loading, setLoading] = useState(false);
@@ -16,19 +17,37 @@ export default function AttendanceSettingsPage() {
     gracePeriod: 15,
     breakDuration: 60,
     isBreakPaid: false,
+    defaultHolidayHours: 8,
     enableGeofencing: true,
     geofenceRadius: 100,
     enableIpRestriction: false,
     allowedIps: "192.168.1.1, 10.0.0.1"
   });
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const s = await settingsService.get();
+        const v = Number(s?.defaultHolidayHours);
+        if (Number.isFinite(v) && v > 0) {
+          setSettings(prev => ({ ...prev, defaultHolidayHours: v }));
+        }
+      } catch {
+      }
+    };
+    load();
+  }, []);
+
   const handleSave = () => {
     setLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
-      alert("Settings saved successfully!");
-    }, 1000);
+    settingsService.update({ defaultHolidayHours: settings.defaultHolidayHours })
+      .then(() => {
+        alert("Settings saved successfully!");
+      })
+      .catch(() => {
+        alert("Failed to save settings");
+      })
+      .finally(() => setLoading(false));
   };
 
   const handleChange = (field: string, value: any) => {
@@ -120,6 +139,32 @@ export default function AttendanceSettingsPage() {
                 Breaks are paid
               </label>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="p-6 border-b border-gray-200 bg-gray-50 flex items-center gap-3">
+          <div className="h-10 w-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
+            <ShieldCheckIcon className="h-6 w-6" />
+          </div>
+          <div>
+            <h2 className="text-lg font-medium text-gray-900">Timesheet Defaults</h2>
+            <p className="text-sm text-gray-500">Default hours used for public holidays and approved leave auto-fill</p>
+          </div>
+        </div>
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Default holiday hours</label>
+            <input
+              type="number"
+              min={0}
+              step={0.25}
+              value={settings.defaultHolidayHours}
+              onChange={(e) => handleChange("defaultHolidayHours", parseFloat(e.target.value))}
+              className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a day is detected as a public holiday or full-day leave</p>
           </div>
         </div>
       </div>

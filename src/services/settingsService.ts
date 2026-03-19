@@ -26,7 +26,10 @@ export const settingsService = {
         emailNotifications: data.email_notifications,
         pushNotifications: data.push_notifications,
         twoFactorAuth: data.two_factor_auth,
-        sessionTimeout: data.session_timeout
+        sessionTimeout: data.session_timeout,
+        defaultHolidayHours: data.default_holiday_hours !== null && data.default_holiday_hours !== undefined
+          ? Number(data.default_holiday_hours)
+          : undefined,
       } : null;
     } catch (error) {
       console.error('Unexpected error in settingsService.get:', error);
@@ -48,6 +51,7 @@ export const settingsService = {
       if (settings.pushNotifications !== undefined) dbData.push_notifications = settings.pushNotifications;
       if (settings.twoFactorAuth !== undefined) dbData.two_factor_auth = settings.twoFactorAuth;
       if (settings.sessionTimeout) dbData.session_timeout = settings.sessionTimeout;
+      if (settings.defaultHolidayHours !== undefined) dbData.default_holiday_hours = settings.defaultHolidayHours;
 
       // Check if record exists
       const existing = await this.get();
@@ -94,7 +98,10 @@ export const settingsService = {
         emailNotifications: data.email_notifications,
         pushNotifications: data.push_notifications,
         twoFactorAuth: data.two_factor_auth,
-        sessionTimeout: data.session_timeout
+        sessionTimeout: data.session_timeout,
+        defaultHolidayHours: data.default_holiday_hours !== null && data.default_holiday_hours !== undefined
+          ? Number(data.default_holiday_hours)
+          : undefined,
       };
     } catch (error) {
       console.error('Unexpected error in settingsService.update:', error);

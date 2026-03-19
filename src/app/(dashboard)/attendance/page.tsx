@@ -37,8 +37,11 @@ import { projectService } from '@/services/projectService';
 import { employeeService } from '@/services/employeeService';
 import { leaveService } from '@/services/leaveService';
 import { holidayService } from '@/services/holidayService';
+import { settingsService } from '@/services/settingsService';
+import { auditService } from '@/services/auditService';
 import { Timesheet, TimesheetRow, Project, Employee, LeaveRequest } from '@/types';
 import { PublicHoliday } from '@/services/holidayService';
+import { detectAutoFillCandidates } from '@/utils/timesheetAutoFill';
 
 export default function TimesheetPage() {
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -48,6 +51,7 @@ export default function TimesheetPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [defaultHolidayHours, setDefaultHolidayHours] = useState(8);
   
   // Leave & Holiday State
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
@@ -77,6 +81,13 @@ export default function TimesheetPage() {
               fetchTeammates(emp.department);
             }
           }
+        }
+
+        try {
+          const s = await settingsService.get();
+          const v = Number(s?.defaultHolidayHours);
+          if (Number.isFinite(v) && v > 0) setDefaultHolidayHours(v);
+        } catch {
         }
         
         const allProjects = await projectService.getAll();
@@ -159,6 +170,77 @@ export default function TimesheetPage() {
           }
         }
       }
+      const applyAutoFill = async () => {
+        if (!finalTimesheet) return;
+        if (finalTimesheet.status !== 'Draft') return;
+        if (!finalTimesheet.rows) return;
+
+        const days = Array.from({ length: 7 }, (_, i) => addDays(date, i));
+        const candidates = detectAutoFillCandidates({
+          days,
+          holidays: holidaysData,
+          leaves: leavesData,
+          defaultHours: defaultHolidayHours,
+        });
+        if (candidates.length === 0) return;
+
+        const getRow = (type: TimesheetRow['type']) => finalTimesheet?.rows?.find((r) => r.type === type) || null;
+        let holidayRow = getRow('Holiday');
+        let leaveRow = getRow('Leave');
+
+        if (!holidayRow) {
+          const created = await timesheetService.addRow(finalTimesheet.id, null, 'Holiday');
+          holidayRow = { ...created, entries: [] };
+          finalTimesheet.rows = [...(finalTimesheet.rows || []), holidayRow];
+        }
+        if (!leaveRow) {
+          const created = await timesheetService.addRow(finalTimesheet.id, null, 'Leave');
+          leaveRow = { ...created, entries: [] };
+          finalTimesheet.rows = [...(finalTimesheet.rows || []), leaveRow];
+        }
+
+        const dailyTotalFromRows = (d: string) => {
+          return (finalTimesheet?.rows || []).reduce((acc, row) => {
+            const e = row.entries?.find((x) => x.date === d);
+            return acc + Number(e?.hours || 0);
+          }, 0);
+        };
+
+        const inserted: Array<{ date: string; hours: number; reason: string }> = [];
+
+        for (const c of candidates) {
+          const currentTotal = dailyTotalFromRows(c.date);
+          if (currentTotal > 0) continue;
+          const targetRow = c.reason === 'HOLIDAY' ? holidayRow : leaveRow;
+          if (!targetRow) continue;
+          const existingEntry = targetRow.entries?.find((e) => e.date === c.date);
+          if (existingEntry && Number(existingEntry.hours || 0) > 0) continue;
+
+          await timesheetService.saveEntry(targetRow.id, c.date, c.hours, `AUTO:${c.reason}`);
+          const nextEntries = [...(targetRow.entries || [])].filter((e) => e.date !== c.date);
+          nextEntries.push({ id: 'temp', rowId: targetRow.id, date: c.date, hours: c.hours, notes: `AUTO:${c.reason}` } as any);
+          targetRow.entries = nextEntries;
+          inserted.push({ date: c.date, hours: c.hours, reason: c.reason });
+        }
+
+        if (inserted.length > 0) {
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            await auditService.logAction(
+              'timesheets',
+              finalTimesheet.id,
+              'SYSTEM_ACTION',
+              null,
+              { event: 'AUTO_POPULATE_HOURS', employeeId, weekStartDate: dateStr, inserted, defaultHolidayHours },
+              user?.id
+            );
+          } catch {
+          }
+        }
+      };
+
+      await applyAutoFill();
+
       setTimesheet(finalTimesheet);
       setLeaves(leavesData);
       setHolidays(holidaysData);
@@ -284,7 +366,7 @@ export default function TimesheetPage() {
 
     // API Call (Debounce could be added here)
     try {
-      await timesheetService.saveEntry(rowId, dateStr, numValue);
+      await timesheetService.saveEntry(rowId, dateStr, numValue, null);
     } catch (error) {
       console.error("Error saving entry:", error);
       // Revert on error?
@@ -662,24 +744,25 @@ export default function TimesheetPage() {
                     const isWeekend = i === 5 || i === 6;
                     const status = getBlockedStatus(day);
                     const hours = getHours(row, day);
-                    // Block only if it's a full day leave or holiday
-                    const isBlocked = status && status.type !== 'PartialLeave';
                     const isPartial = status?.type === 'PartialLeave';
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    const entry = row.entries?.find(e => e.date === dateStr);
+                    const isAuto = typeof entry?.notes === 'string' && entry.notes.startsWith('AUTO:');
                     
                     // Calculate remaining hours for partial leave
                     const maxHours = isPartial && status.hours ? (24 - status.hours) : 24;
 
                     return (
-                      <td key={day.toString()} className={`px-2 py-3 ${isWeekend ? 'bg-gray-50/50' : ''} ${isBlocked ? 'bg-gray-50/50' : ''}`}>
+                      <td key={day.toString()} className={`px-2 py-3 ${isWeekend ? 'bg-gray-50/50' : ''}`}>
                          <div className={`relative ${status ? (status.type === 'Holiday' ? 'bg-purple-50/30' : 'bg-green-50/30') + ' -mx-2 px-2 py-1 rounded' : ''}`}>
                             <input 
                               type="text" 
                               className={`w-full text-center border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm h-9 border ${
-                                isBlocked ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
-                              } ${isPartial && getHours(row, day) > maxHours ? 'border-red-500 text-red-600' : ''}`}
-                              placeholder={isBlocked ? (status?.type === 'Holiday' ? 'H' : 'L') : (isPartial ? `Max ${maxHours}h` : "")}
-                              value={isBlocked ? '' : formatHours(hours)}
-                              disabled={timesheet.status !== 'Draft' || !!isBlocked}
+                                isPartial && getHours(row, day) > maxHours ? 'border-red-500 text-red-600' : ''
+                              } ${isAuto ? 'border-purple-300 bg-purple-50/40' : ''}`}
+                              placeholder={isPartial ? `Max ${maxHours}h` : ""}
+                              value={formatHours(hours)}
+                              disabled={timesheet.status !== 'Draft'}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 // Basic validation for partial leave
@@ -696,8 +779,18 @@ export default function TimesheetPage() {
                                 }
                                 handleUpdateHours(row.id, day, val);
                               }}
-                              title={status ? `${status.name} (${status.type})${isPartial ? ` - ${status.hours}h taken` : ''}` : ''}
+                              title={[
+                                status ? `${status.name} (${status.type})${isPartial ? ` - ${status.hours}h taken` : ''}` : null,
+                                isAuto ? `Auto-populated (${entry?.notes})` : null
+                              ].filter(Boolean).join(' • ')}
                             />
+                            {isAuto && (
+                              <div className="absolute -top-1 -right-1">
+                                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px]">
+                                  A
+                                </span>
+                              </div>
+                            )}
                          </div>
                       </td>
                     );

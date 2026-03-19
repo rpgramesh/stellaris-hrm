@@ -980,6 +980,7 @@ export interface SystemSettings {
   pushNotifications: boolean;
   twoFactorAuth: boolean;
   sessionTimeout: string;
+  defaultHolidayHours?: number;
 }
 
 // Timesheet & Projects
@@ -1008,7 +1009,7 @@ export interface TimesheetRow {
   timesheetId: string;
   projectId?: string;
   project?: Project;
-  type: 'Project' | 'Break';
+  type: 'Project' | 'Break' | 'Holiday' | 'Leave';
   entries: TimesheetEntry[];
 }
 
