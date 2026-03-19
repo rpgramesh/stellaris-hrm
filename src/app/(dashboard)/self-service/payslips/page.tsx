@@ -57,6 +57,7 @@ export default function EmployeePayslipsPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadEmployeePayslips();
@@ -65,6 +66,7 @@ export default function EmployeePayslipsPage() {
   const loadEmployeePayslips = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
 
       const { data: userData, error: userError } = await supabase.auth.getUser();
       if (userError) throw userError;
@@ -77,9 +79,9 @@ export default function EmployeePayslipsPage() {
 
       const { data: employeeData, error: employeeError } = await supabase
         .from('employees')
-        .select('id, first_name, last_name, employee_code, employment_type, email')
+        .select('id, first_name, last_name, employee_code, email')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (employeeError) throw employeeError;
       if (!employeeData) {
@@ -98,6 +100,16 @@ export default function EmployeePayslipsPage() {
 
       if (payslipError) throw payslipError;
 
+      const normalizePayslipStatus = (raw: any): Payslip['status'] => {
+        const s = String(raw || '').trim();
+        if (s === 'Paid') return 'Paid';
+        if (s === 'Published') return 'Published';
+        if (s === 'Draft') return 'Draft';
+        if (s === 'Final') return 'Published';
+        if (s === 'Corrected') return 'Published';
+        return 'Published';
+      };
+
       const payslipsWithDetails: Payslip[] = await Promise.all(
         ((payslipRows as any[]) || []).map(async (p) => {
           const { data: components } = await supabase
@@ -107,16 +119,16 @@ export default function EmployeePayslipsPage() {
 
           const mapped: Payslip = {
             id: p.id,
-            period_start: p.period_start,
-            period_end: p.period_end,
-            gross_pay: Number(p.gross_pay || 0),
+            period_start: String(p.pay_period_start ?? p.period_start ?? ''),
+            period_end: String(p.pay_period_end ?? p.period_end ?? ''),
+            gross_pay: Number(p.gross_earnings ?? p.gross_pay ?? 0),
             net_pay: Number(p.net_pay || 0),
-            tax_withheld: Number(p.tax_withheld ?? p.payg_tax ?? 0),
+            tax_withheld: Number(p.income_tax ?? p.tax_withheld ?? p.payg_tax ?? 0),
             superannuation: Number(p.superannuation || 0),
             allowances: Number(p.allowances || 0),
             overtime: Number(p.overtime || 0),
-            payment_date: p.payment_date,
-            status: p.status as any,
+            payment_date: String(p.payment_date ?? ''),
+            status: normalizePayslipStatus(p.status),
             pay_components: (components as any) || []
           };
           return mapped;
@@ -125,7 +137,12 @@ export default function EmployeePayslipsPage() {
 
       setPayslips(payslipsWithDetails);
     } catch (error) {
-      console.error('Error loading employee payslips:', error);
+      setEmployee(null);
+      setPayslips([]);
+      setLoadError('Unable to load your payslips right now. Please refresh and try again.');
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('Error loading employee payslips:', error);
+      }
     } finally {
       setLoading(false);
     }
@@ -172,7 +189,10 @@ export default function EmployeePayslipsPage() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-AU', {
+    if (!dateString) return '-';
+    const d = new Date(dateString);
+    if (Number.isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString('en-AU', {
       day: '2-digit',
       month: 'long',
       year: 'numeric'
@@ -246,6 +266,18 @@ export default function EmployeePayslipsPage() {
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">Payslip History</h2>
         </div>
+
+        {loadError && (
+          <div className="px-6 py-4 border-b border-gray-200 bg-red-50">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-red-800">Payslips could not be loaded</div>
+                <div className="text-sm text-red-700">{loadError}</div>
+              </div>
+            </div>
+          </div>
+        )}
         
         {payslips.length === 0 ? (
           <div className="px-6 py-12 text-center">
