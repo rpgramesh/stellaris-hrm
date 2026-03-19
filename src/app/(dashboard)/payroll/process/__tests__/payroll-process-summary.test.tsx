@@ -8,6 +8,14 @@ vi.mock('next/navigation', () => {
   };
 });
 
+vi.mock('@/lib/realtime', async () => {
+  const actual: any = await vi.importActual('@/lib/realtime');
+  return {
+    ...actual,
+    subscribeToTableWithClient: vi.fn(() => ({ unsubscribe: vi.fn() })),
+  };
+});
+
 vi.mock('@/components/payroll/PayrollConfigurationModal', () => ({
   PayrollConfigurationModal: () => null,
 }));

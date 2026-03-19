@@ -727,49 +727,69 @@ export const comprehensivePayrollService = {
             byWeekStart.set(weekStart, t);
           }
 
+          const weekLabel = (idx: number) => `Week ${idx + 1}`;
+          const formatWeekRange = (weekStart: string) => {
+            const ws = new Date(`${weekStart}T00:00:00.000Z`);
+            const we = new Date(ws);
+            we.setUTCDate(we.getUTCDate() + 6);
+            const displayStart = ws < start ? start : ws;
+            const displayEnd = we > end ? end : we;
+            return `${displayStart.toISOString().slice(0, 10)} to ${displayEnd.toISOString().slice(0, 10)}`;
+          };
+
           const missingWeeks = expectedWeekStarts.filter((ws) => !byWeekStart.has(ws));
           if (missingWeeks.length > 0) {
             missingTimesheets.push(employee.employeeId);
-            const detail = missingWeeks.slice(0, 5).join(', ');
-            errors.push(`Employee ${employeeName} is missing timesheets for week(s) starting ${detail}${missingWeeks.length > 5 ? '…' : ''}`);
+            for (const ws of missingWeeks) {
+              const idx = expectedWeekStarts.indexOf(ws);
+              errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(ws)}) is missing`);
+            }
           }
 
-          const unapproved: any[] = [];
-          const incompleteApproved: any[] = [];
+          const statusProblems: Array<{ weekStart: string; status: string }> = [];
+          for (let i = 0; i < expectedWeekStarts.length; i++) {
+            const ws = expectedWeekStarts[i];
+            const t = byWeekStart.get(ws);
+            if (!t) continue;
+            const rawStatus = String((t as any).status || '');
+            const status = rawStatus.toLowerCase();
+            if (status !== 'approved') {
+              statusProblems.push({ weekStart: ws, status: rawStatus || 'Unknown' });
+            }
+          }
 
+          if (statusProblems.length > 0) {
+            unapprovedTimesheets.push(employee.employeeId);
+            for (const p of statusProblems) {
+              const idx = expectedWeekStarts.indexOf(p.weekStart);
+              if (idx === 1 && String(p.status || '').toLowerCase() === 'draft') {
+                errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(p.weekStart)}) is Draft. Submit and get it approved before payroll can proceed.`);
+              } else {
+                errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(p.weekStart)}) is ${p.status}. It must be Approved before payroll can proceed.`);
+              }
+            }
+          }
+
+          const incompleteApproved: any[] = [];
           for (const t of timesheets) {
+            const weekStart = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
+            if (!weekStart || !expectedWeekStarts.includes(weekStart)) continue;
             const status = String((t as any).status || '').toLowerCase();
+            if (status !== 'approved') continue;
             const totalHours = Number((t as any).total_hours ?? (t as any).totalHours ?? 0);
             const approvedHours = Number((t as any).approved_hours ?? (t as any).approvedHours);
-
-            if (status === 'approved') {
-              if (totalHours > 0 && (!Number.isFinite(approvedHours) || approvedHours <= 0)) {
-                incompleteApproved.push(t);
-              }
-              continue;
+            if (totalHours > 0 && (!Number.isFinite(approvedHours) || approvedHours <= 0)) {
+              incompleteApproved.push(t);
             }
-
-            if (totalHours > 0) {
-              unapproved.push(t);
-            }
-          }
-
-          if (unapproved.length > 0) {
-            const detail = unapproved
-              .slice(0, 5)
-              .map(t => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (${(t as any).status || 'Unknown'})`)
-              .join(', ');
-            unapprovedTimesheets.push(employee.employeeId);
-            errors.push(`Employee ${employeeName} has unapproved timesheets${detail ? `: ${detail}` : ''}`);
           }
 
           if (incompleteApproved.length > 0) {
-            const detail = incompleteApproved
-              .slice(0, 5)
-              .map((t) => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (0 hours)`)
-              .join(', ');
             incompleteTimesheets.push(employee.employeeId);
-            errors.push(`Employee ${employeeName} has incomplete approved timesheets${detail ? `: ${detail}` : ''}`);
+            for (const t of incompleteApproved) {
+              const ws = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
+              const idx = expectedWeekStarts.indexOf(ws);
+              errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(ws)}) is marked Approved but has incomplete entries`);
+            }
           }
         }
       } else {

@@ -120,7 +120,7 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
     });
 
     expect(res.unapprovedTimesheets).toEqual(['e-employee']);
-    expect(res.errors.join(' ')).toContain('unapproved timesheets');
+    expect(res.errors.join(' ')).toContain('must be Approved');
   });
 
   it('reports unapproved timesheets only when they have hours', async () => {
@@ -170,7 +170,30 @@ describe('comprehensivePayrollService.validateEmployeePayroll', () => {
     });
 
     expect(res.incompleteTimesheets).toEqual(['e-employee']);
-    expect(res.errors.join(' ')).toContain('incomplete approved timesheets');
+    expect(res.errors.join(' ')).toContain('incomplete entries');
+  });
+
+  it('blocks Draft week timesheets even when they have 0 hours', async () => {
+    const employee: any = {
+      employeeId: 'e-employee',
+      firstName: 'Ramesh',
+      lastName: 'P',
+    };
+    const payrollRun: any = {
+      payPeriodStart: '2026-03-03',
+      payPeriodEnd: '2026-03-15',
+    };
+
+    const res = await comprehensivePayrollService.validateEmployeePayroll(employee, payrollRun, {
+      timesheetsForPeriod: [
+        { status: 'Approved', week_start_date: '2026-03-02', total_hours: 0, approved_hours: 40 },
+        { status: 'Draft', week_start_date: '2026-03-09', total_hours: 0, approved_hours: 0 },
+      ],
+    });
+
+    expect(res.unapprovedTimesheets).toEqual(['e-employee']);
+    expect(res.errors.join(' ')).toContain('Week 2');
+    expect(res.errors.join(' ')).toContain('Draft');
   });
 
   it('calculatePayrollPreview returns run totals when no employees are selected', async () => {

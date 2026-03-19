@@ -26,6 +26,7 @@ import { payrollReportingService } from '@/services/payrollReportingService';
 import { payrollErrorHandlingService } from '@/services/payrollErrorHandlingService';
 import { pdfGeneratorService } from '@/services/pdfGeneratorService';
 import { supabase } from '@/lib/supabase';
+import { subscribeToTableWithClient } from '@/lib/realtime';
 import { PayrollConfigurationModal } from '@/components/payroll/PayrollConfigurationModal';
 import { ReportDownloadModal } from '@/components/payroll/ReportDownloadModal';
 import EmployeeUpdateModal from '@/components/payroll/EmployeeUpdateModal';
@@ -700,6 +701,44 @@ export default function PayrollProcessingPage() {
     return () => {
       cancelled = true;
       window.clearTimeout(id);
+    };
+  }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees]);
+
+  useEffect(() => {
+    if (!selectedRun) return;
+    if (!isHrAdmin) return;
+    if (selectedRun.status === 'Paid') return;
+
+    const selected = employees.filter((e) => e.selected && !isEmployeeLocked(e));
+    const payrollEmployeeIds = selected.map((e) => e.id);
+    const employeeIds = selected.map((e) => e.employee_id).filter(Boolean);
+    if (employeeIds.length === 0) return;
+
+    const limited = employeeIds.slice(0, 10);
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const trigger = () => {
+      if (cancelled) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        validatePayrollRun(selectedRun.id, payrollEmployeeIds);
+      }, 300);
+    };
+
+    const subs = limited.map((employeeId) =>
+      subscribeToTableWithClient(
+        supabase as any,
+        { table: 'timesheets', filter: [{ column: 'employee_id', value: employeeId }] },
+        { onInsert: trigger, onUpdate: trigger, onDelete: trigger }
+      )
+    );
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      subs.forEach((s) => s.unsubscribe());
     };
   }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees]);
 
