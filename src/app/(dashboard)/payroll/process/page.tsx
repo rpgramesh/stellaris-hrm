@@ -1018,6 +1018,38 @@ export default function PayrollProcessingPage() {
         processingOptions
       );
 
+      if (options.generatePayslips || options.sendNotifications) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (token) {
+          const res = await fetch('/api/payroll/payslips/deliver', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              payrollRunId: selectedRun.id,
+              sendToEmployers: !!options.generatePayslips,
+              sendToEmployees: !!options.sendNotifications,
+              notifyInApp: !!options.sendNotifications,
+              rollbackOnFailure: true,
+              encryptAttachments: true,
+            }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            alert(String(j?.error || 'Payslip delivery failed. Payroll has been rolled back.'));
+            const updatedRuns = await loadPayrollRuns();
+            setPayrollRuns(updatedRuns);
+            const updated = updatedRuns.find((r) => r.id === selectedRun.id);
+            if (updated) setSelectedRun(updated);
+            setProcessing(false);
+            return;
+          }
+        }
+      }
+
       setSelectedRun((prev) => (prev && prev.id === selectedRun.id ? { ...prev, status: 'Paid' as any } : prev));
       
       // Refresh payroll runs

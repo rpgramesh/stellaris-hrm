@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   Download, 
   Eye, 
@@ -58,6 +58,8 @@ export default function EmployeePayslipsPage() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | Payslip['status']>('all');
 
   useEffect(() => {
     loadEmployeePayslips();
@@ -155,6 +157,25 @@ export default function EmployeePayslipsPage() {
       const payslip = payslips.find((p) => p.id === payslipId);
       if (!payslip) throw new Error('Payslip not found');
 
+      const pdfUrl = (payslip as any).pdf_url as string | undefined;
+      const pdfBucket = (payslip as any).pdf_bucket as string | undefined;
+      const pdfPath = (payslip as any).pdf_path as string | undefined;
+
+      if (pdfUrl) {
+        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+        await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF_URL' });
+        return;
+      }
+
+      if (pdfBucket && pdfPath) {
+        const { data, error } = await supabase.storage.from(pdfBucket).createSignedUrl(pdfPath, 60);
+        if (!error && data?.signedUrl) {
+          window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+          await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF_SIGNED_URL' });
+          return;
+        }
+      }
+
       const integrity = validatePayslip(payslip as any);
       if (!integrity.isValid) throw new Error('Payslip data is incomplete or corrupted');
 
@@ -187,6 +208,18 @@ export default function EmployeePayslipsPage() {
       currency: 'AUD'
     }).format(amount);
   };
+
+  const filteredPayslips = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return payslips
+      .filter((p) => (statusFilter === 'all' ? true : p.status === statusFilter))
+      .filter((p) => {
+        if (!q) return true;
+        const ref = String((p as any).payment_reference || (p as any).payslip_number || p.id).toLowerCase();
+        const range = `${p.period_start} ${p.period_end}`.toLowerCase();
+        return ref.includes(q) || range.includes(q) || String(p.status).toLowerCase().includes(q);
+      });
+  }, [payslips, search, statusFilter]);
 
   const formatDate = (dateString: string) => {
     if (!dateString) return '-';
@@ -264,7 +297,27 @@ export default function EmployeePayslipsPage() {
       {/* Payslips List */}
       <div className="bg-white rounded-lg shadow-sm border">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Payslip History</h2>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <h2 className="text-lg font-semibold text-gray-900">Payslip History</h2>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full sm:w-64 rounded-md border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Search by period, status, reference…"
+              />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="w-full sm:w-40 rounded-md border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="all">All statuses</option>
+                <option value="Draft">Draft</option>
+                <option value="Published">Published</option>
+                <option value="Paid">Paid</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         {loadError && (
@@ -279,7 +332,7 @@ export default function EmployeePayslipsPage() {
           </div>
         )}
         
-        {payslips.length === 0 ? (
+        {filteredPayslips.length === 0 ? (
           <div className="px-6 py-12 text-center">
             <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No payslips found</h3>
@@ -287,7 +340,7 @@ export default function EmployeePayslipsPage() {
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {payslips.map((payslip) => (
+            {filteredPayslips.map((payslip) => (
               <div key={payslip.id} className="px-6 py-4 hover:bg-gray-50">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
@@ -299,6 +352,9 @@ export default function EmployeePayslipsPage() {
                         </p>
                         <p className="text-sm text-gray-600">
                           Payment Date: {formatDate(payslip.payment_date)}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Ref: {String((payslip as any).payment_reference || (payslip as any).payslip_number || payslip.id)}
                         </p>
                       </div>
                     </div>

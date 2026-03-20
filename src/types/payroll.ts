@@ -63,6 +63,12 @@ export interface Payslip {
   overtime: number;
   paymentDate: string;
   status: 'Draft' | 'Published' | 'Paid';
+  referenceNumber?: string;
+  pdfBucket?: string;
+  pdfPath?: string;
+  pdfGeneratedAt?: string;
+  paymentReference?: string;
+  employerEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
