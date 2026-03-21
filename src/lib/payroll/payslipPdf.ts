@@ -127,8 +127,10 @@ export const generatePayslipPdfBuffer = (input: {
   const taxRows = [
     { label: 'PAYG', thisPay: tax, ytd: ytdTax },
   ];
+  const superFundName = input.employee?.super_fund_name || input.employee?.superannuation_fund_name;
+  const superMemberNumber = input.employee?.super_member_number || input.employee?.superannuation_member_number;
   const superRows = [
-    { label: input.employee?.super_fund_name ? `SGC - ${input.employee.super_fund_name} - ${input.employee?.super_member_number || ''}`.trim() : 'SGC', thisPay: sup, ytd: ytdSuper },
+    { label: superFundName ? `SGC - ${superFundName} - ${superMemberNumber || ''}`.trim() : 'SGC', thisPay: sup, ytd: ytdSuper },
   ];
 
   let tableY = 256;
@@ -137,6 +139,7 @@ export const generatePayslipPdfBuffer = (input: {
   doc.text('THIS PAY', pageWidth - margin - 170, tableY - 8);
   doc.text('YTD', pageWidth - margin - 60, tableY - 8);
 
+  const shouldShowSingleLineYtd = earningsThisPay.length === 1;
   const salaryBody = earningsThisPay.map((c) => {
     const desc = String(c.description || 'Earning');
     const units = Number(c.units || 0);
@@ -147,7 +150,7 @@ export const generatePayslipPdfBuffer = (input: {
       units ? units.toFixed(4) : '',
       rate ? formatMoney(rate) : '',
       formatMoney(amount),
-      '',
+      shouldShowSingleLineYtd ? formatMoney(ytdGross) : '',
     ];
   });
 
@@ -162,15 +165,18 @@ export const generatePayslipPdfBuffer = (input: {
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { textColor: [0, 0, 0], fillColor: [255, 255, 255], fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 240, fontStyle: 'bold' },
-      1: { halign: 'right', cellWidth: 70 },
-      2: { halign: 'right', cellWidth: 80 },
-      3: { halign: 'right', cellWidth: 80 },
-      4: { halign: 'right', cellWidth: 70 },
+      0: { cellWidth: 220 },
+      1: { halign: 'right', cellWidth: 60 },
+      2: { halign: 'right', cellWidth: 70 },
+      3: { halign: 'right', cellWidth: 90 },
+      4: { halign: 'right', cellWidth: 83 },
     },
     didParseCell: (d) => {
       if (d.section === 'body' && d.row.index === salaryBody.length) {
         d.cell.styles.fillColor = [240, 240, 240];
+        d.cell.styles.fontStyle = 'bold';
+      }
+      if (d.section === 'head') {
         d.cell.styles.fontStyle = 'bold';
       }
     },
@@ -190,15 +196,18 @@ export const generatePayslipPdfBuffer = (input: {
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { textColor: [0, 0, 0], fillColor: [255, 255, 255], fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 240, fontStyle: 'bold' },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 80 },
-      3: { halign: 'right', cellWidth: 80 },
-      4: { halign: 'right', cellWidth: 70 },
+      0: { cellWidth: 220 },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 70 },
+      3: { halign: 'right', cellWidth: 90 },
+      4: { halign: 'right', cellWidth: 83 },
     },
     didParseCell: (d) => {
       if (d.section === 'body' && d.row.index === taxRows.length) {
         d.cell.styles.fillColor = [240, 240, 240];
+        d.cell.styles.fontStyle = 'bold';
+      }
+      if (d.section === 'head') {
         d.cell.styles.fontStyle = 'bold';
       }
     },
@@ -218,15 +227,18 @@ export const generatePayslipPdfBuffer = (input: {
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { textColor: [0, 0, 0], fillColor: [255, 255, 255], fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 240, fontStyle: 'bold' },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 80 },
-      3: { halign: 'right', cellWidth: 80 },
-      4: { halign: 'right', cellWidth: 70 },
+      0: { cellWidth: 220 },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 70 },
+      3: { halign: 'right', cellWidth: 90 },
+      4: { halign: 'right', cellWidth: 83 },
     },
     didParseCell: (d) => {
       if (d.section === 'body' && d.row.index === superRows.length) {
         d.cell.styles.fillColor = [240, 240, 240];
+        d.cell.styles.fontStyle = 'bold';
+      }
+      if (d.section === 'head') {
         d.cell.styles.fontStyle = 'bold';
       }
     },
@@ -258,10 +270,10 @@ export const generatePayslipPdfBuffer = (input: {
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 140 },
-      1: { cellWidth: 200 },
-      2: { cellWidth: 120 },
-      3: { cellWidth: 80, halign: 'right' },
+      0: { cellWidth: 130 },
+      1: { cellWidth: 190 },
+      2: { cellWidth: 110 },
+      3: { cellWidth: 93, halign: 'right' },
     },
     margin: { left: margin, right: margin },
   });
