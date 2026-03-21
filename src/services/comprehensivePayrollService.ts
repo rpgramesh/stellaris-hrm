@@ -306,7 +306,13 @@ export const comprehensivePayrollService = {
     };
 
     const { error } = await supabase.from('payroll_run_calculation_cache').upsert(payload as any);
-    if (error) throw error;
+    if (error) {
+      const msg = String((error as any)?.message || '');
+      const lower = msg.toLowerCase();
+      if (lower.includes('could not find the table') && lower.includes('payroll_run_calculation_cache')) return;
+      if (String((error as any)?.code || '').toLowerCase() === '42p01') return;
+      throw error;
+    }
   },
 
   async getTimesheetsForEmployeesInPeriod(

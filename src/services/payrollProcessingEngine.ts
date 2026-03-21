@@ -8,6 +8,18 @@ import { attendanceService } from './attendanceService';
 import { Timesheet } from '@/types';
 import { supabase } from '@/lib/supabase';
 
+const formatProcessingError = (e: any) => {
+  if (!e) return 'Unknown error';
+  const msg = typeof e?.message === 'string' && e.message ? e.message : typeof e === 'string' ? e : 'Unknown error';
+  const parts = [
+    msg,
+    e?.code ? `code=${e.code}` : null,
+    e?.hint ? `hint=${e.hint}` : null,
+    e?.details ? `details=${e.details}` : null,
+  ].filter(Boolean);
+  return parts.join(' | ');
+};
+
 export const payrollProcessingEngine = {
   async processPayrollRun(payrollRunId: string, processedBy: string, selectedEmployeeIds?: string[]): Promise<PayrollCalculationResult[]> {
     const payrollRun = await this.getPayrollRun(payrollRunId);
@@ -58,15 +70,15 @@ export const payrollProcessingEngine = {
           // Create payslip
           await this.createPayslipFromCalculation(result, payrollRunId);
         } catch (calcError) {
-          console.error(`Error calculating payroll for employee ${employee.employeeId}:`, calcError);
+          console.error(`Error calculating payroll for employee ${employee.employeeId}:`, formatProcessingError(calcError));
           // Add to errors table
           await this.logPayrollError(
             payrollRunId,
             employee.employeeId,
             'Calculation',
             'CALC_ERR',
-            `Failed to calculate payroll: ${calcError instanceof Error ? calcError.message : 'Unknown error'}`,
-            { error: calcError }
+            `Failed to calculate payroll: ${formatProcessingError(calcError)}`,
+            { error: typeof calcError === 'object' ? calcError : { value: calcError } }
           );
         }
       }
@@ -93,7 +105,7 @@ export const payrollProcessingEngine = {
       console.log(`Payroll processing completed. Successfully calculated ${results.length} of ${employees.length} employees.`);
       return results;
     } catch (error) {
-      console.error('Error in processPayrollRun:', error);
+      console.error('Error in processPayrollRun:', formatProcessingError(error));
       await this.updatePayrollRunStatus(payrollRunId, 'Draft', processedBy);
       throw error;
     }
@@ -795,8 +807,9 @@ export const payrollProcessingEngine = {
       }
 
     } catch (error) {
-      console.error('Error creating payslip records:', error);
-      throw error;
+      console.error('Error creating payslip records:', formatProcessingError(error));
+      const wrapped = error instanceof Error ? error : new Error(formatProcessingError(error));
+      throw wrapped;
     }
   },
 
