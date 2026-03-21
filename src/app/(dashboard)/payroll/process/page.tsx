@@ -27,6 +27,7 @@ import { payrollErrorHandlingService } from '@/services/payrollErrorHandlingServ
 import { pdfGeneratorService } from '@/services/pdfGeneratorService';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTableWithClient } from '@/lib/realtime';
+import { clampIsoDate } from '@/lib/payroll/periodClamp';
 import { PayrollConfigurationModal } from '@/components/payroll/PayrollConfigurationModal';
 import { ReportDownloadModal } from '@/components/payroll/ReportDownloadModal';
 import EmployeeUpdateModal from '@/components/payroll/EmployeeUpdateModal';
@@ -168,6 +169,44 @@ export default function PayrollProcessingPage() {
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const hasSelectedEmployees = useMemo(() => employees.some((e) => e.selected), [employees]);
+
+  const mergeEmployeeSelection = (prev: Employee[], next: Employee[]) => {
+    const selectedByEmployeeId = new Set(prev.filter((e) => e.selected).map((e) => e.employee_id));
+    const selectedByPayrollEmployeeId = new Set(prev.filter((e) => e.selected).map((e) => e.id));
+    return next.map((e) => ({
+      ...e,
+      selected: selectedByEmployeeId.has(e.employee_id) || selectedByPayrollEmployeeId.has(e.id),
+    }));
+  };
+
+  const loadSelectedEmployeeIdsForRun = async (payrollRunId: string): Promise<Set<string>> => {
+    try {
+      const { data, error } = await supabase
+        .from('payslips')
+        .select('employee_id')
+        .eq('payroll_run_id', payrollRunId);
+      if (error) return new Set();
+      return new Set((data || []).map((r: any) => String(r.employee_id || '')).filter(Boolean));
+    } catch {
+      return new Set();
+    }
+  };
+
+  const selectRun = async (run: PayrollRun) => {
+    setSelectedRun(run);
+    const emps = await loadEmployees(run.pay_frequency);
+    setValidationResult(null);
+    setEmployees(emps.map((e) => ({ ...e, selected: false })));
+    const selectedEmployeeIds = await loadSelectedEmployeeIdsForRun(run.id);
+    if (selectedEmployeeIds.size > 0) {
+      setEmployees((prev) =>
+        prev.map((e) => ({
+          ...e,
+          selected: selectedEmployeeIds.has(e.employee_id),
+        }))
+      );
+    }
+  };
 
   const normalizeStatus = (s: unknown) => String(s || '').trim().toLowerCase();
   const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -953,6 +992,14 @@ export default function PayrollProcessingPage() {
       alert('Read-only access. Only HR administrators can process payroll.');
       return;
     }
+    if (!options.generatePayslips) {
+      alert('Payslip generation is required before payroll can be marked Paid.');
+      return;
+    }
+    if (!options.sendNotifications) {
+      alert('Employee notifications are required before payroll can be marked Paid.');
+      return;
+    }
 
     try {
       setProcessing(true);
@@ -1018,36 +1065,38 @@ export default function PayrollProcessingPage() {
         processingOptions
       );
 
-      if (options.generatePayslips || options.sendNotifications) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-        if (token) {
-          const res = await fetch('/api/payroll/payslips/deliver', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              payrollRunId: selectedRun.id,
-              sendToEmployers: !!options.generatePayslips,
-              sendToEmployees: !!options.sendNotifications,
-              notifyInApp: !!options.sendNotifications,
-              rollbackOnFailure: true,
-              encryptAttachments: true,
-            }),
-          });
-          if (!res.ok) {
-            const j = await res.json().catch(() => ({}));
-            alert(String(j?.error || 'Payslip delivery failed. Payroll has been rolled back.'));
-            const updatedRuns = await loadPayrollRuns();
-            setPayrollRuns(updatedRuns);
-            const updated = updatedRuns.find((r) => r.id === selectedRun.id);
-            if (updated) setSelectedRun(updated);
-            setProcessing(false);
-            return;
-          }
-        }
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        alert('Not authenticated');
+        setProcessing(false);
+        return;
+      }
+
+      const res = await fetch('/api/payroll/payslips/deliver', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          payrollRunId: selectedRun.id,
+          sendToEmployers: true,
+          sendToEmployees: true,
+          notifyInApp: true,
+          rollbackOnFailure: true,
+          encryptAttachments: true,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(String(j?.error || 'Payslip delivery failed. Payroll has been rolled back.'));
+        const updatedRuns = await loadPayrollRuns();
+        setPayrollRuns(updatedRuns);
+        const updated = updatedRuns.find((r) => r.id === selectedRun.id);
+        if (updated) setSelectedRun(updated);
+        setProcessing(false);
+        return;
       }
 
       setSelectedRun((prev) => (prev && prev.id === selectedRun.id ? { ...prev, status: 'Paid' as any } : prev));
@@ -1346,11 +1395,7 @@ export default function PayrollProcessingPage() {
                   selectedRun?.id === run.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
                 }`}
                 onClick={() => {
-                  setSelectedRun(run);
-                  loadEmployees(run.pay_frequency).then(emps => {
-                    setEmployees(emps);
-                    setValidationResult(null);
-                  });
+                  selectRun(run);
                 }}
               >
                 <div className="flex justify-between items-start mb-2">
@@ -1410,11 +1455,7 @@ export default function PayrollProcessingPage() {
                     key={run.id}
                     data-testid={`payroll-run-${run.id}`}
                     onClick={() => {
-                      setSelectedRun(run);
-                      loadEmployees(run.pay_frequency).then(emps => {
-                        setEmployees(emps);
-                        setValidationResult(null);
-                      });
+                      selectRun(run);
                     }}
                     className={`cursor-pointer hover:bg-gray-50 ${selectedRun?.id === run.id ? 'bg-blue-50' : ''}`}
                   >
@@ -1944,7 +1985,11 @@ export default function PayrollProcessingPage() {
                                 type="checkbox"
                                 checked={employee.selected}
                                 disabled={locked}
-                                onChange={() => {}}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => {
+                                  if (locked) return;
+                                  toggleEmployeeSelection(employee.id);
+                                }}
                                 className="mt-1"
                                 title={locked ? lockedReason : undefined}
                               />
@@ -2239,9 +2284,9 @@ export default function PayrollProcessingPage() {
         onSave={() => {
           // Refresh employee list after adding
           if (selectedRun) {
-            loadEmployees(selectedRun.pay_frequency).then(setEmployees);
+            loadEmployees(selectedRun.pay_frequency).then((emps) => setEmployees((prev) => mergeEmployeeSelection(prev, emps)));
           } else {
-            loadEmployees().then(setEmployees);
+            loadEmployees().then((emps) => setEmployees((prev) => mergeEmployeeSelection(prev, emps)));
           }
         }}
       />
@@ -2344,11 +2389,17 @@ export default function PayrollProcessingPage() {
                           const end = new Date(d);
                           end.setUTCDate(end.getUTCDate() + 6);
                           const weekEnd = Number.isNaN(end.getTime()) ? '' : end.toISOString().slice(0, 10);
+                          const displayStart = selectedRun?.pay_period_start
+                            ? clampIsoDate(weekStart, selectedRun.pay_period_start, weekStart)
+                            : weekStart;
+                          const displayEnd = selectedRun?.pay_period_end
+                            ? clampIsoDate(weekEnd, weekEnd, selectedRun.pay_period_end)
+                            : weekEnd;
                           const approved = Number((r as any).approved_hours ?? 0);
                           const total = Number((r as any).total_hours ?? 0);
                           return (
                             <tr key={r.id}>
-                              <td className="px-4 py-3 text-sm text-gray-900">{weekStart}{weekEnd ? ` - ${weekEnd}` : ''}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{displayStart}{displayEnd ? ` - ${displayEnd}` : ''}</td>
                               <td className="px-4 py-3 text-sm text-gray-700">{String(r.status || '')}</td>
                               <td className="px-4 py-3 text-sm text-gray-900 text-right">{Number.isFinite(approved) ? approved.toFixed(1) : '0.0'}</td>
                               <td className="px-4 py-3 text-sm text-gray-900 text-right">{Number.isFinite(total) ? total.toFixed(1) : '0.0'}</td>

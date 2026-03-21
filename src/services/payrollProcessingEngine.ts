@@ -80,17 +80,12 @@ export const payrollProcessingEngine = {
             `Failed to calculate payroll: ${formatProcessingError(calcError)}`,
             { error: typeof calcError === 'object' ? calcError : { value: calcError } }
           );
+          throw calcError;
         }
       }
 
       // Update payroll run totals
       await this.updatePayrollRunTotals(payrollRunId, results);
-      await this.updatePayrollRunStatus(payrollRunId, 'Paid', processedBy);
-
-      await supabase
-        .from('payslips')
-        .update({ status: 'Paid', payment_date: payrollRun.paymentDate })
-        .eq('payroll_run_id', payrollRunId);
 
       // Create audit log
       await auditService.logAction(
@@ -98,7 +93,7 @@ export const payrollProcessingEngine = {
         payrollRunId,
         'UPDATE',
         { status: 'Processing' },
-        { status: 'Paid' },
+        { status: 'Processing' },
         processedBy
       );
 
@@ -1083,7 +1078,7 @@ export const payrollProcessingEngine = {
         // If no attendance records found but timesheets exist (e.g. manual entry), fallback to timesheet total
         if (totalHours === 0 && timesheets.length > 0) {
           timesheets.forEach(ts => {
-            const { regularHours, overtimeHours } = this.calculateHoursFromTimesheet(ts);
+            const { regularHours, overtimeHours } = this.calculateHoursFromTimesheet(ts, payrollRun.payPeriodStart, payrollRun.payPeriodEnd);
             if (regularHours > 0) {
               earnings.push({
                 id: crypto.randomUUID(),
@@ -1151,15 +1146,20 @@ export const payrollProcessingEngine = {
     return timesheets;
   },
 
-  calculateHoursFromTimesheet(timesheet: Timesheet): { regularHours: number; overtimeHours: number; totalHours: number } {
+  calculateHoursFromTimesheet(timesheet: Timesheet, periodStart?: string, periodEnd?: string): { regularHours: number; overtimeHours: number; totalHours: number } {
     let totalHours = 0;
+    const start = typeof periodStart === 'string' ? periodStart.slice(0, 10) : '';
+    const end = typeof periodEnd === 'string' ? periodEnd.slice(0, 10) : '';
     
-    // Calculate total hours from all entries
-      timesheet.rows?.forEach((row: any) => {
-        row.entries?.forEach((entry: any) => {
-          totalHours += entry.hours || 0;
-        });
+    timesheet.rows?.forEach((row: any) => {
+      row.entries?.forEach((entry: any) => {
+        const date = String(entry?.date || '').slice(0, 10);
+        if (start && end && date) {
+          if (date < start || date > end) return;
+        }
+        totalHours += entry?.hours || 0;
       });
+    });
     
     // Standard 38-hour work week (Australia)
     const regularHours = Math.min(totalHours, 38);

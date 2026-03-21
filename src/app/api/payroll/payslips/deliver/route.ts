@@ -160,6 +160,7 @@ export async function POST(request: NextRequest) {
 
     const uploaded: Array<{ bucket: string; path: string }> = [];
     const results: any[] = [];
+    const pendingNotifications: Array<{ user_id: string; title: string; message: string; type: string }> = [];
 
     for (const p of payslipRows) {
       const employee = employeesById.get(String(p.employee_id));
@@ -237,6 +238,11 @@ export async function POST(request: NextRequest) {
       const subjectPeriod = `${periodStart} - ${periodEnd}`;
       const employeeName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
+      const failures: string[] = [];
+      if (sendToEmployers && !employerEmail) failures.push('missing_employer_email');
+      if (sendToEmployees && !employee.email) failures.push('missing_employee_email');
+      if (notifyInApp && !employee.user_id) failures.push('missing_employee_user_id');
+
       const emailTasks: Array<Promise<any>> = [];
 
       if (sendToEmployers && employerEmail) {
@@ -306,30 +312,24 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      if (sendToEmployers && employerEmail) {
+        const r = emailResults.find((x) => x.type === 'EMPLOYER');
+        if (!r) failures.push('employer_email_not_sent');
+        else if (!r.ok) failures.push(`employer_email_failed:${String(r.error || 'unknown')}`);
+      }
+      if (sendToEmployees && employee.email) {
+        const r = emailResults.find((x) => x.type === 'EMPLOYEE');
+        if (!r) failures.push('employee_email_not_sent');
+        else if (!r.ok) failures.push(`employee_email_failed:${String(r.error || 'unknown')}`);
+      }
+
       if (notifyInApp && employee.user_id) {
-        await supabaseAdmin.from('notifications').insert({
+        pendingNotifications.push({
           user_id: employee.user_id,
           title: 'Payslip available',
           message: `Your payslip for ${subjectPeriod} is now available.`,
           type: 'info',
         });
-      }
-
-      const pushUrl = process.env.PUSH_NOTIFICATION_WEBHOOK_URL;
-      if (notifyInApp && pushUrl && employee.user_id) {
-        try {
-          await fetch(pushUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: employee.user_id,
-              title: 'Payslip available',
-              message: `Your payslip for ${subjectPeriod} is now available.`,
-              metadata: { payslipId: p.id, payrollRunId },
-            }),
-          });
-        } catch {
-        }
       }
 
       await supabaseAdmin.from('audit_logs').insert({
@@ -343,10 +343,12 @@ export async function POST(request: NextRequest) {
 
       results.push({
         payslipId: p.id,
-        status: 'OK',
+        status: failures.length === 0 ? 'OK' : 'FAILED',
         pdfBucket,
         pdfPath,
         employerEmail,
+        employeeEmail: employee.email || null,
+        errors: failures,
       });
     }
 
@@ -366,6 +368,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Delivery failed; payroll rolled back', results }, { status: 500 });
     }
 
+    if (notifyInApp && pendingNotifications.length > 0) {
+      const { error: nErr } = await supabaseAdmin.from('notifications').insert(pendingNotifications as any);
+      if (nErr) {
+        if (rollbackOnFailure) {
+          for (const u of uploaded) {
+            try {
+              await supabaseAdmin.storage.from(u.bucket).remove([u.path]);
+            } catch {
+            }
+          }
+          try {
+            await supabaseAdmin.from('payslips').delete().eq('payroll_run_id', payrollRunId);
+            await supabaseAdmin.from('payroll_runs').update({ status: 'Draft' }).eq('id', payrollRunId);
+          } catch {
+          }
+          return NextResponse.json({ error: `Notification delivery failed; payroll rolled back (${String((nErr as any).message || 'unknown')})`, results }, { status: 500 });
+        }
+      }
+    }
+
+    const pushUrl = process.env.PUSH_NOTIFICATION_WEBHOOK_URL;
+    if (notifyInApp && pushUrl && pendingNotifications.length > 0) {
+      try {
+        await fetch(pushUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            payrollRunId,
+            type: 'PAYSLIPS_AVAILABLE',
+            count: pendingNotifications.length,
+          }),
+        });
+      } catch {
+      }
+    }
+
     await supabaseAdmin.from('payroll_runs').update({ status: 'Paid' }).eq('id', payrollRunId);
 
     return NextResponse.json({ results });
@@ -373,4 +411,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: e?.message || 'Internal Server Error' }, { status: 500 });
   }
 }
-

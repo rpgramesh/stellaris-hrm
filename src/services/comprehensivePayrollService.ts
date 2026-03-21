@@ -539,18 +539,13 @@ export const comprehensivePayrollService = {
         console.error('[payroll-cache] failed to store cached payroll report', e?.message || e);
       }
 
-      // Send notifications if requested
-      if (options.sendNotifications) {
-        await this.sendPayrollNotifications(payrollRun, report);
-      }
-
       // Create audit log
       await auditService.logAction(
         'payroll_runs',
         payrollRunId,
         'UPDATE',
         { status: 'Processing' },
-        { status: 'Paid' },
+        { status: 'Processing' },
         userId // Pass the USER ID for audit logging
       );
 

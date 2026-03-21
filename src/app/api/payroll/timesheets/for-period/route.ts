@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     if (approvedIds.length > 0) {
       const { data: rowEntries, error: rowErr } = await supabaseAdmin
         .from('timesheet_rows')
-        .select('timesheet_id, timesheet_entries(hours)')
+        .select('timesheet_id, timesheet_entries(hours,date)')
         .in('timesheet_id', approvedIds);
 
       if (rowErr) {
@@ -102,7 +102,12 @@ export async function POST(request: NextRequest) {
       for (const r of rowEntries || []) {
         const tid = String((r as any).timesheet_id || '');
         if (!tid) continue;
-        const sum = ((r as any).timesheet_entries || []).reduce((acc: number, e: any) => acc + Number(e.hours || 0), 0);
+        const sum = ((r as any).timesheet_entries || []).reduce((acc: number, e: any) => {
+          const date = String(e?.date || '').slice(0, 10);
+          if (!date) return acc;
+          if (date < startDate || date > endDate) return acc;
+          return acc + Number(e?.hours || 0);
+        }, 0);
         approvedHoursByTimesheetId[tid] = (approvedHoursByTimesheetId[tid] || 0) + sum;
       }
     }

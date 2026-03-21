@@ -288,4 +288,64 @@ describe('Payroll processing draft validation + summary restriction', () => {
     fireEvent.click(screen.getByText('Send Email'));
     await screen.findByText('SENT');
   });
+
+  it('keeps a single selected employee checked after validation runs', async () => {
+    const runs = [
+      {
+        id: 'draft-1',
+        pay_period_start: '2026-03-02',
+        pay_period_end: '2026-03-15',
+        pay_frequency: 'Fortnightly',
+        status: 'Draft',
+        employee_count: 0,
+        total_gross_pay: 0,
+        total_tax: 0,
+        total_net_pay: 0,
+        total_super: 0,
+        created_at: '2026-03-10T04:46:00.000Z',
+      },
+    ];
+
+    const employeeRows = [
+      {
+        id: '11111111-1111-1111-1111-111111111111',
+        first_name: 'Alice',
+        last_name: 'Smith',
+        employee_code: 'EMP001',
+        employment_status: 'Active',
+        payroll_employees: [{ id: 'pe1', employment_type: 'FullTime', pay_frequency: 'Fortnightly' }],
+      },
+    ];
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'payroll_runs') return makePayrollRunsQuery(runs);
+      if (table === 'employees') return makeEmployeesQuery(employeeRows);
+      if (table === 'payslips') return { select: vi.fn(() => ({ in: vi.fn().mockResolvedValue({ data: [], error: null }) })) };
+      return { select: vi.fn(() => ({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) })) };
+    });
+
+    serviceMocks.validatePayrollRun.mockResolvedValue({
+      isValid: true,
+      errors: [],
+      warnings: [],
+      missingTimesheets: [],
+      unapprovedTimesheets: [],
+      incompleteTimesheets: [],
+    });
+
+    render(<PayrollProcessingPage />);
+    await screen.findByText('Employees');
+
+    fireEvent.click(screen.getByText('Alice Smith'));
+    await waitFor(() => expect(serviceMocks.validatePayrollRun).toHaveBeenCalled());
+
+    const label = screen.getByText('Alice Smith');
+    let node: HTMLElement | null = label.parentElement as any;
+    let checkbox: HTMLInputElement | null = null;
+    while (node && !checkbox) {
+      checkbox = node.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      node = node.parentElement;
+    }
+    expect(checkbox?.checked).toBe(true);
+  });
 });
