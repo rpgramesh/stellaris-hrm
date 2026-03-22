@@ -159,6 +159,7 @@ export default function PayrollProcessingPage() {
   const [sendingTimesheetEmails, setSendingTimesheetEmails] = useState<Record<string, boolean>>({});
   const [autoRefreshTick, setAutoRefreshTick] = useState(0);
   const [lastPreviewUpdatedAt, setLastPreviewUpdatedAt] = useState<string | null>(null);
+  const [payslipPdfStatsByRunId, setPayslipPdfStatsByRunId] = useState<Record<string, { total: number; pdfReady: number; missing: number }>>({});
 
   const [options, setOptions] = useState<PayrollProcessingOptions>({
     validateTimesheets: true,
@@ -596,7 +597,36 @@ export default function PayrollProcessingPage() {
         .order('pay_period_start', { ascending: false });
 
       if (error) throw error;
-      return data || [];
+      const runs = data || [];
+
+      try {
+        const runIds = runs.map((r: any) => String(r.id || '')).filter(Boolean);
+        if (runIds.length > 0) {
+          const { data: rows, error: pe } = await supabase
+            .from('payslips')
+            .select('id,payroll_run_id,pdf_path,pdf_generated_at')
+            .in('payroll_run_id', runIds);
+
+          if (!pe) {
+            const next: Record<string, { total: number; pdfReady: number; missing: number }> = {};
+            for (const r of rows || []) {
+              const rid = String((r as any).payroll_run_id || '');
+              if (!rid) continue;
+              if (!next[rid]) next[rid] = { total: 0, pdfReady: 0, missing: 0 };
+              next[rid].total += 1;
+              const hasPdf = !!((r as any).pdf_path) || !!((r as any).pdf_generated_at);
+              if (hasPdf) next[rid].pdfReady += 1;
+              else next[rid].missing += 1;
+            }
+            setPayslipPdfStatsByRunId(next);
+          }
+        } else {
+          setPayslipPdfStatsByRunId({});
+        }
+      } catch {
+      }
+
+      return runs;
     } catch (error) {
       console.error('Error loading payroll runs:', error);
       return [];
@@ -1416,6 +1446,22 @@ export default function PayrollProcessingPage() {
                     <Users className="h-3 w-3" />
                     <span>{run.employee_count} employees selected</span>
                   </div>
+                  {(() => {
+                    const stats = payslipPdfStatsByRunId[run.id];
+                    if (!stats || stats.total <= 0) return null;
+                    if (stats.missing > 0) {
+                      return (
+                        <div className="text-xs text-red-600">
+                          Missing payslip PDFs: {stats.missing}/{stats.total}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="text-xs text-green-700">
+                        Payslip PDFs ready: {stats.pdfReady}/{stats.total}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-2">
                     <DollarSign className="h-3 w-3" />
                     <span>${(run.total_net_pay || 0).toLocaleString()} net pay</span>
@@ -1473,6 +1519,14 @@ export default function PayrollProcessingPage() {
                       }`}>
                         {run.status}
                       </span>
+                      {(() => {
+                        const stats = payslipPdfStatsByRunId[run.id];
+                        if (!stats || stats.total <= 0) return null;
+                        if (stats.missing > 0) {
+                          return <div className="mt-1 text-[11px] text-red-600">Missing PDFs: {stats.missing}/{stats.total}</div>;
+                        }
+                        return <div className="mt-1 text-[11px] text-green-700">PDFs ready: {stats.pdfReady}/{stats.total}</div>;
+                      })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {run.employee_count}

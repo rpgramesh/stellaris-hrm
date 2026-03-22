@@ -141,6 +141,34 @@ describe('Payroll processing historical run summary rendering', () => {
           error: null,
         });
       }
+      if (table === 'payslips') {
+        const state: any = { selectArg: '' };
+        const q: any = {
+          select: vi.fn((arg: string) => {
+            state.selectArg = arg;
+            return q;
+          }),
+          eq: vi.fn().mockImplementation(() => {
+            if (String(state.selectArg || '').includes('employee_id')) {
+              return Promise.resolve({ data: [{ employee_id: 'e2' }], error: null });
+            }
+            return Promise.resolve({ data: [], error: null });
+          }),
+          in: vi.fn().mockImplementation(() => {
+            if (String(state.selectArg || '').includes('pdf_path')) {
+              return Promise.resolve({
+                data: [
+                  { id: 'ps1', payroll_run_id: 'paid-1', pdf_path: null, pdf_generated_at: null },
+                  { id: 'ps2', payroll_run_id: 'paid-1', pdf_path: 'payslips/e2/ps2.pdf', pdf_generated_at: '2026-03-01T00:00:00.000Z' },
+                ],
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: [], error: null });
+          }),
+        };
+        return q;
+      }
       return makeQuery({ data: [], error: null });
     });
 
@@ -200,6 +228,8 @@ describe('Payroll processing historical run summary rendering', () => {
       },
       { timeout: 2000 }
     );
+
+    await screen.findByText(/Missing payslip PDFs/i);
   });
 
   it('renders the payroll summary panel for every Paid run selected', async () => {
@@ -235,6 +265,14 @@ describe('Payroll processing historical run summary rendering', () => {
     mockFrom.mockImplementation((table: string) => {
       if (table === 'payroll_runs') return makeQuery({ data: runs, error: null });
       if (table === 'employees') return makeQuery({ data: [], error: null });
+      if (table === 'payslips') {
+        const q: any = {
+          select: vi.fn(() => q),
+          in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
+        return q;
+      }
       return makeQuery({ data: [], error: null });
     });
 
