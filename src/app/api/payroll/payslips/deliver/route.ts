@@ -258,10 +258,11 @@ export async function POST(request: NextRequest) {
       const subjectPeriod = `${periodStart} - ${periodEnd}`;
       const employeeName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
 
-      const failures: string[] = [];
-      if (sendToEmployers && !employerEmail) failures.push('missing_employer_email');
-      if (sendToEmployees && !employee.email) failures.push('missing_employee_email');
-      if (notifyInApp && !employee.user_id) failures.push('missing_employee_user_id');
+      const hardFailures: string[] = [];
+      const warnings: string[] = [];
+      if (sendToEmployers && !employerEmail) warnings.push('missing_employer_email');
+      if (sendToEmployees && !employee.email) hardFailures.push('missing_employee_email');
+      if (notifyInApp && !employee.user_id) hardFailures.push('missing_employee_user_id');
 
       const emailTasks: Array<Promise<any>> = [];
 
@@ -332,15 +333,40 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      if (sendToEmployers && !employerEmail) {
+        await logEmailAudit(supabaseAdmin, {
+          recipient_email: null,
+          email_type: 'PAYSLIP_DELIVERY_EMPLOYER',
+          template_id: null,
+          template_name: null,
+          subject: `Payslip - ${employeeName} - ${subjectPeriod}`,
+          status: 'SKIPPED',
+          error: 'Missing employer email',
+          triggered_by: userData.user.id,
+          provider: 'SMTP',
+          message_id: null,
+          dedupe_key: `EMPLOYER:${p.id}:${subjectPeriod}:SKIPPED`,
+          metadata: {
+            payrollRunId,
+            payslipId: p.id,
+            employeeId: employee.id,
+            employeeName,
+            periodStart,
+            periodEnd,
+            encrypted: encryptAttachments,
+          },
+        });
+      }
+
       if (sendToEmployers && employerEmail) {
         const r = emailResults.find((x) => x.type === 'EMPLOYER');
-        if (!r) failures.push('employer_email_not_sent');
-        else if (!r.ok) failures.push(`employer_email_failed:${String(r.error || 'unknown')}`);
+        if (!r) warnings.push('employer_email_not_sent');
+        else if (!r.ok) warnings.push(`employer_email_failed:${String(r.error || 'unknown')}`);
       }
       if (sendToEmployees && employee.email) {
         const r = emailResults.find((x) => x.type === 'EMPLOYEE');
-        if (!r) failures.push('employee_email_not_sent');
-        else if (!r.ok) failures.push(`employee_email_failed:${String(r.error || 'unknown')}`);
+        if (!r) hardFailures.push('employee_email_not_sent');
+        else if (!r.ok) hardFailures.push(`employee_email_failed:${String(r.error || 'unknown')}`);
       }
 
       if (notifyInApp && employee.user_id) {
@@ -363,12 +389,13 @@ export async function POST(request: NextRequest) {
 
       results.push({
         payslipId: p.id,
-        status: failures.length === 0 ? 'OK' : 'FAILED',
+        status: hardFailures.length === 0 ? 'OK' : 'FAILED',
         pdfBucket,
         pdfPath,
         employerEmail,
         employeeEmail: employee.email || null,
-        errors: failures,
+        errors: hardFailures,
+        warnings,
       });
     }
 
