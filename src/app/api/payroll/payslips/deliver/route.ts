@@ -66,6 +66,22 @@ const logEmailAudit = async (supabaseAdmin: any, row: any) => {
   }
 };
 
+const ensureStorageBucket = async (supabaseAdmin: any, bucketId: string) => {
+  if (!bucketId) return;
+  const { data, error } = await supabaseAdmin.storage.getBucket(bucketId);
+  if (!error && data) return;
+  const msg = String((error as any)?.message || '');
+  if (msg.toLowerCase().includes('not found') || String((error as any)?.statusCode || '').startsWith('4')) {
+    const created = await supabaseAdmin.storage.createBucket(bucketId, { public: false });
+    if (created?.error) {
+      const cmsg = String((created.error as any)?.message || '');
+      if (!cmsg.toLowerCase().includes('already exists')) throw created.error;
+    }
+    return;
+  }
+  if (error) throw error;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -162,6 +178,8 @@ export async function POST(request: NextRequest) {
     const results: any[] = [];
     const pendingNotifications: Array<{ user_id: string; title: string; message: string; type: string }> = [];
 
+    await ensureStorageBucket(supabaseAdmin, 'payslips');
+
     for (const p of payslipRows) {
       const employee = employeesById.get(String(p.employee_id));
       if (!employee) {
@@ -197,6 +215,8 @@ export async function POST(request: NextRequest) {
       const employerEmail = String(p.employer_email || employee.client_email || '').trim() || null;
       const pdfBucket = String(p.pdf_bucket || 'payslips');
       const pdfPath = `payslips/${employee.id}/${String(p.payslip_number || p.id)}.pdf`;
+
+      await ensureStorageBucket(supabaseAdmin, pdfBucket);
 
       const pdf = generatePayslipPdfBuffer({
         payslip: { ...p, period_start: periodStart, period_end: periodEnd, payment_date: paymentDate, pay_frequency: runRow.pay_frequency },
