@@ -385,7 +385,21 @@ export async function POST(request: NextRequest) {
         await supabaseAdmin.from('payroll_runs').update({ status: 'Draft' }).eq('id', payrollRunId);
       } catch {
       }
-      return NextResponse.json({ error: 'Delivery failed; payroll rolled back', results }, { status: 500 });
+      const samples = failed.slice(0, 5).map((r: any) => ({
+        payslipId: r.payslipId,
+        employerEmail: r.employerEmail,
+        employeeEmail: r.employeeEmail,
+        errors: r.errors,
+      }));
+      return NextResponse.json(
+        {
+          error: `Delivery failed for ${failed.length} payslips; payroll rolled back`,
+          failedCount: failed.length,
+          sampleFailures: samples,
+          results,
+        },
+        { status: 500 }
+      );
     }
 
     if (notifyInApp && pendingNotifications.length > 0) {

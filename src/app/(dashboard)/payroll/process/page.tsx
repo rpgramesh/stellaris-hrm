@@ -1120,7 +1120,20 @@ export default function PayrollProcessingPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        alert(String(j?.error || 'Payslip delivery failed. Payroll has been rolled back.'));
+        const err = String(j?.error || 'Payslip delivery failed. Payroll has been rolled back.');
+        const failures = Array.isArray(j?.sampleFailures) ? j.sampleFailures : Array.isArray(j?.results) ? j.results.filter((r: any) => r?.status && r.status !== 'OK').slice(0, 5) : [];
+        const details = failures.length
+          ? failures
+              .map((f: any) => {
+                const id = String(f?.payslipId || '');
+                const ee = f?.employeeEmail ? `employee=${String(f.employeeEmail)}` : null;
+                const ce = f?.employerEmail ? `employer=${String(f.employerEmail)}` : null;
+                const errs = Array.isArray(f?.errors) ? f.errors.join(', ') : String(f?.error || '');
+                return [id, ee, ce, errs].filter(Boolean).join(' | ');
+              })
+              .join('\n')
+          : '';
+        alert(`${err}${details ? `\n\nSample failures:\n${details}` : ''}`);
         const updatedRuns = await loadPayrollRuns();
         setPayrollRuns(updatedRuns);
         const updated = updatedRuns.find((r) => r.id === selectedRun.id);
