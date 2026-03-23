@@ -144,6 +144,7 @@ grant select, insert, update, delete on table deduction_applications to authenti
 alter table if exists payroll_errors enable row level security;
 
 drop policy if exists "HR/Admins can view all payroll errors" on payroll_errors;
+drop policy if exists "HR/Admins can insert payroll errors" on payroll_errors;
 drop policy if exists "HR/Admins can update payroll errors" on payroll_errors;
 
 create policy "HR/Admins can view all payroll errors"
