@@ -39,8 +39,7 @@ async function updateIsAdmin() {
   console.log('Attempting to update is_admin() function via RPC...');
   // This likely won't work as 'is_admin' is not a function we can call to run SQL.
   
-  console.log('Wait, I can try to run this as a migration if I have the supabase CLI, 
-  but I should use the tools provided.');
+  console.log('This script is informational only. Apply the is_admin() function via a SQL migration in Supabase.');
 }
 
 updateIsAdmin();

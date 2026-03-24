@@ -178,7 +178,7 @@ describe('Payroll processing draft validation + summary restriction', () => {
 
     render(<PayrollProcessingPage />);
 
-    await screen.findByText('Employees');
+    await screen.findByRole('heading', { name: 'Employees' });
     await waitFor(() => expect(screen.getByText('Select All')).not.toBeDisabled());
 
     fireEvent.click(screen.getByText('Alice Smith'));
@@ -276,7 +276,7 @@ describe('Payroll processing draft validation + summary restriction', () => {
     });
 
     render(<PayrollProcessingPage />);
-    await screen.findByText('Employees');
+    await screen.findByRole('heading', { name: 'Employees' });
     await waitFor(() => expect(screen.getByText('Select All')).not.toBeDisabled());
 
     fireEvent.click(screen.getByText('Bob Jones'));
@@ -334,7 +334,9 @@ describe('Payroll processing draft validation + summary restriction', () => {
     });
 
     render(<PayrollProcessingPage />);
-    await screen.findByText('Employees');
+    await screen.findByText('Select Payroll Run');
+    fireEvent.click(await screen.findByTestId('payroll-run-draft-1'));
+    await screen.findByText('Alice Smith');
 
     fireEvent.click(screen.getByText('Alice Smith'));
     await waitFor(() => expect(serviceMocks.validatePayrollRun).toHaveBeenCalled());

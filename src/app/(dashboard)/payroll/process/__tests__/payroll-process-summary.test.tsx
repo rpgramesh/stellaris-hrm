@@ -229,7 +229,7 @@ describe('Payroll processing historical run summary rendering', () => {
       { timeout: 2000 }
     );
 
-    await screen.findByText(/Missing payslip PDFs/i);
+    await screen.findByText(/Missing PDFs/i);
   });
 
   it('renders the payroll summary panel for every Paid run selected', async () => {

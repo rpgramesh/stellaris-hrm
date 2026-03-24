@@ -61,7 +61,6 @@ export default function TimesheetPage() {
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
   const [isTeammatesDropdownOpen, setIsTeammatesDropdownOpen] = useState(false);
   const [teammates, setTeammates] = useState<Employee[]>([]);
-
   // Refs for click outside
   const projectDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -257,6 +256,7 @@ export default function TimesheetPage() {
       setLoading(false);
     }
   };
+
 
   const fetchTeammates = async (departmentName: string) => {
     try {
@@ -602,40 +602,42 @@ export default function TimesheetPage() {
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <button 
-              onClick={() => setIsTeammatesDropdownOpen(!isTeammatesDropdownOpen)}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <Users className="w-4 h-4" />
-              {currentEmployee ? (
-                <span>
-                  {currentEmployee.firstName} {currentEmployee.lastName} {currentEmployee.id === currentUser?.id ? '(You)' : ''}
-                </span>
-              ) : (
-                'Teammates'
-              )}
-            </button>
-            {isTeammatesDropdownOpen && (
-              <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                <div className="p-2">
-                  {teammates.map(tm => (
-                    <button 
-                      key={tm.id} 
-                      className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded"
-                      onClick={() => {
-                        setCurrentEmployee(tm);
-                        setIsTeammatesDropdownOpen(false);
-                      }}
-                    >
-                      {tm.firstName} {tm.lastName} {tm.id === currentEmployee?.id && '(You)'}
-                    </button>
-                  ))}
-                  {teammates.length === 0 && <div className="p-2 text-sm text-gray-500">No teammates found</div>}
+          {currentUser && currentUser.role !== 'Employee' && (
+            <div className="relative">
+              <button 
+                onClick={() => setIsTeammatesDropdownOpen(!isTeammatesDropdownOpen)}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Users className="w-4 h-4" />
+                {currentEmployee ? (
+                  <span>
+                    {currentEmployee.firstName} {currentEmployee.lastName} {currentEmployee.id === currentUser?.id ? '(You)' : ''}
+                  </span>
+                ) : (
+                  'Teammates'
+                )}
+              </button>
+              {isTeammatesDropdownOpen && (
+                <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                  <div className="p-2">
+                    {teammates.map(tm => (
+                      <button 
+                        key={tm.id} 
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded"
+                        onClick={() => {
+                          setCurrentEmployee(tm);
+                          setIsTeammatesDropdownOpen(false);
+                        }}
+                      >
+                        {tm.firstName} {tm.lastName} {tm.id === currentEmployee?.id && '(You)'}
+                      </button>
+                    ))}
+                    {teammates.length === 0 && <div className="p-2 text-sm text-gray-500">No teammates found</div>}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
           
           <div className="flex items-center bg-white border border-gray-300 rounded-lg shadow-sm">
             <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 border-r border-gray-300 hover:bg-gray-50">

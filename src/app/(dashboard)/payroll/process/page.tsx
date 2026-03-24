@@ -168,8 +168,24 @@ export default function PayrollProcessingPage() {
     sendNotifications: true
   });
 
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    if (typeof window === 'undefined') return 'list';
+    const v = window.localStorage.getItem('payrollRunsViewMode');
+    return v === 'grid' || v === 'list' ? v : 'list';
+  });
   const hasSelectedEmployees = useMemo(() => employees.some((e) => e.selected), [employees]);
+
+  const setViewModeWithPersist = (mode: 'grid' | 'list') => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem('payrollRunsViewMode', mode);
+    } catch {
+    }
+  };
+
+  const openPayslipsForRun = (payrollRunId: string) => {
+    router.push(`/payroll/payslips?payrollRunId=${encodeURIComponent(payrollRunId)}`);
+  };
 
   const mergeEmployeeSelection = (prev: Employee[], next: Employee[]) => {
     const selectedByEmployeeId = new Set(prev.filter((e) => e.selected).map((e) => e.employee_id));
@@ -1412,14 +1428,14 @@ export default function PayrollProcessingPage() {
           <h2 className="text-lg font-semibold text-gray-900">Select Payroll Run</h2>
           <div className="flex bg-gray-100 p-1 rounded-lg">
             <button
-              onClick={() => setViewMode('grid')}
+              onClick={() => setViewModeWithPersist('grid')}
               className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
               title="Grid View"
             >
               <LayoutGrid className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setViewMode('list')}
+              onClick={() => setViewModeWithPersist('list')}
               className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
               title="List View"
             >
@@ -1466,12 +1482,32 @@ export default function PayrollProcessingPage() {
                       return (
                         <div className="text-xs text-red-600">
                           Missing payslip PDFs: {stats.missing}/{stats.total}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPayslipsForRun(run.id);
+                            }}
+                            className="ml-2 underline text-blue-700"
+                          >
+                            View payslips
+                          </button>
                         </div>
                       );
                     }
                     return (
                       <div className="text-xs text-green-700">
                         Payslip PDFs ready: {stats.pdfReady}/{stats.total}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPayslipsForRun(run.id);
+                          }}
+                          className="ml-2 underline text-blue-700"
+                        >
+                          View payslips
+                        </button>
                       </div>
                     );
                   })()}
@@ -1536,9 +1572,37 @@ export default function PayrollProcessingPage() {
                         const stats = payslipPdfStatsByRunId[run.id];
                         if (!stats || stats.total <= 0) return null;
                         if (stats.missing > 0) {
-                          return <div className="mt-1 text-[11px] text-red-600">Missing PDFs: {stats.missing}/{stats.total}</div>;
+                          return (
+                            <div className="mt-1 text-[11px] text-red-600">
+                              Missing PDFs: {stats.missing}/{stats.total}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openPayslipsForRun(run.id);
+                                }}
+                                className="ml-2 underline text-blue-700"
+                              >
+                                View payslips
+                              </button>
+                            </div>
+                          );
                         }
-                        return <div className="mt-1 text-[11px] text-green-700">PDFs ready: {stats.pdfReady}/{stats.total}</div>;
+                        return (
+                          <div className="mt-1 text-[11px] text-green-700">
+                            PDFs ready: {stats.pdfReady}/{stats.total}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPayslipsForRun(run.id);
+                              }}
+                              className="ml-2 underline text-blue-700"
+                            >
+                              View payslips
+                            </button>
+                          </div>
+                        );
                       })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

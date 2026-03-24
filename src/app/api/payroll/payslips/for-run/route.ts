@@ -59,6 +59,10 @@ export async function GET(request: NextRequest) {
         id,
         payroll_run_id,
         employee_id,
+        payslip_number,
+        period_start,
+        period_end,
+        payment_date,
         net_pay,
         hours_worked,
         superannuation,
@@ -66,6 +70,9 @@ export async function GET(request: NextRequest) {
         gross_pay,
         income_tax,
         tax_withheld,
+        pdf_bucket,
+        pdf_path,
+        pdf_generated_at,
         employees:employee_id ( first_name, last_name )
       `
       )

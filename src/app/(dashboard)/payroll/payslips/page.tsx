@@ -1,31 +1,71 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { payrollService, Payslip } from '@/services/payrollService';
 import { format } from 'date-fns';
 import { Download, Eye, Search, Calendar, X } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function PayslipsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const payrollRunId = (searchParams?.get('payrollRunId') || '').trim();
+
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [viewingPayslip, setViewingPayslip] = useState<Payslip | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [runPayslips, setRunPayslips] = useState<any[]>([]);
 
   useEffect(() => {
     loadPayslips();
-  }, []);
+  }, [payrollRunId]);
 
   const loadPayslips = async () => {
     try {
       setLoading(true);
+      if (payrollRunId) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) {
+          setRunPayslips([]);
+          return;
+        }
+        const res = await fetch(`/api/payroll/payslips/for-run?payrollRunId=${encodeURIComponent(payrollRunId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(String(json?.error || 'Failed to load payslips'));
+        setRunPayslips(Array.isArray(json?.payslips) ? json.payslips : []);
+        setPayslips([]);
+        return;
+      }
       const data = await payrollService.getPayslipsByMonthYear(selectedMonth || format(new Date(), 'yyyy-MM'));
       setPayslips(data);
     } catch (error) {
       console.error('Error loading payslips:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadRunPayslip = async (p: any) => {
+    try {
+      setDownloading(String(p.id));
+      const bucket = String(p.pdf_bucket || '');
+      const path = String(p.pdf_path || '');
+      if (!bucket || !path) throw new Error('PDF not available yet');
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60);
+      if (error || !data?.signedUrl) throw new Error(String((error as any)?.message || 'Failed to create signed URL'));
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      alert(String(e?.message || 'Failed to download payslip'));
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -57,6 +97,17 @@ export default function PayslipsPage() {
     setViewingPayslip(payslip);
   };
 
+  const runFilteredPayslips = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return runPayslips;
+    return runPayslips.filter((p: any) => {
+      const first = String(p?.employees?.first_name || '').toLowerCase();
+      const last = String(p?.employees?.last_name || '').toLowerCase();
+      const num = String(p?.payslip_number || '').toLowerCase();
+      return first.includes(q) || last.includes(q) || num.includes(q);
+    });
+  }, [runPayslips, searchTerm]);
+
   const filteredPayslips = payslips.filter(payslip => {
     const matchesSearch = !searchTerm || 
       payslip.employee.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -84,11 +135,20 @@ export default function PayslipsPage() {
         </div>
         
         <div className="flex items-center gap-4">
+          {payrollRunId ? (
+            <button
+              onClick={() => router.push('/payroll/process')}
+              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              Back to payroll runs
+            </button>
+          ) : null}
           <div className="relative">
             <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
             <select
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
+              disabled={!!payrollRunId}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Current Month</option>
@@ -104,7 +164,7 @@ export default function PayslipsPage() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Search by name or employee code..."
+              placeholder={payrollRunId ? "Search by name or payslip number..." : "Search by name or employee code..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 w-64"
@@ -125,7 +185,7 @@ export default function PayslipsPage() {
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-medium text-gray-900">Payslip Records</h3>
             <span className="text-sm text-gray-500">
-              {filteredPayslips.length} of {payslips.length} payslips
+              {payrollRunId ? `${runFilteredPayslips.length} of ${runPayslips.length} payslips` : `${filteredPayslips.length} of ${payslips.length} payslips`}
             </span>
           </div>
         </div>
@@ -150,9 +210,6 @@ export default function PayslipsPage() {
                   Net Salary
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -160,13 +217,59 @@ export default function PayslipsPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
                     Loading payslips...
                   </td>
                 </tr>
+              ) : payrollRunId ? (
+                runFilteredPayslips.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                      No payslips found for this payroll run
+                    </td>
+                  </tr>
+                ) : (
+                  runFilteredPayslips.map((p: any) => (
+                    <tr key={String(p.id)} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {String(p?.employees?.first_name || '')} {String(p?.employees?.last_name || '')}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {String(p.payslip_number || p.id)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {p.period_start && p.period_end ? `${String(p.period_start).slice(0, 10)} - ${String(p.period_end).slice(0, 10)}` : '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        ${Number(p.gross_pay ?? p.gross_earnings ?? 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        ${Number(p.net_pay ?? 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => downloadRunPayslip(p)}
+                            disabled={downloading === String(p.id)}
+                            className="text-green-600 hover:text-green-900 p-1 disabled:opacity-50"
+                            title="Download PDF"
+                          >
+                            {downloading === String(p.id) ? (
+                              <div className="animate-spin h-4 w-4 border-2 border-green-600 border-t-transparent rounded-full" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )
               ) : filteredPayslips.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
                     No payslips found for the selected criteria
                   </td>
                 </tr>
@@ -204,15 +307,6 @@ export default function PayslipsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       ₹{payslip.netSalary.toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        payslip.isFinalized 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {payslip.isFinalized ? 'Finalized' : 'Draft'}
-                      </span>
-                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">
                         <button
@@ -243,9 +337,7 @@ export default function PayslipsPage() {
           </table>
         </div>
       </div>
-
-      {/* Payslip Details Modal */}
-      {viewingPayslip && (
+      {viewingPayslip && !payrollRunId && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
           <div className="relative mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
             <div className="mt-3">
