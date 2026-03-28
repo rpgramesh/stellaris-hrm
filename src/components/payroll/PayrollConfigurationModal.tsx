@@ -335,6 +335,18 @@ export function PayrollConfigurationModal({ isOpen, onClose, onSave, defaultPayF
                 ))}
               </select>
             </div>
+
+            {/* Super Member Number */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Super Member Number</label>
+              <input
+                type="text"
+                value={formData.superMemberNumber}
+                onChange={(e) => setFormData({...formData, superMemberNumber: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="Member Number"
+              />
+            </div>
           </div>
 
           <div className="flex justify-end gap-3 pt-6 border-t">

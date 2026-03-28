@@ -15,14 +15,14 @@ export default function PayslipsPage() {
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('all');
   const [viewingPayslip, setViewingPayslip] = useState<Payslip | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [runPayslips, setRunPayslips] = useState<any[]>([]);
 
   useEffect(() => {
     loadPayslips();
-  }, [payrollRunId]);
+  }, [payrollRunId, selectedMonth]);
 
   const loadPayslips = async () => {
     try {
@@ -44,7 +44,8 @@ export default function PayslipsPage() {
         setPayslips([]);
         return;
       }
-      const data = await payrollService.getPayslipsByMonthYear(selectedMonth || format(new Date(), 'yyyy-MM'));
+      const fetchMonth = selectedMonth === 'all' ? undefined : (selectedMonth || format(new Date(), 'yyyy-MM'));
+      const data = await payrollService.getPayslipsByMonthYear(fetchMonth);
       setPayslips(data);
     } catch (error) {
       console.error('Error loading payslips:', error);
@@ -58,9 +59,21 @@ export default function PayslipsPage() {
       setDownloading(String(p.id));
       const bucket = String(p.pdf_bucket || '');
       const path = String(p.pdf_path || '');
-      if (!bucket || !path) throw new Error('PDF not available yet');
+      
+      // Fallback to on-the-fly generation if storage info is missing
+      if (!bucket || !path) {
+        console.warn('PDF storage info missing, falling back to on-the-fly generation');
+        return await handleDownload(String(p.id));
+      }
+
       const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60);
-      if (error || !data?.signedUrl) throw new Error(String((error as any)?.message || 'Failed to create signed URL'));
+      
+      if (error || !data?.signedUrl) {
+        // Fallback for "Object not found" or permissions errors
+        console.warn('Storage download failed, falling back to on-the-fly generation:', error);
+        return await handleDownload(String(p.id));
+      }
+
       window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
       alert(String(e?.message || 'Failed to download payslip'));
@@ -109,10 +122,12 @@ export default function PayslipsPage() {
   }, [runPayslips, searchTerm]);
 
   const filteredPayslips = payslips.filter(payslip => {
+    const q = searchTerm.toLowerCase();
     const matchesSearch = !searchTerm || 
-      payslip.employee.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payslip.employee.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payslip.employee.employeeCode?.toLowerCase().includes(searchTerm.toLowerCase());
+      (payslip.employee?.firstName || '').toLowerCase().includes(q) ||
+      (payslip.employee?.lastName || '').toLowerCase().includes(q) ||
+      (payslip.employee?.employeeCode || '').toLowerCase().includes(q) ||
+      (payslip.payslipNumber || '').toLowerCase().includes(q);
     
     return matchesSearch;
   });
@@ -151,6 +166,7 @@ export default function PayslipsPage() {
               disabled={!!payrollRunId}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
             >
+              <option value="all">All Time</option>
               <option value="">Current Month</option>
               {months.map(month => (
                 <option key={month.value} value={month.value}>
@@ -201,7 +217,10 @@ export default function PayslipsPage() {
                   Payslip Number
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Pay Period
+                  Duration
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Total Hours
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Gross Salary
@@ -217,14 +236,14 @@ export default function PayslipsPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
                     Loading payslips...
                   </td>
                 </tr>
               ) : payrollRunId ? (
                 runFilteredPayslips.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                    <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
                       No payslips found for this payroll run
                     </td>
                   </tr>
@@ -241,6 +260,9 @@ export default function PayslipsPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {p.period_start && p.period_end ? `${String(p.period_start).slice(0, 10)} - ${String(p.period_end).slice(0, 10)}` : '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {Number(p.hours_worked || 0).toFixed(2)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         ${Number(p.gross_pay ?? p.gross_earnings ?? 0).toLocaleString()}
@@ -269,7 +291,7 @@ export default function PayslipsPage() {
                 )
               ) : filteredPayslips.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
                     No payslips found for the selected criteria
                   </td>
                 </tr>
@@ -281,13 +303,13 @@ export default function PayslipsPage() {
                         <div className="flex-shrink-0 h-10 w-10">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                             <span className="text-sm font-medium text-blue-800">
-                              {payslip.employee.firstName.charAt(0)}{payslip.employee.lastName.charAt(0)}
+                                {(payslip.employee?.firstName || '?').charAt(0)}{(payslip.employee?.lastName || '?').charAt(0)}
                             </span>
                           </div>
                         </div>
                         <div className="ml-4">
                           <div className="text-sm font-medium text-gray-900">
-                            {payslip.employee.firstName} {payslip.employee.lastName}
+                            {payslip.employee?.firstName || ''} {payslip.employee?.lastName || ''}
                           </div>
                           <div className="text-sm text-gray-500">
                             {payslip.employee.employeeCode || payslip.employee.id}
@@ -302,10 +324,13 @@ export default function PayslipsPage() {
                       {format(new Date(payslip.payPeriodStart), 'dd MMM yyyy')} - {format(new Date(payslip.payPeriodEnd), 'dd MMM yyyy')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ₹{payslip.grossSalary.toLocaleString()}
+                      {(payslip.hoursWorked || 0).toFixed(2)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ₹{payslip.netSalary.toLocaleString()}
+                      ${(payslip.grossSalary || 0).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      ${(payslip.netSalary || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">
@@ -356,10 +381,10 @@ export default function PayslipsPage() {
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <h4 className="font-medium text-gray-900 mb-3">Employee Details</h4>
                   <div className="space-y-2 text-sm">
-                    <div><span className="font-medium">Name:</span> {viewingPayslip.employee.firstName} {viewingPayslip.employee.lastName}</div>
-                    <div><span className="font-medium">Employee ID:</span> {viewingPayslip.employee.employeeCode || viewingPayslip.employee.id}</div>
-                    <div><span className="font-medium">Department:</span> {viewingPayslip.employee.departments?.name || 'N/A'}</div>
-                    <div><span className="font-medium">Designation:</span> {viewingPayslip.employee.designations?.name || 'N/A'}</div>
+                    <div><span className="font-medium">Name:</span> {viewingPayslip.employee?.firstName || 'Unknown'} {viewingPayslip.employee?.lastName || ''}</div>
+                    <div><span className="font-medium">Employee ID:</span> {viewingPayslip.employee?.employeeCode || viewingPayslip.employee?.id || '—'}</div>
+                    <div><span className="font-medium">Department:</span> {viewingPayslip.employee?.departments?.name || viewingPayslip.employee?.department || 'N/A'}</div>
+                    <div><span className="font-medium">Designation:</span> {viewingPayslip.employee?.designations?.name || viewingPayslip.employee?.position || 'N/A'}</div>
                   </div>
                 </div>
 
@@ -383,20 +408,20 @@ export default function PayslipsPage() {
                   <div className="bg-green-50 p-4 rounded-lg">
                     <h5 className="font-medium text-green-900 mb-3">Earnings</h5>
                     <div className="space-y-2 text-sm">
-                      <div className="flex justify-between"><span>Basic Salary:</span><span>₹{viewingPayslip.basicSalary.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>DA Allowance:</span><span>₹{viewingPayslip.daAllowance.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>HRA:</span><span>₹{viewingPayslip.hra.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Conveyance:</span><span>₹{viewingPayslip.conveyance.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Medical:</span><span>₹{viewingPayslip.medical.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Special Allowance:</span><span>₹{viewingPayslip.specialAllowance.toLocaleString()}</span></div>
-                      {viewingPayslip.overtimeAmount > 0 && (
-                        <div className="flex justify-between"><span>Overtime:</span><span>₹{viewingPayslip.overtimeAmount.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Basic Salary:</span><span>${(viewingPayslip.basicSalary || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>DA Allowance:</span><span>${(viewingPayslip.daAllowance || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>HRA:</span><span>${(viewingPayslip.hra || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Conveyance:</span><span>${(viewingPayslip.conveyance || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Medical:</span><span>${(viewingPayslip.medical || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Special Allowance:</span><span>${(viewingPayslip.specialAllowance || 0).toLocaleString()}</span></div>
+                      {(viewingPayslip.overtimeAmount || 0) > 0 && (
+                        <div className="flex justify-between"><span>Overtime:</span><span>${(viewingPayslip.overtimeAmount || 0).toLocaleString()}</span></div>
                       )}
-                      {viewingPayslip.arrears > 0 && (
-                        <div className="flex justify-between"><span>Arrears:</span><span>₹{viewingPayslip.arrears.toLocaleString()}</span></div>
+                      {(viewingPayslip.arrears || 0) > 0 && (
+                        <div className="flex justify-between"><span>Arrears:</span><span>${(viewingPayslip.arrears || 0).toLocaleString()}</span></div>
                       )}
                       <hr className="my-2" />
-                      <div className="flex justify-between font-medium"><span>Gross Salary:</span><span>₹{viewingPayslip.grossSalary.toLocaleString()}</span></div>
+                      <div className="flex justify-between font-medium"><span>Gross Salary:</span><span>${(viewingPayslip.grossSalary || 0).toLocaleString()}</span></div>
                     </div>
                   </div>
 
@@ -404,18 +429,18 @@ export default function PayslipsPage() {
                   <div className="bg-red-50 p-4 rounded-lg">
                     <h5 className="font-medium text-red-900 mb-3">Deductions</h5>
                     <div className="space-y-2 text-sm">
-                      <div className="flex justify-between"><span>PF Contribution:</span><span>₹{viewingPayslip.pfDeduction.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>ESI Contribution:</span><span>₹{viewingPayslip.esiDeduction.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Professional Tax:</span><span>₹{viewingPayslip.professionalTax.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Income Tax:</span><span>₹{viewingPayslip.incomeTax.toLocaleString()}</span></div>
-                      {viewingPayslip.loanDeductions > 0 && (
-                        <div className="flex justify-between"><span>Loan Deduction:</span><span>₹{viewingPayslip.loanDeductions.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>PF Contribution:</span><span>${(viewingPayslip.pfDeduction || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>ESI Contribution:</span><span>${(viewingPayslip.esiDeduction || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Professional Tax:</span><span>${(viewingPayslip.professionalTax || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Income Tax:</span><span>${(viewingPayslip.incomeTax || 0).toLocaleString()}</span></div>
+                      {(viewingPayslip.loanDeductions || 0) > 0 && (
+                        <div className="flex justify-between"><span>Loan Deduction:</span><span>${(viewingPayslip.loanDeductions || 0).toLocaleString()}</span></div>
                       )}
-                      {viewingPayslip.otherDeductions > 0 && (
-                        <div className="flex justify-between"><span>Other Deductions:</span><span>₹{viewingPayslip.otherDeductions.toLocaleString()}</span></div>
+                      {(viewingPayslip.otherDeductions || 0) > 0 && (
+                        <div className="flex justify-between"><span>Other Deductions:</span><span>${(viewingPayslip.otherDeductions || 0).toLocaleString()}</span></div>
                       )}
                       <hr className="my-2" />
-                      <div className="flex justify-between font-medium"><span>Total Deductions:</span><span>₹{viewingPayslip.totalDeductions.toLocaleString()}</span></div>
+                      <div className="flex justify-between font-medium"><span>Total Deductions:</span><span>${(viewingPayslip.totalDeductions || 0).toLocaleString()}</span></div>
                     </div>
                   </div>
                 </div>
@@ -424,7 +449,7 @@ export default function PayslipsPage() {
                 <div className="mt-4 bg-blue-50 p-4 rounded-lg">
                   <div className="flex justify-between items-center">
                     <span className="text-lg font-medium text-blue-900">Net Salary:</span>
-                    <span className="text-2xl font-bold text-blue-900">₹{viewingPayslip.netSalary.toLocaleString()}</span>
+                    <span className="text-2xl font-bold text-blue-900">${(viewingPayslip.netSalary || 0).toLocaleString()}</span>
                   </div>
                 </div>
               </div>

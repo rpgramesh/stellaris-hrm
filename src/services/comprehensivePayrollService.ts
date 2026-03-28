@@ -564,6 +564,77 @@ export const comprehensivePayrollService = {
     }
   },
 
+  async deletePayrollRun(payrollRunId: string): Promise<void> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const userId = user?.id;
+
+      // 1. Delete calculation cache
+      await supabase
+        .from('payroll_run_calculation_cache')
+        .delete()
+        .eq('payroll_run_id', payrollRunId);
+
+      // 2. Delete payslips and their components
+      const { data: payslips } = await supabase
+        .from('payslips')
+        .select('id')
+        .eq('payroll_run_id', payrollRunId);
+
+      if (payslips && payslips.length > 0) {
+        const payslipIds = payslips.map(p => p.id);
+        
+        // Delete pay components
+        await supabase
+          .from('pay_components')
+          .delete()
+          .in('payslip_id', payslipIds);
+          
+        // Delete super contributions linked to this run (if applicable)
+        await supabase
+          .from('super_contributions')
+          .delete()
+          .eq('payroll_run_id', payrollRunId);
+
+        // Delete payslips
+        await supabase
+          .from('payslips')
+          .delete()
+          .in('id', payslipIds);
+      }
+
+      // 3. Delete payroll errors
+      await supabase
+        .from('payroll_errors')
+        .delete()
+        .eq('payroll_run_id', payrollRunId);
+
+      // 4. Delete the payroll run record
+      const { error } = await supabase
+        .from('payroll_runs')
+        .delete()
+        .eq('id', payrollRunId);
+
+      if (error) throw error;
+
+      // 5. Log the action
+      if (userId) {
+        await auditService.logAction(
+          'payroll_runs',
+          payrollRunId,
+          'DELETE',
+          null,
+          { action: 'FULL_DELETE_RUN' },
+          userId
+        );
+      }
+
+    } catch (error) {
+      console.error('Error deleting payroll run:', error);
+      throw error;
+    }
+  },
+
   async generatePayslipPDF(payslipId: string): Promise<Buffer> {
     try {
       // Get payslip with all related data

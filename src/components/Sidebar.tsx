@@ -26,10 +26,10 @@ export const menuItems = [
       { name: 'Hardware Onboarding', href: '/self-service/hardware-onboarding' },
     ]
   },
-  { 
+  {
     key: 'employee',
-    name: 'Employee', 
-    href: '/employees', 
+    name: 'Employee',
+    href: '/employees',
     icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
     subItems: [
       { name: 'Management', href: '/employees' },
@@ -59,10 +59,10 @@ export const menuItems = [
     href: '/compliance',
     icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
   },
-  { 
+  {
     key: 'expense_claim',
-    name: 'Expense Claim', 
-    href: '/expenses', 
+    name: 'Expense Claim',
+    href: '/expenses',
     icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
     subItems: [
       { name: 'Management', href: '/expenses/management' },
@@ -73,10 +73,10 @@ export const menuItems = [
       { name: 'Approval Workflow', href: '/expenses/workflows' },
     ]
   },
-  { 
+  {
     key: 'leave',
-    name: 'Leave', 
-    href: '/leave', 
+    name: 'Leave',
+    href: '/leave',
     icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
     subItems: [
       { name: 'Management', href: '/leave/management' },
@@ -93,10 +93,10 @@ export const menuItems = [
       { name: 'Setting', href: '/leave/settings' },
     ]
   },
-  { 
+  {
     key: 'attendance',
-    name: 'Attendance', 
-    href: '/attendance', 
+    name: 'Attendance',
+    href: '/attendance',
     icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
     subItems: [
       { name: 'Management', href: '/attendance/management' },
@@ -119,10 +119,10 @@ export const menuItems = [
       { name: 'Diversity & Inclusion', href: '/analytics/diversity' },
     ]
   },
-  { 
+  {
     key: 'document_workflow',
-    name: 'Document Workflow', 
-    href: '/documents', 
+    name: 'Document Workflow',
+    href: '/documents',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     subItems: [
       { name: 'Management', href: '/documents/management' },
@@ -130,10 +130,10 @@ export const menuItems = [
       { name: 'Approval Workflow', href: '/documents/workflows' },
     ]
   },
-  { 
+  {
     key: 'whs_incident',
-    name: 'WHS (Incident)', 
-    href: '/incidents', 
+    name: 'WHS (Incident)',
+    href: '/incidents',
     icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
     subItems: [
       { name: 'Incident Management', href: '/incidents/management' },
@@ -146,10 +146,10 @@ export const menuItems = [
       { name: 'Decision', href: '/incidents/decision' },
     ]
   },
-  { 
+  {
     key: 'team',
-    name: 'Team', 
-    href: '/team', 
+    name: 'Team',
+    href: '/team',
     icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
     subItems: [
       { name: 'Discussion', href: '/team/discussion' },
@@ -157,16 +157,17 @@ export const menuItems = [
       { name: 'Announcement', href: '/team/announcement' },
     ]
   },
-  { 
+  {
     key: 'payroll',
-    name: 'Payroll', 
-    href: '/payroll', 
+    name: 'Payroll',
+    href: '/payroll',
     icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     subItems: [
       { name: 'Dashboard', href: '/payroll' },
-      { name: 'New Pay Run', href: '/payroll/runs/new' },
-      { name: 'Salary Adjustments', href: '/payroll/adjustments' },
+      //{ name: 'New Pay Run', href: '/payroll/runs/new' },
+      //{ name: 'Salary Adjustments', href: '/payroll/adjustments' },
       { name: 'Process Payroll', href: '/payroll/process' },
+      { name: 'Payslips', href: '/payroll/payslips' },
       //{ name: 'Superannuation', href: '/payroll/superannuation' },
       //{ name: 'STP Phase 2', href: '/payroll/stp' },
       //{ name: 'Statutory Contribution', href: '/payroll/statutory-contribution' },
@@ -174,10 +175,10 @@ export const menuItems = [
       { name: 'Settings', href: '/payroll/settings' },
     ]
   },
-  { 
+  {
     key: 'employer',
-    name: 'Employer', 
-    href: '/employer', 
+    name: 'Employer',
+    href: '/employer',
     icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
     subItems: [
       { name: 'Information', href: '/employer/information' },
@@ -319,7 +320,7 @@ export default function Sidebar() {
   const isExpanded = isLocked || isHovered;
 
   const toggleMenu = (name: string) => {
-    setExpandedMenus(prev => 
+    setExpandedMenus(prev =>
       prev.includes(name) ? [] : [name]
     );
   };
@@ -372,16 +373,16 @@ export default function Sidebar() {
     });
 
   return (
-    <aside 
+    <aside
       className={`bg-gray-900 text-white min-h-screen flex flex-col shadow-xl transition-all duration-300 group overflow-hidden z-50 ${isExpanded ? 'w-64' : 'w-20'}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className={`p-4 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <Link href="/dashboard" className="flex items-center overflow-hidden">
-          <img 
-            src="/logo.png" 
-            alt="Stellaris HRM" 
+          <img
+            src="/logo.png"
+            alt="Stellaris HRM"
             className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
           />
           <div
@@ -394,23 +395,21 @@ export default function Sidebar() {
             />
           </div>
         </Link>
-        
+
         {isExpanded && (
-          <button 
+          <button
             onClick={() => setIsLocked(!isLocked)}
             className="flex items-center text-xs text-gray-500 hover:text-gray-700 transition-colors ml-3"
             title={isLocked ? 'Sidebar pinned open' : 'Sidebar auto-hide'}
             type="button"
           >
             <span
-              className={`w-9 h-5 flex items-center rounded-full transition-colors ${
-                isLocked ? 'bg-blue-500' : 'bg-gray-300'
-              }`}
+              className={`w-9 h-5 flex items-center rounded-full transition-colors ${isLocked ? 'bg-blue-500' : 'bg-gray-300'
+                }`}
             >
               <span
-                className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform ${
-                  isLocked ? 'translate-x-4' : 'translate-x-1'
-                }`}
+                className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform ${isLocked ? 'translate-x-4' : 'translate-x-1'
+                  }`}
               />
             </span>
           </button>
@@ -419,104 +418,101 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden">
         <ul className="space-y-1 px-3">
           {loading ? (
-             // Simple loading skeleton or just empty
-             <div className="animate-pulse space-y-4 mt-4">
-               {[1, 2, 3, 4].map(i => (
-                 <div key={i} className="h-10 bg-gray-800 rounded-lg w-full"></div>
-               ))}
-             </div>
+            // Simple loading skeleton or just empty
+            <div className="animate-pulse space-y-4 mt-4">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="h-10 bg-gray-800 rounded-lg w-full"></div>
+              ))}
+            </div>
           ) : (
             filteredMenuItems.map((item) => {
-            const isActive = pathname === item.href || (item.subItems && item.subItems.some(sub => sub.href && pathname === sub.href));
-            const isMenuExpanded = expandedMenus.includes(item.key || item.name);
+              const isActive = pathname === item.href || (item.subItems && item.subItems.some(sub => sub.href && pathname === sub.href));
+              const isMenuExpanded = expandedMenus.includes(item.key || item.name);
 
-            return (
-              <li key={item.key || item.name}>
-                {item.subItems ? (
-                  <div className="space-y-1">
-                    <button
-                      onClick={() => toggleMenu(item.key || item.name)}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${
-                        isActive 
-                          ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
-                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {item.icon && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 min-w-[24px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                          </svg>
-                        )}
-                        <span className={`font-medium transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>{menuLabels[item.key || ''] || item.name}</span>
-                      </div>
-                      <svg 
-                        xmlns="http://www.w3.org/2000/svg" 
-                        className={`h-4 w-4 transition-transform duration-200 ${isMenuExpanded ? 'transform rotate-180' : ''} ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`} 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
+              return (
+                <li key={item.key || item.name}>
+                  {item.subItems ? (
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => toggleMenu(item.key || item.name)}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${isActive
+                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
+                            : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                          }`}
                       >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    
-                    {isMenuExpanded && (
-                      <ul className={`pl-4 space-y-1 mt-1 animate-fade-in-down ${isExpanded ? 'block' : 'hidden'}`}>
-                        {item.subItems.map((subItem, index) => {
-                          if (subItem.type === 'divider') {
-                            return <li key={`divider-${index}`} className="my-2 border-t border-gray-700" />;
-                          }
-                          const isSubActive = pathname === subItem.href;
-                          return (
-                            <li key={subItem.name}>
-                              <Link
-                                href={subItem.href!}
-                                className={`block py-2 px-3 rounded-md text-sm transition-colors whitespace-nowrap ${
-                                  isSubActive
-                                    ? 'bg-gray-800 text-white font-medium border-l-2 border-blue-500'
-                                    : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
-                                }`}
-                              >
-                                {subItem.name}
-                              </Link>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                ) : (
-                  <Link
-                    href={item.href}
-                    className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-200 ${
-                      isActive 
-                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
-                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                    }`}
-                  >
-                    {item.icon && (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 min-w-[24px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                      </svg>
-                    )}
-                    <span className={`font-medium transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>{menuLabels[item.key || ''] || item.name}</span>
-                  </Link>
-                )}
-              </li>
-            );
-          }))}
+                        <div className="flex items-center gap-3">
+                          {item.icon && (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 min-w-[24px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                            </svg>
+                          )}
+                          <span className={`font-medium transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>{menuLabels[item.key || ''] || item.name}</span>
+                        </div>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className={`h-4 w-4 transition-transform duration-200 ${isMenuExpanded ? 'transform rotate-180' : ''} ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {isMenuExpanded && (
+                        <ul className={`pl-4 space-y-1 mt-1 animate-fade-in-down ${isExpanded ? 'block' : 'hidden'}`}>
+                          {item.subItems.map((subItem, index) => {
+                            if (subItem.type === 'divider') {
+                              return <li key={`divider-${index}`} className="my-2 border-t border-gray-700" />;
+                            }
+                            const isSubActive = pathname === subItem.href;
+                            return (
+                              <li key={subItem.name}>
+                                <Link
+                                  href={subItem.href!}
+                                  className={`block py-2 px-3 rounded-md text-sm transition-colors whitespace-nowrap ${isSubActive
+                                      ? 'bg-gray-800 text-white font-medium border-l-2 border-blue-500'
+                                      : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                                    }`}
+                                >
+                                  {subItem.name}
+                                </Link>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  ) : (
+                    <Link
+                      href={item.href}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-200 ${isActive
+                          ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
+                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                        }`}
+                    >
+                      {item.icon && (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 min-w-[24px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                        </svg>
+                      )}
+                      <span className={`font-medium transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>{menuLabels[item.key || ''] || item.name}</span>
+                    </Link>
+                  )}
+                </li>
+              );
+            }))}
         </ul>
       </nav>
       <div className="p-4 border-t border-gray-800">
         <div className="flex items-center gap-3 px-2">
-            <div className="h-8 w-8 min-w-[32px] rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 flex items-center justify-center text-xs font-bold">
-                {userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
-            </div>
-            <div className={`text-sm transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>
-                <div className="font-medium">{userName}</div>
-                <div className="text-gray-400 text-xs">{userPosition}</div>
-            </div>
+          <div className="h-8 w-8 min-w-[32px] rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 flex items-center justify-center text-xs font-bold">
+            {userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
+          </div>
+          <div className={`text-sm transition-opacity duration-200 whitespace-nowrap ${isExpanded ? 'opacity-100 block' : 'opacity-0 hidden'}`}>
+            <div className="font-medium">{userName}</div>
+            <div className="text-gray-400 text-xs">{userPosition}</div>
+          </div>
         </div>
       </div>
     </aside>

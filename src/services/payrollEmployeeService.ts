@@ -68,6 +68,7 @@ export const payrollEmployeeService = {
         dbPayload.company_id = company.id;
       }
 
+      // 1. Update/Insert in payroll_employees table
       const { data: existing, error: fetchError } = await supabase
         .from('payroll_employees')
         .select('id')
@@ -88,6 +89,34 @@ export const payrollEmployeeService = {
           .insert(dbPayload);
         if (error) throw error;
       }
+
+      // 2. ALSO update the main employees table for consistency
+      // This ensures the profile, HR views, and search list remain in sync
+      const employeeUpdates: any = {
+        salary: payrollData.baseSalary,
+        tfn: payrollData.taxFileNumber,
+        superannuation_member_number: payrollData.superMemberNumber,
+        pay_cycle: payrollData.payFrequency
+      };
+
+      // Try to find the super fund name to update the profile record
+      if (payrollData.superFundId) {
+        const { data: fund } = await supabase
+          .from('super_funds')
+          .select('fund_name')
+          .eq('id', payrollData.superFundId)
+          .maybeSingle();
+        
+        if (fund) {
+          employeeUpdates.superannuation_fund_name = fund.fund_name;
+        }
+      }
+
+      await supabase
+        .from('employees')
+        .update(employeeUpdates)
+        .eq('id', employeeId);
+
     } catch (error: any) {
       console.error('Error in payrollEmployeeService.upsert:', error);
       throw error;

@@ -141,6 +141,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
     paymentBsb: '',
     payCycle: 'Monthly',
     paymentMethod: 'Bank',
+    employmentType: 'FullTime',
+    hourlyRate: '',
+    superRate: '11.5',
+    superFundId: '',
     
     // Family
     maritalStatus: 'Single',
@@ -263,6 +267,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
         paymentBsb: initialData.bankBsb || '',
         payCycle: (initialData.payCycle as any) || 'Monthly',
         paymentMethod: initialData.paymentMethod || 'Bank',
+        employmentType: (initialData.employmentType as any) || 'FullTime',
+        hourlyRate: initialData.hourlyRate?.toString() || '',
+        superRate: initialData.superRate?.toString() || '11.5',
+        superFundId: initialData.superFundId || '',
         
         // Family
         maritalStatus: initialData.maritalStatus || 'Single',
@@ -478,6 +486,10 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
       bankAccount: formData.paymentAccount,
       bankBsb: formData.paymentBsb,
       payCycle: formData.payCycle as 'Weekly' | 'Fortnightly' | 'Monthly' | 'Annually',
+      employmentType: formData.employmentType as 'FullTime' | 'PartTime' | 'Casual' | 'Contractor',
+      hourlyRate: formData.hourlyRate ? Number(formData.hourlyRate) : undefined,
+      superRate: formData.superRate ? Number(formData.superRate) : undefined,
+      superFundId: formData.superFundId,
       
       maritalStatus: formData.maritalStatus as 'Single' | 'Married' | 'Divorced' | 'Widowed',
       spouse: formData.maritalStatus === 'Married' ? {
@@ -862,6 +874,7 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                       />
                     </div>
                     {renderManagerSelect()}
+                    {renderSelectField('employmentType', 'Employment Type', ['FullTime', 'PartTime', 'Casual', 'Contractor'], true)}
                     {renderSelectField('status', 'Employment Status', ['Active', 'On Leave', 'Terminated', 'Probation'], true)}
                  </div>
             </div>
@@ -872,7 +885,11 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                  <h3 className="font-medium text-lg border-b pb-2 mb-4">Salary & Payroll</h3>
                  <div className="grid grid-cols-2 gap-4">
                     {renderTextField('salaryEffectiveDate', 'Effective Date', false, 'date')}
-                    {renderTextField('basicSalary', 'Basic Salary', false, 'number')}
+                    {renderTextField('basicSalary', 'Annual Salary', false, 'number')}
+                    {renderTextField('hourlyRate', 'Hourly Rate', false, 'number')}
+                    {renderTextField('superRate', 'Super Rate (%)', false, 'number')}
+                    {renderTextField('superannuationFundName', 'Super Fund Name')}
+                    {renderTextField('superFundId', 'Super Fund ID (Optional)')}
                     {renderTextField('currency', 'Currency')}
                     {renderTextField('nextReviewDate', 'Performance Review', false, 'date')}
                  </div>

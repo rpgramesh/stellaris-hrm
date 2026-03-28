@@ -108,7 +108,10 @@ export interface Employee {
   bankAccount?: string;
   bankBsb?: string;
   payCycle?: 'Weekly' | 'Fortnightly' | 'Monthly' | 'Annually';
+  employmentType?: 'FullTime' | 'PartTime' | 'Casual' | 'Contractor';
+  hourlyRate?: number;
   superRate?: number; // Percentage (e.g., 11.5)
+  superFundId?: string;
   
   // Family
   maritalStatus?: 'Single' | 'Married' | 'Divorced' | 'Widowed';

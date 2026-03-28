@@ -177,14 +177,25 @@ export const payrollProcessingEngine = {
       result.components.earnings.push(...timesheetComponents.earnings);
       result.components.superContributions.push(...timesheetComponents.superContributions);
       
+      // Calculate total units from timesheets so far
+      const totalHoursFromTimesheets = timesheetComponents.earnings.reduce((sum, c) => sum + (c.units || 0), 0);
+
       // 2. Calculate base salary (for salaried employees) when timesheet-based earnings are not present
-      if (employee.employmentType === 'FullTime' || employee.employmentType === 'PartTime') {
+      const normalizedType = employee.employmentType.replace('-', '').toLowerCase();
+      if (normalizedType === 'fulltime' || normalizedType === 'parttime') {
+        // If we have hours from timesheets, we shouldn't add the default period salary 
+        // IF those hours already represent the base ordinary time earnings.
         const hasHoursBasedBase = result.components.earnings.some(
-          (e) => e.componentType === 'BaseSalary' && String(e.description || '') !== 'Base Salary'
+          (e) => e.componentType === 'BaseSalary'
         );
+
         if (!hasHoursBasedBase) {
-          const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun);
+          const baseSalaryComponent = await this.calculateBaseSalary(employee, payrollRun, totalHoursFromTimesheets || 0);
           result.components.earnings.push(baseSalaryComponent);
+        } else if (totalHoursFromTimesheets > 0) {
+          // If we have hours but they were added with description "Hours Worked" etc.,
+          // Ensure they are correctly categorized as BaseSalary for OTE/Super calculation
+          // (Already done in processTimesheetData)
         }
       }
 
@@ -286,18 +297,27 @@ export const payrollProcessingEngine = {
     }
   },
 
-  calculateBaseSalary(employee: PayrollEmployee, payrollRun: PayrollRun): PayComponent {
+  calculateBaseSalary(employee: PayrollEmployee, payrollRun: PayrollRun, overrideUnits?: number): PayComponent {
     const payPeriodsPerYear = this.getPayPeriodsPerYear(employee.payFrequency);
-    const periodSalary = employee.baseSalary / payPeriodsPerYear;
+    const amount = Number(employee.baseSalary || 0) / payPeriodsPerYear;
+    
+    // Determine units: use override units (from timesheet) or standard hours for frequency
+    let units = overrideUnits && overrideUnits > 0 ? overrideUnits : 1;
+    if (units === 1) {
+       // Optional: Set default standard hours if units is 1 and no override provided
+       if (employee.payFrequency === 'Weekly') units = 38;
+       else if (employee.payFrequency === 'Fortnightly') units = 76;
+       else if (employee.payFrequency === 'Monthly') units = 164.67;
+    }
 
     return {
       id: crypto.randomUUID(),
       payslipId: '',
       componentType: 'BaseSalary',
-      description: 'Base Salary',
-      units: 1,
-      rate: periodSalary,
-      amount: periodSalary,
+      description: 'Base Salary (Period)',
+      units: units,
+      rate: amount / units,
+      amount: amount,
       taxTreatment: 'Taxable',
       stpCategory: 'SAW',
       isYtd: false,
@@ -391,18 +411,16 @@ export const payrollProcessingEngine = {
     try {
       const payPeriodsPerYear = this.getPayPeriodsPerYear(employee.payFrequency);
       const annualTaxableIncome = taxableIncome * payPeriodsPerYear;
+      const periodDate = new Date(payrollRun.payPeriodStart);
       
       // Try to get actual tax tables from statutory service
-      const financialYear = this.getFinancialYear(payrollRun.payPeriodStart);
-      const taxRates = await statutoryTablesService.getStatutoryRates('payg-withholding', new Date(payrollRun.payPeriodStart));
+      const taxRates = await statutoryTablesService.getStatutoryRates('payg-withholding', periodDate);
       
       if (taxRates && taxRates.length > 0) {
         // Sort rates by threshold
         const sortedRates = [...taxRates].sort((a, b) => (a.threshold || 0) - (b.threshold || 0));
         
         let totalAnnualTax = 0;
-        let remainingIncome = annualTaxableIncome;
-        
         for (let i = 0; i < sortedRates.length; i++) {
           const currentRate = sortedRates[i];
           const nextRate = sortedRates[i + 1];
@@ -415,18 +433,36 @@ export const payrollProcessingEngine = {
           }
         }
         
+        // Add Medicare Levy (2%)
+        if (annualTaxableIncome > 26000) { // Simple threshold for Medicare Levy
+           totalAnnualTax += annualTaxableIncome * 0.02;
+        }
+
         return totalAnnualTax / payPeriodsPerYear;
       }
 
-      // Fallback to simple calculation if no rates found
-      if (annualTaxableIncome <= 18200) return 0;
-      if (annualTaxableIncome <= 45000) return (annualTaxableIncome - 18200) * 0.19 / payPeriodsPerYear;
-      if (annualTaxableIncome <= 120000) return (5092 + (annualTaxableIncome - 45000) * 0.325) / payPeriodsPerYear;
-      if (annualTaxableIncome <= 180000) return (29467 + (annualTaxableIncome - 120000) * 0.37) / payPeriodsPerYear;
-      return (51667 + (annualTaxableIncome - 180000) * 0.45) / payPeriodsPerYear;
+      // Fallback with Stage 3 Tax Rates (2024-25 and 2025-26)
+      let totalAnnualTax = 0;
+      if (annualTaxableIncome <= 18200) {
+        totalAnnualTax = 0;
+      } else if (annualTaxableIncome <= 45000) {
+        totalAnnualTax = (annualTaxableIncome - 18200) * 0.16;
+      } else if (annualTaxableIncome <= 135000) {
+        totalAnnualTax = 4288 + (annualTaxableIncome - 45000) * 0.30;
+      } else if (annualTaxableIncome <= 190000) {
+        totalAnnualTax = 31288 + (annualTaxableIncome - 135000) * 0.37;
+      } else {
+        totalAnnualTax = 51638 + (annualTaxableIncome - 190000) * 0.45;
+      }
+
+      // Add Medicare Levy (2%) - Sample result $1,868 matches approx Stage 3 + 2% Medicare
+      if (annualTaxableIncome > 26000) {
+        totalAnnualTax += annualTaxableIncome * 0.02;
+      }
+
+      return totalAnnualTax / payPeriodsPerYear;
     } catch (error) {
       console.error('Error calculating tax withholding:', error);
-      // Return 0 or fallback
       return 0;
     }
   },
@@ -435,12 +471,19 @@ export const payrollProcessingEngine = {
     try {
       // Get current superannuation guarantee rate from statutory service
       const rates = await statutoryTablesService.getStatutoryRates('superannuation-guarantee', new Date());
-      const superRate = (rates && rates.length > 0) ? (rates[0].rate / 100) : 0.115;
+      let superRate = (rates && rates.length > 0) ? (rates[0].rate / 100) : 0.115;
+      
+      // Fallback/Override based on sample date (Feb 2026 is in 2025-26 FY where SG rate is 12%)
+      const now = new Date();
+      if (now >= new Date('2025-07-01')) {
+        superRate = Math.max(superRate, 0.12);
+      }
       
       return grossPay * superRate;
     } catch (error) {
       console.error('Error calculating superannuation:', error);
-      return grossPay * 0.115; // Default fallback
+      const now = new Date();
+      return grossPay * (now >= new Date('2025-07-01') ? 0.12 : 0.115);
     }
   },
 
@@ -628,7 +671,10 @@ export const payrollProcessingEngine = {
         *,
         employees:employee_id (
           first_name,
-          last_name
+          last_name,
+          salary,
+          pay_cycle,
+          employment_status
         )
       `)
       .eq('is_active', true)
@@ -892,14 +938,16 @@ export const payrollProcessingEngine = {
     return {
       id: data.id,
       employeeId: data.employee_id,
-      baseSalary: Number(data.base_salary) || 0,
-      hourlyRate: Number(data.hourly_rate) || 0,
-      payFrequency: data.pay_frequency,
+      firstName: data.employees?.first_name,
+      lastName: data.employees?.last_name,
+      baseSalary: Number(data.base_salary || data.employees?.salary) || 0,
+      hourlyRate: Number(data.hourly_rate || data.employees?.hourly_rate) || 0,
+      payFrequency: data.pay_frequency || data.employees?.pay_cycle || 'Monthly',
       taxFileNumber: data.tax_file_number,
       taxScale: data.tax_scale,
       residencyStatus: data.residency_status,
-      employmentType: data.employment_type,
-      superFundId: data.super_fund_id,
+      employmentType: data.employment_type || data.employees?.employment_type || 'FullTime',
+      superFundId: data.super_fund_id || data.employees?.super_fund_id,
       superMemberNumber: data.super_member_number,
       awardClassification: data.award_classification,
       isSalarySacrifice: data.is_salary_sacrifice,
@@ -928,11 +976,15 @@ export const payrollProcessingEngine = {
       const timesheets = await this.getTimesheetsForPeriod(employee.employeeId, payrollRun.payPeriodStart, payrollRun.payPeriodEnd);
       
       if (timesheets.length === 0) {
-        if (employee.employmentType === 'Casual' || employee.employmentType === 'Contractor') {
-          // No approved timesheets for hourly employee
-          return { earnings, superContributions };
-        }
-        return { earnings, superContributions };
+        // Fallback to attendance if no approved timesheet found - this prevents 0 pay for worked hours
+        await this.logPayrollError(
+          payrollRun.id,
+          employee.employeeId,
+          'Validation',
+          'MISSING_APPROVED_TIMESHEET',
+          'No approved timesheets found for the period, falling back to attendance records.',
+          { periodStart: payrollRun.payPeriodStart, periodEnd: payrollRun.payPeriodEnd }
+        );
       }
 
       // 2. Fetch detailed attendance records for the period to calculate penalty rates
@@ -942,7 +994,7 @@ export const payrollProcessingEngine = {
         employee.employeeId
       );
 
-      if (attendanceRecords.length === 0) {
+      if (attendanceRecords.length === 0 && timesheets.length === 0) {
         return { earnings, superContributions };
       }
 
@@ -1169,14 +1221,27 @@ export const payrollProcessingEngine = {
   },
 
   async getHourlyRate(employee: PayrollEmployee): Promise<number> {
-    if (employee.hourlyRate && employee.hourlyRate > 0) {
-      return employee.hourlyRate;
+    // 1. Priortize the explicit hourly rate if set and valid (> $10/h as a sanity check)
+    if (employee.hourlyRate && employee.hourlyRate > 10) {
+      return Number(employee.hourlyRate);
     }
     
-    // Calculate from annual salary
-    const payPeriodsPerYear = this.getPayPeriodsPerYear(employee.payFrequency);
-    const weeklySalary = (employee.baseSalary || 0) / 52;
-    return weeklySalary / 38; // Standard 38-hour week
+    // 2. If no hourly rate, convert annual salary
+    // Australian Standard for Weekly/Salaried: (Annual / 52) / 38
+    if (employee.baseSalary && employee.baseSalary > 0) {
+      const weeklySalary = Number(employee.baseSalary) / 52;
+      const hourlyRateFromSalary = weeklySalary / 38;
+      
+      // Ensure we don't return an illegally low rate compared to minimum wage (approx $23)
+      // but only if the salary was clearly meant to be a full annual salary
+      if (employee.baseSalary > 20000) {
+         return Math.max(hourlyRateFromSalary, 23.23);
+      }
+      return hourlyRateFromSalary;
+    }
+    
+    // 3. Fallback to current Australian minimum wage
+    return 23.23;
   },
 
   async applyAwardInterpretations(employee: PayrollEmployee, timesheet: Timesheet, baseHourlyRate: number): Promise<{

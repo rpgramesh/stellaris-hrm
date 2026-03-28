@@ -19,7 +19,8 @@ import {
   List,
   ArrowDown,
   Edit,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { comprehensivePayrollService, PayrollProcessingOptions } from '@/services/comprehensivePayrollService';
 import { payrollReportingService } from '@/services/payrollReportingService';
@@ -57,6 +58,10 @@ interface Employee {
   employment_type: string;
   pay_frequency: string;
   employment_status?: string;
+  tfn?: string;
+  superannuation_fund_name?: string;
+  superannuation_member_number?: string;
+  basic_salary?: number;
   selected: boolean;
 }
 
@@ -121,6 +126,7 @@ type PayslipForRunRow = {
   employees?: { first_name?: string | null; last_name?: string | null } | null;
 };
 
+// Payroll Management Page
 export default function PayrollProcessingPage() {
   const router = useRouter();
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
@@ -148,7 +154,7 @@ export default function PayrollProcessingPage() {
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
-  const [approvedHoursByEmployeeId, setApprovedHoursByEmployeeId] = useState<Record<string, number>>({});
+  const [timesheetStatsByEmployeeId, setTimesheetStatsByEmployeeId] = useState<Record<string, { approved: number; total: number; duration: string }>>({});
   const [loadingApprovedHours, setLoadingApprovedHours] = useState(false);
   const [timesheetPopupEmployee, setTimesheetPopupEmployee] = useState<Employee | null>(null);
   const [timesheetPopupRows, setTimesheetPopupRows] = useState<TimesheetPeriodRow[]>([]);
@@ -157,7 +163,6 @@ export default function PayrollProcessingPage() {
   const [timesheetPopupError, setTimesheetPopupError] = useState<string | null>(null);
   const [timesheetEmailStatuses, setTimesheetEmailStatuses] = useState<Record<string, Record<string, any>>>({});
   const [sendingTimesheetEmails, setSendingTimesheetEmails] = useState<Record<string, boolean>>({});
-  const [autoRefreshTick, setAutoRefreshTick] = useState(0);
   const [lastPreviewUpdatedAt, setLastPreviewUpdatedAt] = useState<string | null>(null);
   const [payslipPdfStatsByRunId, setPayslipPdfStatsByRunId] = useState<Record<string, { total: number; pdfReady: number; missing: number }>>({});
 
@@ -224,6 +229,31 @@ export default function PayrollProcessingPage() {
       );
     }
   };
+  
+  const handleDeleteRun = async (runId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this payroll run? All associated payslips and components will be permanently removed.')) {
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      await comprehensivePayrollService.deletePayrollRun(runId);
+      if (selectedRun?.id === runId) {
+        setSelectedRun(null);
+        setEmployees([]);
+        setValidationResult(null);
+        setPayrollReport(null);
+      }
+      const runs = await loadPayrollRuns();
+      setPayrollRuns(runs);
+    } catch (error) {
+      console.error('Error deleting payroll run:', error);
+      alert('Failed to delete payroll run. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const normalizeStatus = (s: unknown) => String(s || '').trim().toLowerCase();
   const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -287,7 +317,7 @@ export default function PayrollProcessingPage() {
         const last = p.employees?.last_name || '';
         const employeeName = `${first} ${last}`.trim() || 'Unknown';
         const employeeId = String(p.employee_id);
-        const hoursWorked = Number(p.hours_worked ?? approvedHoursByEmployeeId[employeeId] ?? 0);
+        const hoursWorked = Number(p.hours_worked ?? timesheetStatsByEmployeeId[employeeId]?.approved ?? 0);
 
         return {
           employeeId,
@@ -321,6 +351,75 @@ export default function PayrollProcessingPage() {
     }
   };
 
+  const loadTimesheetStats = async () => {
+    try {
+      if (!selectedRun) return;
+      const employeeIds = employees.map((e) => e.employee_id).filter(Boolean);
+      if (employeeIds.length === 0) return;
+
+      setLoadingApprovedHours(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) return;
+
+      const res = await fetch('/api/payroll/timesheets/for-period', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          employeeIds,
+          startDate: selectedRun.pay_period_start,
+          endDate: selectedRun.pay_period_end,
+        }),
+      });
+
+      if (!res.ok) return;
+
+      const json = await res.json().catch(() => null);
+      const rows = Array.isArray(json?.rows) ? json.rows : [];
+
+      const start = new Date(`${selectedRun.pay_period_start}T00:00:00.000Z`);
+      const end = new Date(`${selectedRun.pay_period_end}T23:59:59.999Z`);
+
+      const next: Record<string, { approved: number; total: number; duration: string }> = {};
+      
+      for (const r of rows) {
+        const empId = String(r.employee_id || '');
+        if (!empId) continue;
+
+        const weekStartStr = String(r.week_start_date || '').slice(0, 10);
+        if (!weekStartStr) continue;
+        const weekStart = new Date(`${weekStartStr}T00:00:00.000Z`);
+        if (Number.isNaN(weekStart.getTime())) continue;
+        const weekEnd = new Date(weekStart);
+        weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+
+        if (weekStart > end || weekEnd < start) continue;
+
+        const approved = r.status === 'Approved' ? Number((r as any).approved_hours ?? r.total_hours ?? 0) : 0;
+        const total = Number((r as any).total_hours ?? 0);
+        
+        const displayStart = clampIsoDate(weekStartStr, selectedRun.pay_period_start, weekStartStr);
+        const displayEnd = clampIsoDate(weekEnd.toISOString().slice(0, 10), weekEnd.toISOString().slice(0, 10), selectedRun.pay_period_end);
+        
+        if (!next[empId]) {
+          next[empId] = { approved: 0, total: 0, duration: `${displayStart} to ${displayEnd}` };
+        } else {
+          next[empId].approved += approved;
+          next[empId].total += total;
+          // Optionally update duration to cover all weeks
+        }
+      }
+      setTimesheetStatsByEmployeeId(next);
+    } catch (error) {
+      console.error('Error loading timesheet stats:', error);
+    } finally {
+      setLoadingApprovedHours(false);
+    }
+  };
+
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -346,17 +445,9 @@ export default function PayrollProcessingPage() {
     resolveRole();
   }, []);
 
+  // Auto-refresh interval removed as per user request
   useEffect(() => {
-    if (!selectedRun) return;
-    if (!hasSelectedEmployees) return;
-    if (isFinalisedRun) return;
-    if (validationResult?.isValid !== true) return;
-
-    const id = window.setInterval(() => {
-      setAutoRefreshTick((t) => t + 1);
-    }, 20000);
-
-    return () => window.clearInterval(id);
+    // Background auto-refresh disabled
   }, [selectedRun?.id, hasSelectedEmployees, validationResult?.isValid]);
 
   // Trigger recalculation when employee selection changes
@@ -421,27 +512,27 @@ export default function PayrollProcessingPage() {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [employees, selectedRun, autoRefreshTick, approvedHoursByEmployeeId, isPaidRun, isHrAdmin]);
+  }, [employees, selectedRun, timesheetStatsByEmployeeId, isPaidRun, isHrAdmin]);
 
   useEffect(() => {
     if (!selectedRun) {
-      setApprovedHoursByEmployeeId({});
+      setTimesheetStatsByEmployeeId({});
       return;
     }
     if (!isHrAdmin) {
-      setApprovedHoursByEmployeeId({});
+      setTimesheetStatsByEmployeeId({});
       return;
     }
 
     const employeeIds = employees.map((e) => e.employee_id).filter(Boolean);
     if (employeeIds.length === 0) {
-      setApprovedHoursByEmployeeId({});
+      setTimesheetStatsByEmployeeId({});
       return;
     }
 
     let cancelled = false;
 
-    const loadApprovedHours = async () => {
+    const loadTimesheetStatsLocal = async () => {
       try {
         setLoadingApprovedHours(true);
         const { data: sessionData } = await supabase.auth.getSession();
@@ -463,7 +554,7 @@ export default function PayrollProcessingPage() {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          console.error('[payroll-process] failed to load approved hours', {
+          console.error('[payroll-process] failed to load timesheet stats', {
             status: res.status,
             body,
           });
@@ -476,11 +567,10 @@ export default function PayrollProcessingPage() {
         const start = new Date(`${selectedRun.pay_period_start}T00:00:00.000Z`);
         const end = new Date(`${selectedRun.pay_period_end}T23:59:59.999Z`);
 
-        const next: Record<string, number> = {};
+        const next: Record<string, { approved: number; total: number; duration: string }> = {};
         for (const r of rows) {
           const empId = String(r.employee_id || '');
           if (!empId) continue;
-          if (String(r.status || '') !== 'Approved') continue;
 
           const weekStartStr = String(r.week_start_date || '').slice(0, 10);
           if (!weekStartStr) continue;
@@ -491,30 +581,44 @@ export default function PayrollProcessingPage() {
 
           if (weekStart > end || weekEnd < start) continue;
 
-          const hours = Number((r as any).approved_hours ?? r.total_hours ?? 0);
-          next[empId] = (next[empId] || 0) + (Number.isFinite(hours) ? hours : 0);
+          const approved = r.status === 'Approved' ? Number((r as any).approved_hours ?? r.total_hours ?? 0) : 0;
+          const total = Number((r as any).total_hours ?? 0);
+          
+          const displayStart = clampIsoDate(weekStartStr, selectedRun.pay_period_start, weekStartStr);
+          const displayEnd = clampIsoDate(weekEnd.toISOString().slice(0, 10), weekEnd.toISOString().slice(0, 10), selectedRun.pay_period_end);
+
+          if (!next[empId]) {
+            next[empId] = { 
+              approved: Number.isFinite(approved) ? approved : 0, 
+              total: Number.isFinite(total) ? total : 0, 
+              duration: `${displayStart} to ${displayEnd}` 
+            };
+          } else {
+            next[empId].approved += (Number.isFinite(approved) ? approved : 0);
+            next[empId].total += (Number.isFinite(total) ? total : 0);
+          }
         }
 
         if (!cancelled) {
-          setApprovedHoursByEmployeeId(next);
-          console.info('[payroll-process] loaded approved hours', {
+          setTimesheetStatsByEmployeeId(next);
+          console.info('[payroll-process] loaded timesheet stats', {
             payrollRunId: selectedRun.id,
             employeeCount: employeeIds.length,
-            withHours: Object.keys(next).length,
+            withStats: Object.keys(next).length,
           });
         }
       } catch (error) {
-        console.error('[payroll-process] error loading approved hours', error);
+        console.error('[payroll-process] error loading timesheet stats', error);
       } finally {
         if (!cancelled) setLoadingApprovedHours(false);
       }
     };
 
-    loadApprovedHours();
+    loadTimesheetStatsLocal();
     return () => {
       cancelled = true;
     };
-  }, [selectedRun?.id, selectedRun?.pay_period_start, selectedRun?.pay_period_end, employeeIdsKey, isHrAdmin, autoRefreshTick]);
+  }, [selectedRun?.id, selectedRun?.pay_period_start, selectedRun?.pay_period_end, employeeIdsKey, isHrAdmin]);
 
   useEffect(() => {
     if (!timesheetPopupOpen || !timesheetPopupEmployee || !selectedRun) return;
@@ -659,10 +763,17 @@ export default function PayrollProcessingPage() {
           last_name,
           employee_code,
           employment_status,
+          tfn,
+          superannuation_fund_name,
+          superannuation_member_number,
           payroll_employees!inner (
             id,
             employment_type,
             pay_frequency
+          ),
+          employee_salaries (
+            basic_salary,
+            is_current
           )
         `)
         .eq('employment_status', 'Active')
@@ -678,6 +789,7 @@ export default function PayrollProcessingPage() {
       
       const mapped = (data || []).map((emp: any) => {
         const payrollInfo = emp.payroll_employees?.[0] || {};
+        const salaryInfo = (emp.employee_salaries || []).find((s: any) => s.is_current) || emp.employee_salaries?.[0] || {};
         return {
           id: payrollInfo.id || emp.id, // Use payroll_employees.id for processing
           employee_id: emp.id,
@@ -687,6 +799,10 @@ export default function PayrollProcessingPage() {
           employment_type: payrollInfo.employment_type || 'Unknown',
           pay_frequency: payrollInfo.pay_frequency || 'Unknown',
           employment_status: emp.employment_status,
+          tfn: emp.tfn,
+          superannuation_fund_name: emp.superannuation_fund_name,
+          superannuation_member_number: emp.superannuation_member_number,
+          basic_salary: salaryInfo.basic_salary,
           selected: false
         };
       });
@@ -948,22 +1064,14 @@ export default function PayrollProcessingPage() {
   }, [selectedRun?.id, selectedRun?.status, isHrAdmin, employees]);
 
   useEffect(() => {
-    if (!selectedRun) return;
-    if (!isHrAdmin) return;
-    if (selectedRun.status === 'Paid') return;
-
+    // Automatic timesheet validation interval removed as per user request
+    if (!selectedRun || !isHrAdmin) return;
     const hasUnapproved = (validationResult?.unapprovedTimesheets || []).length > 0;
     const hasMissing = (validationResult?.missingTimesheets || []).length > 0;
     const hasIncomplete = (validationResult?.incompleteTimesheets || []).length > 0;
     if (!hasUnapproved && !hasMissing && !hasIncomplete) return;
-
-    const id = window.setInterval(() => {
-      const selectedIds = employees.filter((e) => e.selected && !isEmployeeLocked(e)).map((e) => e.id);
-      if (selectedIds.length === 0) return;
-      validatePayrollRun(selectedRun.id, selectedIds);
-    }, 10000);
-
-    return () => window.clearInterval(id);
+    
+    // No longer using setInterval for validation
   }, [
     selectedRun?.id,
     selectedRun?.status,
@@ -1542,6 +1650,7 @@ export default function PayrollProcessingPage() {
                       <ArrowDown className="h-3 w-3 text-gray-400 group-hover:text-gray-600" />
                     </div>
                   </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -1613,6 +1722,15 @@ export default function PayrollProcessingPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(run.created_at || '').toLocaleDateString()} <span className="text-xs text-gray-400">{new Date(run.created_at || '').toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        onClick={(e) => handleDeleteRun(run.id, e)}
+                        className="text-red-600 hover:text-red-900 transition-colors"
+                        title="Delete Run"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2137,14 +2255,43 @@ export default function PayrollProcessingPage() {
                                   <p className="text-sm text-gray-600">
                                     {employee.employment_type} • {employee.pay_frequency} • {employee.employment_status || 'Unknown'}
                                   </p>
+                                  {(employee.tfn || employee.superannuation_fund_name || employee.basic_salary) && (
+                                    <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
+                                      {employee.tfn && (
+                                        <p className="text-[11px] text-gray-500">
+                                          <span className="font-semibold">TFN:</span> {employee.tfn}
+                                        </p>
+                                      )}
+                                      {employee.basic_salary && (
+                                        <p className="text-[11px] text-gray-500">
+                                          <span className="font-semibold">Salary:</span> ${employee.basic_salary.toLocaleString()}
+                                        </p>
+                                      )}
+                                      {employee.superannuation_fund_name && (
+                                        <p className="text-[11px] text-gray-500 col-span-2">
+                                          <span className="font-semibold">Super:</span> {employee.superannuation_fund_name} ({employee.superannuation_member_number || 'N/A'})
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
 
                                 {(() => {
-                                  const hours = approvedHoursByEmployeeId[employee.employee_id];
-                                  if (typeof hours === 'number') {
+                                  const stats = timesheetStatsByEmployeeId[employee.employee_id];
+                                  if (stats) {
                                     return (
                                       <div className="mt-2 flex flex-col gap-1">
-                                        <p className="text-xs text-gray-500">Approved Hours: {hours.toFixed(1)}</p>
+                                        <div className="flex gap-4">
+                                          <p className="text-xs text-gray-500">
+                                            <span className="font-semibold text-gray-700">Approved:</span> {stats.approved.toFixed(1)}h
+                                          </p>
+                                          <p className="text-xs text-gray-500">
+                                            <span className="font-semibold text-gray-700">Total:</span> {stats.total.toFixed(1)}h
+                                          </p>
+                                        </div>
+                                        <p className="text-xs text-gray-500">
+                                          <span className="font-semibold text-gray-700">Duration:</span> {stats.duration}
+                                        </p>
                                         <div>
                                           <button
                                             type="button"
@@ -2162,7 +2309,7 @@ export default function PayrollProcessingPage() {
                                     );
                                   }
                                   if (loadingApprovedHours) {
-                                    return <p className="mt-2 text-xs text-gray-400">Approved Hours: ...</p>;
+                                    return <p className="mt-2 text-xs text-gray-400">Loading timesheet data...</p>;
                                   }
                                   return null;
                                 })()}
@@ -2385,8 +2532,8 @@ export default function PayrollProcessingPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {(() => {
-                        const approved = approvedHoursByEmployeeId[emp.employeeId];
-                        const value = typeof approved === 'number' && Number.isFinite(approved) ? approved : emp.hoursWorked;
+                        const stats = timesheetStatsByEmployeeId[emp.employeeId];
+                        const value = stats ? stats.approved : emp.hoursWorked;
                         return Number(value || 0).toFixed(1);
                       })()}
                     </td>

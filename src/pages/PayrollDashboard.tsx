@@ -256,7 +256,7 @@ export default function PayrollDashboard() {
           </div>
         </div>
 
-        <div 
+        {/* <div 
           onClick={() => router.push('/payroll/runs/new')}
           className="bg-white p-6 rounded-lg shadow-sm border hover:bg-gray-50 cursor-pointer"
         >
@@ -267,7 +267,7 @@ export default function PayrollDashboard() {
             </div>
             <Calendar className="h-8 w-8 text-purple-600" />
           </div>
-        </div>
+        </div> */}
 
         <div 
           onClick={() => router.push('/payroll/errors')}
@@ -291,13 +291,13 @@ export default function PayrollDashboard() {
       <div className="bg-white p-6 rounded-lg shadow-sm border">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Link
+          {/* <Link
             href="/payroll/adjustments"
             className="p-4 border rounded-lg hover:bg-gray-50 text-center"
           >
             <DollarSign className="h-6 w-6 mx-auto text-blue-600 mb-2" />
             <span className="text-sm font-medium">Salary Adjustments</span>
-          </Link>
+          </Link> */}
 
           <Link
             href="/payroll/bonus"

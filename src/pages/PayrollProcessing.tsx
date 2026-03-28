@@ -239,13 +239,13 @@ export default function PayrollProcessing() {
           <h1 className="text-3xl font-bold text-gray-900">Payroll Processing</h1>
           <p className="text-gray-600 mt-1">Process payroll runs and manage pay periods</p>
         </div>
-        <button
+        {/* <button
           onClick={() => setShowNewPayRun(true)}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
         >
           <Play className="h-4 w-4" />
           <span>New Pay Run</span>
-        </button>
+        </button> */}
       </div>
 
       {/* Recent Pay Runs */}

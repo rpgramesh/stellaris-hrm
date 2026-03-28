@@ -27,9 +27,12 @@ const mapEmployeeFromDb = (dbRecord: any): Employee => {
     tfn: dbRecord.tfn || '',
     abn: dbRecord.abn || '',
     salary: parseFloat(dbRecord.salary) || 0,
+    hourlyRate: parseFloat(dbRecord.hourly_rate) || 0,
     salaryEffectiveDate: dbRecord.salary_effective_date || dbRecord.start_date, 
-    superRate: 11.5,
+    superRate: parseFloat(dbRecord.super_rate) || 11.5,
+    superFundId: dbRecord.super_fund_id,
     payCycle: (dbRecord.pay_cycle as any) || 'Monthly',
+    employmentType: dbRecord.employment_type || 'FullTime',
     paymentMethod: dbRecord.payment_method || 'Bank',
     currency: dbRecord.currency || 'AUD',
     bankName: dbRecord.bank_name || '',
@@ -228,7 +231,11 @@ export const employeeService = {
         probation_end_date: employee.endOfProbation || null,
         line_manager_id: employee.lineManagerId || null,
         branch: employee.branch,
+        employment_type: employee.employmentType || 'FullTime',
         salary: employee.salary,
+        hourly_rate: employee.hourlyRate,
+        super_rate: employee.superRate,
+        super_fund_id: employee.superFundId,
         salary_effective_date: employee.salaryEffectiveDate || null,
         currency: employee.currency,
         payment_method: employee.paymentMethod,
@@ -350,7 +357,11 @@ export const employeeService = {
       if (updates.endOfProbation !== undefined) dbPayload.probation_end_date = updates.endOfProbation || null;
       if (updates.lineManagerId !== undefined) dbPayload.line_manager_id = updates.lineManagerId || null;
       if (updates.branch) dbPayload.branch = updates.branch;
+      if (updates.employmentType) dbPayload.employment_type = updates.employmentType;
       if (updates.salary) dbPayload.salary = updates.salary;
+      if (updates.hourlyRate !== undefined) dbPayload.hourly_rate = updates.hourlyRate;
+      if (updates.superRate !== undefined) dbPayload.super_rate = updates.superRate;
+      if (updates.superFundId !== undefined) dbPayload.super_fund_id = updates.superFundId;
       if (updates.salaryEffectiveDate !== undefined) dbPayload.salary_effective_date = updates.salaryEffectiveDate || null;
       if (updates.currency) dbPayload.currency = updates.currency;
       if (updates.paymentMethod) dbPayload.payment_method = updates.paymentMethod;

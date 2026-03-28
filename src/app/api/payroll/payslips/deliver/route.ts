@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
       const paymentReference = String(p.payment_reference || `PAY-${p.payslip_number || p.id}`).slice(0, 80);
       const employerEmail = String(p.employer_email || employee.client_email || '').trim() || null;
       const pdfBucket = String(p.pdf_bucket || 'payslips');
-      const pdfPath = `payslips/${employee.id}/${String(p.payslip_number || p.id)}.pdf`;
+      const pdfPath = `${employee.id}/${String(p.payslip_number || p.id)}.pdf`;
 
       await ensureStorageBucket(supabaseAdmin, pdfBucket);
 
