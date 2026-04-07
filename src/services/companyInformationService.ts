@@ -23,22 +23,23 @@ export const companyInformationService = {
       website: data.website,
       taxId: data.tax_id,
       primaryContact: data.primary_contact,
-      foundedYear: data.founded_year
+      foundedYear: data.founded_year,
+      updatedAt: data.updated_at
     } : null;
   },
 
   async update(info: Partial<CompanyInformation>): Promise<CompanyInformation> {
     // Map camelCase to snake_case for DB
     const dbData: any = {};
-    if (info.companyName) dbData.company_name = info.companyName;
-    if (info.registrationNumber) dbData.registration_number = info.registrationNumber;
-    if (info.address) dbData.address = info.address;
-    if (info.phone) dbData.phone = info.phone;
-    if (info.email) dbData.email = info.email;
-    if (info.website) dbData.website = info.website;
-    if (info.taxId) dbData.tax_id = info.taxId;
-    if (info.primaryContact) dbData.primary_contact = info.primaryContact;
-    if (info.foundedYear) dbData.founded_year = info.foundedYear;
+    if (info.companyName !== undefined) dbData.company_name = info.companyName;
+    if (info.registrationNumber !== undefined) dbData.registration_number = info.registrationNumber;
+    if (info.address !== undefined) dbData.address = info.address;
+    if (info.phone !== undefined) dbData.phone = info.phone;
+    if (info.email !== undefined) dbData.email = info.email;
+    if (info.website !== undefined) dbData.website = info.website;
+    if (info.taxId !== undefined) dbData.tax_id = info.taxId;
+    if (info.primaryContact !== undefined) dbData.primary_contact = info.primaryContact;
+    if (info.foundedYear !== undefined) dbData.founded_year = info.foundedYear;
 
     // Check if record exists
     const existing = await this.get();
@@ -76,7 +77,8 @@ export const companyInformationService = {
       website: data.website,
       taxId: data.tax_id,
       primaryContact: data.primary_contact,
-      foundedYear: data.founded_year
+      foundedYear: data.founded_year,
+      updatedAt: data.updated_at
     };
   }
 };

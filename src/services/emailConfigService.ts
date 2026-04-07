@@ -4,9 +4,6 @@ export type EmailType =
   | 'WELCOME'
   | 'PASSWORD_RESET'
   | 'PAYSLIP_NOTIFICATION'
-  | 'PAYSLIP_DELIVERY_EMPLOYER'
-  | 'TIMESHEET_MISSING'
-  | 'TIMESHEET_APPROVAL_REQUIRED'
   | 'LEAVE_REQUEST_APPROVAL'
   | 'LEAVE_REQUEST_REJECTION'
   | 'DOCUMENT_SUBMISSION_REMINDER'
@@ -15,7 +12,8 @@ export type EmailType =
   | 'ACCOUNT_CREATION'
   | 'JOB_APPLICATION_RECEIVED'
   | 'INTERVIEW_INVITATION'
-  | 'INTERVIEW_REJECTION';
+  | 'INTERVIEW_REJECTION'
+  | 'MFA_CODE';
 
 export interface EmailTemplateAssignment {
   id: string;
@@ -45,9 +43,6 @@ export const AVAILABLE_EMAIL_TYPES: { value: EmailType; label: string }[] = [
   { value: 'WELCOME', label: 'Welcome Email' },
   { value: 'PASSWORD_RESET', label: 'Password Reset' },
   { value: 'PAYSLIP_NOTIFICATION', label: 'Payslip Notification' },
-  { value: 'PAYSLIP_DELIVERY_EMPLOYER', label: 'Payslip Delivery (Employer)' },
-  { value: 'TIMESHEET_MISSING', label: 'Timesheet Missing Notification' },
-  { value: 'TIMESHEET_APPROVAL_REQUIRED', label: 'Timesheet Approval Required' },
   { value: 'LEAVE_REQUEST_APPROVAL', label: 'Leave Request Approved' },
   { value: 'LEAVE_REQUEST_REJECTION', label: 'Leave Request Rejected' },
   { value: 'DOCUMENT_SUBMISSION_REMINDER', label: 'Document Submission Reminder' },
@@ -56,7 +51,8 @@ export const AVAILABLE_EMAIL_TYPES: { value: EmailType; label: string }[] = [
   { value: 'ACCOUNT_CREATION', label: 'Account Creation' },
   { value: 'JOB_APPLICATION_RECEIVED', label: 'Job Application Received' },
   { value: 'INTERVIEW_INVITATION', label: 'Interview Invitation' },
-  { value: 'INTERVIEW_REJECTION', label: 'Interview Rejection' }
+  { value: 'INTERVIEW_REJECTION', label: 'Interview Rejection' },
+  { value: 'MFA_CODE', label: 'MFA Code' }
 ];
 
 export const emailConfigService = {
@@ -101,24 +97,28 @@ export const emailConfigService = {
   }): Promise<{ rows: EmailAuditLog[]; total: number }> {
     const page = params.page || 1;
     const pageSize = params.pageSize || 20;
-    const search = new URLSearchParams();
-    search.set('page', String(page));
-    search.set('pageSize', String(pageSize));
-    if (params.fromDate) search.set('from', params.fromDate);
-    if (params.toDate) search.set('to', params.toDate);
-    if (params.emailType) search.set('type', String(params.emailType));
-    if (params.recipient) search.set('recipient', params.recipient);
-    if (params.status) search.set('status', params.status);
+    
+    let query = supabase
+      .from('email_audit_log')
+      .select('*', { count: 'exact' });
 
-    const res = await fetch(`/api/email/audit/list?${search.toString()}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(t || 'Failed to fetch audit logs');
+    if (params.fromDate) query = query.gte('sent_at', params.fromDate);
+    if (params.toDate) query = query.lte('sent_at', params.toDate);
+    if (params.emailType) query = query.eq('email_type', params.emailType);
+    if (params.recipient) query = query.ilike('recipient_email', `%${params.recipient}%`);
+    if (params.status) query = query.eq('status', params.status);
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await query
+      .order('sent_at', { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message || 'Failed to fetch audit logs');
     }
-    const json = await res.json();
-    return { rows: json.rows || [], total: json.total || 0 };
+
+    return { rows: (data as any) || [], total: count || 0 };
   },
 };

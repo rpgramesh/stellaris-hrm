@@ -4,7 +4,7 @@ import { Module } from '../types';
 export const moduleAccessService = {
   async getAll(): Promise<Module[]> {
     const { data, error } = await supabase
-      .from('module_access')
+      .from('modules')
       .select('*')
       .order('name');
 
@@ -20,7 +20,7 @@ export const moduleAccessService = {
 
   async updateStatus(id: string, enabled: boolean): Promise<void> {
     const { error } = await supabase
-      .from('module_access')
+      .from('modules')
       .update({ enabled })
       .eq('id', id);
 

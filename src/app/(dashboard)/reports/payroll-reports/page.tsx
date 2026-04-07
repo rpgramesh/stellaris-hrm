@@ -85,10 +85,8 @@ export default function PayrollReportsPage() {
       setLoading(true);
       setError(null);
 
-      const shouldLoadSummary = filters.status !== "Draft";
-
       const [s, t, sp, c] = await Promise.all([
-        shouldLoadSummary ? payrollReportingService.generatePayrollSummaryReport(filters) : Promise.resolve(null),
+        payrollReportingService.generatePayrollSummaryReport(filters),
         payrollReportingService.generateTaxReport(filters),
         payrollReportingService.generateSuperannuationReport(filters),
         payrollReportingService.generateComplianceReport(filters),
@@ -414,3 +412,4 @@ export default function PayrollReportsPage() {
     </div>
   );
 }
+

@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !anonKey) return NextResponse.json({ error: 'Supabase env missing' }, { status: 500 });
+    if (!serviceRoleKey) return NextResponse.json({ error: 'Service role key missing' }, { status: 500 });
 
     const url = new URL(request.url);
     const payrollRunId = (url.searchParams.get('payrollRunId') || '').trim();
@@ -31,16 +32,11 @@ export async function GET(request: NextRequest) {
     const { data: userData, error: userErr } = await supabaseAuth.auth.getUser(token);
     if (userErr || !userData?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supabaseUser = createClient(supabaseUrl, anonKey, {
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    const supabaseAdmin = serviceRoleKey
-      ? createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } })
-      : null;
-
-    const { data: employeeRow } = await supabaseUser
+    const { data: employeeRow } = await supabaseAdmin
       .from('employees')
       .select('id, role, system_access_role')
       .eq('user_id', userData.user.id)
@@ -51,18 +47,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const dataClient = supabaseAdmin || supabaseUser;
-    const { data: payslips, error: payslipErr } = await dataClient
+    const { data: payslips, error: payslipErr } = await supabaseAdmin
       .from('payslips')
       .select(
         `
         id,
         payroll_run_id,
         employee_id,
-        payslip_number,
-        period_start,
-        period_end,
-        payment_date,
         net_pay,
         hours_worked,
         superannuation,
@@ -70,9 +61,6 @@ export async function GET(request: NextRequest) {
         gross_pay,
         income_tax,
         tax_withheld,
-        pdf_bucket,
-        pdf_path,
-        pdf_generated_at,
         employees:employee_id ( first_name, last_name )
       `
       )
@@ -80,16 +68,14 @@ export async function GET(request: NextRequest) {
 
     if (payslipErr) throw payslipErr;
 
-    if (supabaseAdmin) {
-      await supabaseAdmin.from('audit_logs').insert({
-        table_name: 'payroll_reports',
-        record_id: `payslips_for_run_${payrollRunId}`,
-        action: 'SYSTEM_ACTION',
-        old_data: null,
-        new_data: { payrollRunId, count: (payslips || []).length },
-        performed_by: userData.user.id,
-      });
-    }
+    await supabaseAdmin.from('audit_logs').insert({
+      table_name: 'payroll_reports',
+      record_id: `payslips_for_run_${payrollRunId}`,
+      action: 'SYSTEM_ACTION',
+      old_data: null,
+      new_data: { payrollRunId, count: (payslips || []).length },
+      performed_by: userData.user.id,
+    });
 
     return NextResponse.json({ payslips: payslips || [] }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {

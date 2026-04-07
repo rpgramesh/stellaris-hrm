@@ -124,6 +124,7 @@ export default function SuperannuationManagement() {
     if (error) throw error;
 
     // Transform data to match interface
+    // @ts-ignore
     return data?.map(item => ({
       ...item,
       employees: {
@@ -194,6 +195,7 @@ export default function SuperannuationManagement() {
       for (const run of runs) {
         if (!run.payslips) continue;
         
+        // @ts-ignore
         for (const payslip of run.payslips) {
            // Fetch employee super fund
            const { data: empFund } = await supabase

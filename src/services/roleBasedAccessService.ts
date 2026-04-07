@@ -559,16 +559,16 @@ export class RoleBasedAccessService {
     const { error } = await supabase
       .from('audit_logs')
       .insert([{
-        user_id: userId,
+        user_id: userId || null,
         table_name: resource,
         record_id: resourceId,
         action,
-        resource,
+        resource: resource,
         resource_id: resourceId,
         old_data: null,
         new_data: details || {},
         details: details || {},
-        performed_by: userId,
+        performed_by: userId || null,
         ip_address: null,
         user_agent: null
       }]);

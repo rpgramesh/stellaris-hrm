@@ -1,19 +1,16 @@
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { createClient } from '@supabase/supabase-js';
 
-const loadEmailConfig = async () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) return null;
-  try {
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    const { data } = await supabaseAdmin.from('email_config').select('*').eq('id', 'default').maybeSingle();
-    return data || null;
-  } catch {
-    return null;
-  }
-};
+// Create a transporter using the SMTP settings from .env.local
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT || '587'),
+  secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 export async function POST(request: Request) {
   try {
@@ -29,43 +26,9 @@ export async function POST(request: Request) {
     console.log('Subject:', subject);
     console.log('Using SMTP:', process.env.SMTP_HOST);
 
-    const cfg: any = await loadEmailConfig();
-    const useWebhook = !!cfg?.use_webhook && typeof cfg?.webhook_url === 'string' && cfg.webhook_url.trim().length > 0;
-
-    if (useWebhook) {
-      const res = await fetch(cfg.webhook_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, subject, text }),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => 'Webhook send failed');
-        return new NextResponse(JSON.stringify({ error: errText }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-      }
-
-      return NextResponse.json({
-        success: true,
-        messageId: null,
-        message: 'Email sent successfully via webhook',
-      });
-    }
-
-    const host = cfg?.smtp_host || process.env.SMTP_HOST;
-    const port = Number(cfg?.smtp_port || process.env.SMTP_PORT || 587);
-    const user = cfg?.smtp_user || process.env.SMTP_USER;
-    const pass = cfg?.smtp_password || process.env.SMTP_PASS;
-    const fromAddress = cfg?.from_address || process.env.SMTP_FROM || user;
-    const fromName = cfg?.from_name || 'Stellaris HRM';
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: String(port) === '465',
-      auth: { user, pass },
-    });
-
+    // Send the email
     const info = await transporter.sendMail({
-      from: `${fromName} <${fromAddress}>`,
+      from: `Stellaris HRM <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
       to,
       subject,
       text,

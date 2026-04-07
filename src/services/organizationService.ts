@@ -23,9 +23,9 @@ export interface Manager {
   firstName: string;
   lastName: string;
   email: string;
-  branchId?: string; // Derived from department
-  departmentId?: string;
-  departmentName?: string;
+  branchId?: string | null; // Derived from department
+  departmentId?: string | null;
+  departmentName?: string | null;
   role: string;
 }
 
@@ -222,32 +222,56 @@ export const organizationService = {
 
   // --- Line Managers (Employees with Role=Manager) ---
   getManagers: async (branchId?: string, departmentId?: string) => {
-    // This is slightly complex because managers are employees.
-    // We filter by role. Branch/Dept filtering depends on employee's assignment.
-    
     try {
-      let query = supabase
+      // Step 1: Fetch manager employees (no implicit FK join - avoids schema cache issues)
+      const { data: employeesData, error: empError } = await supabase
         .from('employees')
-        .select(`
-          id, first_name, last_name, email, role, department_id,
-          departments (name, branch_id)
-        `)
+        .select('id, first_name, last_name, email, role, department_id')
         .or('role.eq.Manager,role.eq.HR Manager,role.eq.Super Admin,system_access_role.eq.Manager');
 
-      const { data, error } = await query;
-      if (error) throw error;
+      if (empError) throw empError;
+      if (!employeesData || employeesData.length === 0) return [];
 
-      let managers = data.map((e: any) => ({
-        id: e.id,
-        firstName: e.first_name,
-        lastName: e.last_name,
-        email: e.email,
-        role: e.role,
-        departmentId: e.department_id,
-        departmentName: e.departments?.name,
-        branchId: e.departments?.branch_id
-      }));
+      // Step 2: Fetch departments in a single batch for the manual join
+      const deptIds = [...new Set(employeesData
+        .map((e: any) => e.department_id)
+        .filter(Boolean)
+      )] as string[];
 
+      let deptsMap: Record<string, { name: string; branch_id: string | null }> = {};
+
+      if (deptIds.length > 0) {
+        const { data: depts, error: deptError } = await supabase
+          .from('departments')
+          .select('id, name, branch_id')
+          .in('id', deptIds);
+
+        if (!deptError && depts) {
+          deptsMap = depts.reduce((acc: any, d: any) => {
+            acc[d.id] = { name: d.name, branch_id: d.branch_id };
+            return acc;
+          }, {});
+        } else {
+          console.warn('Could not fetch department details for managers:', deptError);
+        }
+      }
+
+      // Step 3: Merge and map
+      let managers = employeesData.map((e: any) => {
+        const dept = e.department_id ? deptsMap[e.department_id] : null;
+        return {
+          id: e.id,
+          firstName: e.first_name,
+          lastName: e.last_name,
+          email: e.email,
+          role: e.role,
+          departmentId: e.department_id || null,
+          departmentName: dept?.name || null,
+          branchId: dept?.branch_id || null,
+        };
+      });
+
+      // Step 4: Apply optional filters
       if (branchId) {
         managers = managers.filter(m => m.branchId === branchId);
       }
@@ -257,26 +281,8 @@ export const organizationService = {
 
       return managers;
     } catch (err: any) {
-      console.error('Error fetching managers with relations:', err);
-
-      // Fallback: Fetch raw employees without relations
-      const { data, error } = await supabase
-        .from('employees')
-        .select('id, first_name, last_name, email, role, department_id')
-        .or('role.eq.Manager,role.eq.HR Manager,role.eq.Super Admin,system_access_role.eq.Manager');
-        
-      if (error) throw error;
-
-      return data.map((e: any) => ({
-        id: e.id,
-        firstName: e.first_name,
-        lastName: e.last_name,
-        email: e.email,
-        role: e.role,
-        departmentId: e.department_id,
-        departmentName: null,
-        branchId: null
-      }));
+      console.error('Error fetching managers:', err);
+      return [];
     }
   },
   

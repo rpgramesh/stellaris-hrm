@@ -215,7 +215,7 @@ export default function PayrollDashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600">Processed Runs</p>
               <p className="text-2xl font-bold text-gray-900">
-                {payrollRuns.filter(r => r.status.toLowerCase() === 'processed').length}
+                {payrollRuns.filter(r => r.status.toLowerCase() === 'processed' || r.status.toLowerCase() === 'processing').length}
               </p>
             </div>
             <div className="p-3 bg-blue-100 rounded-full">
@@ -295,10 +295,10 @@ export default function PayrollDashboard() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {run.totalEmployees}
+                    {run.employeeCount}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                    ₹{(run.totalNetPay || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    ${(run.totalNetPay || 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {run.createdAt ? format(new Date(run.createdAt), 'MMM dd, yyyy') : '-'}
@@ -311,7 +311,7 @@ export default function PayrollDashboard() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     <div className="flex items-center gap-2">
-                      {run.status === 'draft' && (
+                      {run.status.toLowerCase() === 'draft' && (
                         <button
                           onClick={() => processPayroll(run.id)}
                           disabled={processing}
@@ -463,19 +463,19 @@ export default function PayrollDashboard() {
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Total Employees:</span>
-                  <span className="ml-2 text-gray-900">{selectedRun.totalEmployees}</span>
+                  <span className="ml-2 text-gray-900">{selectedRun.employeeCount}</span>
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Total Gross Pay:</span>
-                  <span className="ml-2 text-gray-900">₹{(selectedRun.totalGrossPay || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <span className="ml-2 text-gray-900">${(selectedRun.totalGrossPay || 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}</span>
                 </div>
-                <div>
-                  <span className="font-medium text-gray-700">Total Deductions:</span>
-                  <span className="ml-2 text-gray-900">₹{(selectedRun.totalDeductions || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                  <span className="text-gray-600">Total Deductions (Tax):</span>
+                  <span className="ml-2 text-gray-900">${(selectedRun.totalTax || 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Total Net Pay:</span>
-                  <span className="ml-2 text-gray-900 font-semibold">₹{(selectedRun.totalNetPay || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <span className="ml-2 text-gray-900 font-semibold">${(selectedRun.totalNetPay || 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}</span>
                 </div>
                 {selectedRun.processedAt && (
                   <div>

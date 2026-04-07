@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Employee } from '@/types';
 import { employeeService } from '@/services/employeeService';
+import { toggleMfaRequiredAction } from '@/app/actions/auth';
 
 function EmployeesContent() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -15,6 +16,7 @@ function EmployeesContent() {
   const viewId = searchParams?.get('view');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [sendingInvite, setSendingInvite] = useState(false);
+  const [mfaUpdatingId, setMfaUpdatingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (viewId && employees.length > 0) {
@@ -88,6 +90,41 @@ function EmployeesContent() {
     if (!managerId) return '-';
     const manager = employees.find(e => e.id === managerId);
     return manager ? `${manager.firstName} ${manager.lastName}` : '-';
+  };
+
+  const handleToggleMfaInline = async (employee: Employee) => {
+    if (!employee.userId) {
+      alert('This employee does not have a user account linked. Please edit the employee or resend the welcome email first.');
+      return;
+    }
+
+    const newIsRequired = !employee.isMfaRequired;
+    // Default to 'Email' if enabling, otherwise keep current
+    const method = newIsRequired ? (employee.preferredMfaMethod || 'Email') : employee.preferredMfaMethod;
+    
+    setMfaUpdatingId(employee.id);
+    try {
+      const result = await toggleMfaRequiredAction(employee.userId, newIsRequired, method);
+      if (result.success) {
+        // Sync with employee database table as well
+        await employeeService.update(employee.id, {
+          isMfaRequired: newIsRequired,
+          preferredMfaMethod: method
+        });
+        
+        setEmployees(prev => prev.map(emp => 
+          emp.id === employee.id 
+            ? { ...emp, isMfaRequired: newIsRequired, preferredMfaMethod: method } 
+            : emp
+        ));
+      } else {
+        alert(`Failed to update MFA: ${result.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error updating MFA: ${err?.message || String(err)}`);
+    } finally {
+      setMfaUpdatingId(null);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -276,6 +313,9 @@ function EmployeesContent() {
                   Status
                 </th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  MFA
+                </th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Join Date
                 </th>
                 <th scope="col" className="relative px-6 py-3">
@@ -332,6 +372,37 @@ function EmployeesContent() {
                       {employee.status}
                     </span>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => handleToggleMfaInline(employee)}
+                        disabled={mfaUpdatingId === employee.id || !employee.userId}
+                        title={!employee.userId ? "No account linked" : employee.isMfaRequired ? "Disable MFA" : "Enable MFA"}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none ${
+                          employee.isMfaRequired ? 'bg-blue-600' : 'bg-gray-200'
+                        } ${(!employee.userId || mfaUpdatingId === employee.id) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ${
+                            employee.isMfaRequired ? 'translate-x-5' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                      
+                      {mfaUpdatingId === employee.id ? (
+                        <div className="animate-spin h-3 w-3 border-b-2 border-blue-500 rounded-full" />
+                      ) : employee.isMfaRequired ? (
+                        <div className="flex items-center gap-1">
+                          <span className={`w-1.5 h-1.5 rounded-full ${employee.preferredMfaMethod === 'Email' ? 'bg-amber-500' : 'bg-green-500'}`} />
+                          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-tighter">
+                            {employee.preferredMfaMethod === 'Email' ? 'Email' : 'App'}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-medium text-gray-300 uppercase tracking-tighter">Off</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(employee.joinDate).toLocaleDateString()}
                   </td>
@@ -353,16 +424,19 @@ function EmployeesContent() {
                           handleResendInviteForEmployee(employee);
                         }}
                         disabled={sendingInvite}
-                        className={`p-1.5 rounded transition-colors ${
+                        className={`flex items-center gap-1 p-1.5 rounded transition-colors ${
                           sendingInvite 
                             ? 'bg-gray-50 text-gray-400' 
-                            : 'text-amber-600 hover:text-amber-900 bg-amber-50'
+                            : !employee.userId
+                              ? 'text-white bg-amber-500 hover:bg-amber-600 px-2 text-xs font-medium'
+                              : 'text-amber-600 hover:text-amber-900 bg-amber-50'
                         }`}
-                        title="Resend Welcome Email"
+                        title="Send / Resend Welcome Email to create account"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
                         </svg>
+                        {!employee.userId && <span>Send Invite</span>}
                       </button>
                       <Link
                         href={`/employees/edit/${employee.id}`}

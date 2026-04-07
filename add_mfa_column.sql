@@ -1,0 +1,1 @@
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_mfa_required BOOLEAN DEFAULT false;

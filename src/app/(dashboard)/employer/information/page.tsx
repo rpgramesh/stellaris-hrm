@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { BuildingOfficeIcon, EnvelopeIcon, PhoneIcon, GlobeAltIcon, MapPinIcon } from '@heroicons/react/24/outline';
 import { CompanyInformation } from '@/types';
 import { companyInformationService } from '@/services/companyInformationService';
+import BankData from './components/BankData';
 
 export default function EmployerInformationPage() {
   const [formData, setFormData] = useState<CompanyInformation>({
@@ -43,14 +44,17 @@ export default function EmployerInformationPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
     try {
-      await companyInformationService.update(formData);
+      const updated = await companyInformationService.update(formData);
+      setFormData(updated);
       setIsEditing(false);
-      // In a real app, show a success toast
-      alert('Company information saved!');
+      alert('Company information saved successfully!');
     } catch (error) {
       console.error('Error saving company info:', error);
-      alert('Failed to save company information.');
+      alert('Failed to save company information. Please check all fields.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -214,6 +218,8 @@ export default function EmployerInformationPage() {
           </div>
         </div>
       </div>
+      
+      <BankData />
     </div>
   );
 }

@@ -39,11 +39,10 @@ export const branchService = {
   },
 
   async update(id: string, updates: Partial<Branch>): Promise<Branch> {
-    const dbUpdates: any = { ...updates };
-    if (updates.contactNumber) {
-        dbUpdates.contact_number = updates.contactNumber;
-        delete dbUpdates.contactNumber;
-    }
+    const dbUpdates: any = {};
+    if (updates.name !== undefined) dbUpdates.name = updates.name;
+    if (updates.address !== undefined) dbUpdates.address = updates.address;
+    if (updates.contactNumber !== undefined) dbUpdates.contact_number = updates.contactNumber;
 
     const { data, error } = await supabase
       .from('branches')

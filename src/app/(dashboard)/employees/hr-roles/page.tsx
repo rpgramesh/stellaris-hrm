@@ -191,13 +191,10 @@ export default function HRRolesPage() {
         const created = await roleBasedAccessService.createRole({
           name: formName.trim(),
           description: formDescription.trim(),
-          permissions: [],
-          level: 100,
-          is_active: formStatus === 'Active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          id: '' as any
-        } as any);
+          permissions: formSelectedPerms,
+          is_active: true,
+          level: 1
+        });
         for (const pid of formSelectedPerms) {
           await roleBasedAccessService.assignPermissionToRole(created.id, pid);
         }

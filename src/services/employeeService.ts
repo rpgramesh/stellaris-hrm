@@ -6,11 +6,14 @@ import { Employee } from '@/types';
 const mapEmployeeFromDb = (dbRecord: any): Employee => {
   return {
     id: dbRecord.id,
+    userId: dbRecord.user_id,
     employeeCode: dbRecord.employee_code || '',
     firstName: dbRecord.first_name,
     isPasswordChangeRequired: dbRecord.is_password_change_required,
     lastName: dbRecord.last_name,
     fullName: `${dbRecord.first_name} ${dbRecord.last_name}`.trim(),
+    isMfaRequired: dbRecord.is_mfa_required || false,
+    preferredMfaMethod: dbRecord.preferred_mfa_method || 'Authenticator App',
     email: dbRecord.email,
     phone: dbRecord.phone || '',
     role: dbRecord.role,
@@ -235,7 +238,7 @@ export const employeeService = {
         salary: employee.salary,
         hourly_rate: employee.hourlyRate,
         super_rate: employee.superRate,
-        super_fund_id: employee.superFundId,
+        super_fund_id: employee.superFundId || null,
         salary_effective_date: employee.salaryEffectiveDate || null,
         currency: employee.currency,
         payment_method: employee.paymentMethod,
@@ -361,7 +364,7 @@ export const employeeService = {
       if (updates.salary) dbPayload.salary = updates.salary;
       if (updates.hourlyRate !== undefined) dbPayload.hourly_rate = updates.hourlyRate;
       if (updates.superRate !== undefined) dbPayload.super_rate = updates.superRate;
-      if (updates.superFundId !== undefined) dbPayload.super_fund_id = updates.superFundId;
+      if (updates.superFundId !== undefined) dbPayload.super_fund_id = updates.superFundId || null;
       if (updates.salaryEffectiveDate !== undefined) dbPayload.salary_effective_date = updates.salaryEffectiveDate || null;
       if (updates.currency) dbPayload.currency = updates.currency;
       if (updates.paymentMethod) dbPayload.payment_method = updates.paymentMethod;
@@ -373,6 +376,8 @@ export const employeeService = {
       if (updates.bankAccount) dbPayload.bank_account_number = updates.bankAccount;
       if (updates.bankBsb !== undefined) dbPayload.bank_bsb = updates.bankBsb;
       if (updates.role) dbPayload.role = updates.role;
+      if (updates.isMfaRequired !== undefined) dbPayload.is_mfa_required = updates.isMfaRequired;
+      if (updates.preferredMfaMethod) dbPayload.preferred_mfa_method = updates.preferredMfaMethod;
       if (updates.avatarUrl) {
         dbPayload.avatar_url = updates.avatarUrl;
         dbPayload.profile_photo_url = updates.avatarUrl;

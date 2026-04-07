@@ -1,7 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { Employee, Department, Designation } from '@/types';
 import { format } from 'date-fns';
-import jsPDF from 'jspdf';
+import { pdfGeneratorService } from './pdfGeneratorService';
+import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
 export interface SalaryStructure {
@@ -32,10 +33,11 @@ export interface PayrollRun {
   monthYear: string;
   payPeriodStart: string;
   payPeriodEnd: string;
-  status: 'draft' | 'processed' | 'finalized' | 'paid';
-  totalEmployees: number;
+  status: 'Draft' | 'Processing' | 'Processed' | 'Finalized' | 'Paid';
+  employeeCount: number;
   totalGrossPay: number;
-  totalDeductions: number;
+  totalTax: number;
+  totalSuper: number;
   totalNetPay: number;
   processedBy?: string;
   processedByName?: string;
@@ -48,35 +50,45 @@ export interface Payslip {
   id: string;
   payrollRunId: string;
   employeeId: string;
-  employeeSalaryId: string;
+  employeeSalaryId?: string;
   payslipNumber: string;
   payPeriodStart: string;
   payPeriodEnd: string;
-  basicSalary: number;
-  daAllowance: number;
-  hra: number;
-  conveyance: number;
-  medical: number;
-  specialAllowance: number;
-  grossSalary: number;
-  pfDeduction: number;
-  esiDeduction: number;
-  professionalTax: number;
-  incomeTax: number;
-  otherDeductions: number;
-  totalDeductions: number;
-  netSalary: number;
+  basicPay: number;
+  grossPay: number;
+  taxWithheld: number;
+  superannuation: number;
+  netPay: number;
+  allowances: number;
+  overtime: number;
+  taxableIncome: number;
+  hoursWorked: number;
   workingDays: number;
   paidDays: number;
-  overtimeHours: number;
-  overtimeAmount: number;
-  loanDeductions: number;
-  arrears: number;
-  hoursWorked: number;
-  isFinalized: boolean;
+  totalDeductions: number;
+  status: 'Draft' | 'Final' | 'Corrected' | 'Published' | 'Paid';
+  paymentDate?: string;
   createdAt: string;
   updatedAt: string;
-  employee: Employee & { departments: Department | null, designations: Designation | null };
+  employee: Employee & { departments: { name: string } | null, designations: { name: string } | null };
+  // Keep legacy fields as optional to avoid breaking some older components temporarily
+  grossSalary?: number;
+  netSalary?: number;
+  incomeTax?: number;
+  basicSalary?: number;
+  daAllowance?: number;
+  hra?: number;
+  conveyance?: number;
+  medical?: number;
+  specialAllowance?: number;
+  overtimeAmount?: number;
+  arrears?: number;
+  pfDeduction?: number;
+  esiDeduction?: number;
+  professionalTax?: number;
+  loanDeductions?: number;
+  otherDeductions?: number;
+  isFinalized?: boolean;
 }
 
 export interface PFRate {
@@ -207,10 +219,11 @@ export class PayrollService {
       payPeriodStart: run.pay_period_start,
       payPeriodEnd: run.pay_period_end,
       status: run.status,
-      totalEmployees: run.employee_count || 0, // Removed total_employees fallback
-      totalGrossPay: run.total_gross_pay,
-      totalDeductions: run.total_tax || run.total_deductions || 0, // Fallback to total_tax
-      totalNetPay: run.total_net_pay,
+      employeeCount: run.employee_count || 0,
+      totalGrossPay: Number(run.total_gross_pay || 0),
+      totalTax: Number(run.total_tax || 0),
+      totalSuper: Number(run.total_super || 0),
+      totalNetPay: Number(run.total_net_pay || 0),
       processedBy: run.processed_by,
       processedAt: run.processed_at,
       finalizedAt: run.finalized_at,
@@ -288,38 +301,52 @@ export class PayrollService {
   }
 
   private mapToPayslip(p: any): Payslip {
+    const gross = Number(p.gross_pay || p.gross_earnings || 0);
+    const tax = Number(p.tax_withheld || p.payg_tax || p.income_tax || 0);
+    const net = Number(p.net_pay || 0);
+    const superAmt = Number(p.superannuation || 0);
+
     return {
       id: p.id,
       payrollRunId: p.payroll_run_id,
       employeeId: p.employee_id,
       employeeSalaryId: p.employee_salary_id,
       payslipNumber: p.payslip_number,
-      payPeriodStart: p.pay_period_start,
-      payPeriodEnd: p.pay_period_end,
-      basicSalary: p.basic_salary || 0,
-      daAllowance: p.da_allowance || 0,
-      hra: p.hra || 0,
-      conveyance: p.conveyance || 0,
-      medical: p.medical || 0,
-      specialAllowance: p.special_allowance || 0,
-      grossSalary: p.gross_salary || 0,
-      pfDeduction: p.pf_deduction || 0,
-      esiDeduction: p.esi_deduction || 0,
-      professionalTax: p.professional_tax || 0,
-      incomeTax: p.income_tax || 0,
-      otherDeductions: p.other_deductions || 0,
-      totalDeductions: p.total_deductions || 0,
-      netSalary: p.net_salary || 0,
-      workingDays: p.working_days || 0,
-      paidDays: p.paid_days || 0,
-      overtimeHours: p.overtime_hours || 0,
-      overtimeAmount: p.overtime_amount || 0,
-      loanDeductions: p.loan_deductions || 0,
-      arrears: p.arrears || 0,
-      hoursWorked: p.hours_worked || 0,
-      isFinalized: p.is_finalized,
+      payPeriodStart: p.period_start || p.pay_period_start,
+      payPeriodEnd: p.period_end || p.pay_period_end,
+      basicPay: Number(p.basic_pay || p.basic_salary || 0),
+      grossPay: gross,
+      taxWithheld: tax,
+      superannuation: superAmt,
+      netPay: net,
+      allowances: Number(p.allowances || 0),
+      overtime: Number(p.overtime || 0),
+      taxableIncome: Number(p.taxable_income || 0),
+      hoursWorked: Number(p.hours_worked || 0),
+      workingDays: Number(p.working_days || 0),
+      paidDays: Number(p.paid_days || 0),
+      totalDeductions: Number(p.total_deductions || 0),
+      status: p.status || 'Draft',
+      paymentDate: p.payment_date,
       createdAt: p.created_at,
       updatedAt: p.updated_at,
+      // Legacy compatibility
+      grossSalary: gross,
+      netSalary: net,
+      incomeTax: tax,
+      basicSalary: Number(p.basic_pay || p.basic_salary || 0),
+      daAllowance: Number(p.da_allowance || 0),
+      hra: Number(p.hra || 0),
+      conveyance: Number(p.conveyance || 0),
+      medical: Number(p.medical || 0),
+      specialAllowance: Number(p.special_allowance || 0),
+      overtimeAmount: Number(p.overtime || p.overtime_amount || 0),
+      arrears: Number(p.arrears || 0),
+      pfDeduction: Number(p.pf_deduction || p.pf_amount || 0),
+      esiDeduction: Number(p.esi_deduction || p.esi_amount || 0),
+      professionalTax: Number(p.professional_tax || p.pt_amount || 0),
+      loanDeductions: Number(p.loan_deductions || p.loan_amount || 0),
+      otherDeductions: Number(p.other_deductions || 0),
       employee: (p.employee ? {
         id: p.employee.id,
         employeeCode: p.employee.employee_code,
@@ -724,36 +751,20 @@ export class PayrollService {
         processedCount++;
 
         // Create payslip
-        const payslipNumber = `PSL${format(new Date(), 'yyyyMM')}${String(employees.indexOf(employee) + 1).padStart(4, '0')}`;
-        
-        const payslip: any = {
+        const payslip = {
           payroll_run_id: payrollRunId,
           employee_id: employee.id,
-          employee_salary_id: employeeSalary.id,
-          payslip_number: payslipNumber,
-          pay_period_start: payrollRun.pay_period_start,
-          pay_period_end: payrollRun.pay_period_end,
-          basic_salary: calculation.earnings.basicSalary,
-          da_allowance: calculation.earnings.daAllowance,
-          hra: calculation.earnings.hra,
-          conveyance: calculation.earnings.conveyance,
-          medical: calculation.earnings.medical,
-          special_allowance: calculation.earnings.specialAllowance,
-          gross_salary: calculation.earnings.grossSalary,
-          pf_deduction: calculation.deductions.pfDeduction,
-          esi_deduction: calculation.deductions.esiDeduction,
-          professional_tax: calculation.deductions.professionalTax,
-          income_tax: calculation.deductions.incomeTax,
-          other_deductions: 0,
-          total_deductions: calculation.deductions.totalDeductions,
-          net_salary: calculation.netPay,
+          payslip_number: `PS-${payrollRun.month_year}-${employee.id.substring(0, 4)}`,
+          period_start: payrollRun.pay_period_start,
+          period_end: payrollRun.pay_period_end,
+          basic_pay: calculation.earnings.basicSalary,
+          gross_pay: calculation.earnings.grossSalary,
+          tax_withheld: calculation.deductions.totalDeductions,
+          net_pay: calculation.netPay,
+          status: 'Draft',
           working_days: 30, // Should be calculated based on attendance
           paid_days: 30,
-          overtime_hours: 0,
-          overtime_amount: 0,
-          loan_deductions: 0,
-          arrears: 0,
-          is_finalized: false
+          hours_worked: 0
         };
 
         await supabase.from('payslips').insert([payslip]);
@@ -768,15 +779,13 @@ export class PayrollService {
     }
 
     // Update payroll run totals
-    // Note: 'total_deductions' column does not exist in some schema versions, using 'total_tax' instead
     await supabase
       .from('payroll_runs')
       .update({
-        status: 'processed',
+        status: 'Processed',
         total_gross_pay: totalGrossPay,
-        total_tax: totalDeductions, // Mapping total deductions to total_tax as fallback
+        total_tax: totalDeductions,
         total_net_pay: totalNetPay,
-        // total_employees: processedCount, // Removed as column doesn't exist
         employee_count: processedCount,
         processed_by: processedBy,
         processed_at: new Date().toISOString()
@@ -789,27 +798,26 @@ export class PayrollService {
   async syncPayrollRunTotals(payrollRunId: string): Promise<void> {
     const { data: payslips, error } = await supabase
       .from('payslips')
-      .select('gross_earnings, total_deductions, net_pay')
+      .select('gross_pay, tax_withheld, net_pay')
       .eq('payroll_run_id', payrollRunId);
 
     if (error) throw error;
 
     const totals = (payslips || []).reduce(
       (acc, slip) => ({
-        gross: acc.gross + (slip.gross_earnings || 0),
-        deductions: acc.deductions + (slip.total_deductions || 0),
-        net: acc.net + (slip.net_pay || 0),
+        gross: acc.gross + (Number(slip.gross_pay) || 0),
+        tax: acc.tax + (Number(slip.tax_withheld) || 0),
+        net: acc.net + (Number(slip.net_pay) || 0),
       }),
-      { gross: 0, deductions: 0, net: 0 }
+      { gross: 0, tax: 0, net: 0 }
     );
 
     await supabase
       .from('payroll_runs')
       .update({
-        // total_employees: payslips?.length || 0, // Removed as column doesn't exist
-        employee_count: payslips?.length || 0, // Update both fields to be safe
+        employee_count: payslips?.length || 0,
         total_gross_pay: totals.gross,
-        total_tax: totals.deductions, // Using total_tax instead of total_deductions
+        total_tax: totals.tax,
         total_net_pay: totals.net,
       })
       .eq('id', payrollRunId);
@@ -947,7 +955,7 @@ export class PayrollService {
   async generatePayslipPDF(payslipId: string): Promise<Buffer> {
     const { data: payslip } = await supabase
       .from('payslips')
-      .select(`*, employee:employees(*)`)
+      .select(`*, employee:employees(*), pay_components(*)`)
       .eq('id', payslipId)
       .single();
 
@@ -955,76 +963,24 @@ export class PayrollService {
       throw new Error('Payslip not found');
     }
 
-    const doc = new jsPDF();
+    // Fetch YTD
+    const periodEndDate = new Date(payslip.period_end || payslip.pay_period_end);
+    const year = periodEndDate.getFullYear();
+    const month = periodEndDate.getMonth();
+    const fyStart = month >= 6 ? `${year}-07-01` : `${year - 1}-07-01`;
     
-    // Header
-    doc.setFontSize(20);
-    doc.text('PAYSLIP', 105, 20, { align: 'center' });
-    
-    const periodStart = payslip.pay_period_start || payslip.period_start;
-    const periodEnd = payslip.pay_period_end || payslip.period_end;
-    const periodStr = periodStart && periodEnd 
-      ? `${format(new Date(periodStart), 'dd MMM yyyy')} - ${format(new Date(periodEnd), 'dd MMM yyyy')}`
-      : '—';
+    const { data: ytdPayslips } = await supabase
+      .from('payslips')
+      .select('*, pay_components(*)')
+      .eq('employee_id', payslip.employee_id)
+      .gte('period_start', fyStart)
+      .lte('period_end', payslip.period_end || payslip.pay_period_end);
 
-    doc.setFontSize(12);
-    doc.text(`Company Name: Stellaris HRM`, 20, 35);
-    doc.text(`Payslip Number: ${payslip.payslip_number || payslip.id}`, 20, 45);
-    doc.text(`Pay Period: ${periodStr}`, 20, 55);
-    
-    // Employee Details
-    const emp = payslip.employee || {};
-    doc.text(`Employee Name: ${emp.first_name || ''} ${emp.last_name || ''}`, 20, 70);
-    doc.text(`Employee ID: ${emp.employee_code || emp.id || '—'}`, 20, 80);
-    doc.text(`Department: ${emp.department || 'N/A'}`, 20, 90);
-    doc.text(`Designation: ${emp.position || 'N/A'}`, 20, 100);
-    
-    // Earnings Table
-    doc.text('EARNINGS', 20, 120);
-    (doc as any).autoTable({
-      startY: 125,
-      head: [['Component', 'Amount (₹)']],
-      body: [
-        ['Basic Salary', (Number(payslip.basic_salary || payslip.basic_pay) || 0).toFixed(2)],
-        ['DA Allowance', (Number(payslip.da_allowance) || 0).toFixed(2)],
-        ['HRA', (Number(payslip.hra) || 0).toFixed(2)],
-        ['Conveyance', (Number(payslip.conveyance) || 0).toFixed(2)],
-        ['Medical', (Number(payslip.medical) || 0).toFixed(2)],
-        ['Special Allowance', (Number(payslip.special_allowance) || 0).toFixed(2)],
-        ['Gross Salary', (Number(payslip.gross_salary || payslip.gross_pay || payslip.gross_earnings) || 0).toFixed(2)]
-      ],
-      theme: 'grid',
-      styles: { fontSize: 10 }
+    const doc = pdfGeneratorService.generatePayslipPDF({
+      payslip,
+      employee: payslip.employee,
+      ytdPayslips: ytdPayslips || []
     });
-    
-    // Deductions Table
-    const startY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text('DEDUCTIONS', 20, startY);
-    (doc as any).autoTable({
-      startY: startY + 5,
-      head: [['Component', 'Amount (₹)']],
-      body: [
-        ['PF Contribution', (Number(payslip.pf_deduction) || 0).toFixed(2)],
-        ['ESI Contribution', (Number(payslip.esi_deduction) || 0).toFixed(2)],
-        ['Professional Tax', (Number(payslip.professional_tax) || 0).toFixed(2)],
-        ['Income Tax', (Number(payslip.income_tax || payslip.tax_withheld || payslip.payg_tax) || 0).toFixed(2)],
-        ['Other Deductions', (Number(payslip.other_deductions) || 0).toFixed(2)],
-        ['Total Deductions', (Number(payslip.total_deductions) || 0).toFixed(2)]
-      ],
-      theme: 'grid',
-      styles: { fontSize: 10 }
-    });
-    
-    // Summary
-    const summaryY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text(`Net Pay: ₹${(Number(payslip.net_salary || payslip.net_pay) || 0).toFixed(2)}`, 20, summaryY);
-    doc.text(`Working Days: ${payslip.working_days || '—'}`, 20, summaryY + 10);
-    doc.text(`Paid Days: ${payslip.paid_days || '—'}`, 20, summaryY + 20);
-    
-    // Footer
-    doc.setFontSize(10);
-    doc.text('This is a computer-generated document.', 20, 280);
-    doc.text(`Generated on: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, 20, 290);
     
     return Buffer.from(doc.output('arraybuffer'));
   }
@@ -1149,15 +1105,15 @@ export class PayrollService {
     const totalPF = payslips.reduce((sum, p) => sum + p.pf_deduction, 0);
     
     doc.text('Salary Summary:', 20, 130);
-    doc.text(`Total Gross Salary: ₹${totalGross.toFixed(2)}`, 20, 140);
-    doc.text(`Total Income Tax Deducted: ₹${totalTax.toFixed(2)}`, 20, 150);
-    doc.text(`Total PF Contribution: ₹${totalPF.toFixed(2)}`, 20, 160);
+    doc.text(`Total Gross Salary: $${totalGross.toFixed(2)}`, 20, 140);
+    doc.text(`Total Income Tax Deducted: $${totalTax.toFixed(2)}`, 20, 150);
+    doc.text(`Total Super Contribution: $${totalPF.toFixed(2)}`, 20, 160);
     
     // Monthly Breakdown
     doc.text('Monthly Salary Details:', 20, 180);
     (doc as any).autoTable({
       startY: 185,
-      head: [['Month', 'Gross Salary (₹)', 'Income Tax (₹)', 'Net Pay (₹)']],
+      head: [['Month', 'Gross Salary ($)', 'Income Tax ($)', 'Net Pay ($)']],
       body: payslips.map(p => [
         format(new Date(p.pay_period_start), 'MMM yyyy'),
         p.gross_salary.toFixed(2),

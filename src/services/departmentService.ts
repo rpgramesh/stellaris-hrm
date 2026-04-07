@@ -43,7 +43,7 @@ export const departmentService = {
 
   async update(id: string, updates: Partial<Department>): Promise<Department> {
      const dbUpdates: any = {};
-     if (updates.name) dbUpdates.name = updates.name;
+     if (updates.name !== undefined) dbUpdates.name = updates.name;
      if (updates.managerId !== undefined) dbUpdates.manager_id = updates.managerId || null;
      if (updates.location !== undefined) dbUpdates.location = updates.location || null;
      if (updates.branchId !== undefined) dbUpdates.branch_id = updates.branchId || null;

@@ -154,3 +154,65 @@ export async function changePasswordAction(email: string, currentPass: string, n
     return { error: 'A server timeout occurred. Your password might have been updated already. Please try logging in with the new password.' };
   }
 }
+
+export async function toggleMfaRequiredAction(userId: string, isRequired: boolean, preferredMethod?: 'Authenticator App' | 'Email') {
+  try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return { error: 'Admin configuration missing' };
+    }
+
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
+
+    // Update user metadata to set is_mfa_required flag and preferred method
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+      userId,
+      { 
+        user_metadata: { 
+          is_mfa_required: isRequired,
+          preferred_mfa_method: preferredMethod || 'Authenticator App'
+        } 
+      }
+    );
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    return { success: true };
+  } catch (e: any) {
+    console.error('MFA toggle server action error:', e);
+    return { error: e.message || 'An unexpected error occurred' };
+  }
+}
+
+export async function getMfaRequiredAction(userId: string) {
+  try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) return { error: 'Admin configuration missing' };
+
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    const { data: userResp, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (error) return { error: error.message };
+
+    const isRequired = !!userResp.user.user_metadata?.is_mfa_required;
+    const preferredMethod = userResp.user.user_metadata?.preferred_mfa_method || 'Authenticator App';
+    return { isRequired, preferredMethod };
+  } catch (e: any) {
+    return { error: e.message || 'An unexpected error occurred' };
+  }
+}

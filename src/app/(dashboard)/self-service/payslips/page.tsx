@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Download, 
   Eye, 
@@ -11,10 +11,9 @@ import {
   AlertCircle,
   CheckCircle
 } from 'lucide-react';
+import { payrollService } from '@/services/payrollService';
 import { supabase } from '@/lib/supabase';
-import { auditService } from '@/services/auditService';
-import { pdfGeneratorService } from '@/services/pdfGeneratorService';
-import { computeCalendarYearYtdTotals, getPayslipAmounts, getPayslipDates, validatePayslip } from '@/lib/payroll/payslipUtils';
+import { comprehensivePayrollService } from '@/services/comprehensivePayrollService';
 
 interface Payslip {
   id: string;
@@ -57,9 +56,6 @@ export default function EmployeePayslipsPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | Payslip['status']>('all');
 
   useEffect(() => {
     loadEmployeePayslips();
@@ -68,52 +64,39 @@ export default function EmployeePayslipsPage() {
   const loadEmployeePayslips = async () => {
     try {
       setLoading(true);
-      setLoadError(null);
-
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError) throw userError;
-      const user = userData?.user;
-      if (!user) {
-        setEmployee(null);
-        setPayslips([]);
-        return;
-      }
-
-      const { data: employeeData, error: employeeError } = await supabase
+      
+      // In a real implementation, this would get the current employee ID from auth context
+      const currentEmployeeId = 'current-employee-id'; // Placeholder
+      
+      // Load employee details
+      const { data: employeeData } = await supabase
         .from('employees')
-        .select('id, first_name, last_name, employee_code, email')
-        .eq('user_id', user.id)
-        .maybeSingle();
+        .select(`
+          id,
+          first_name,
+          last_name,
+          employee_code,
+          departments:name,
+          job_positions:title,
+          employment_type
+        `)
+        .eq('user_id', 'current-user-id') // Would get from auth
+        .single();
 
-      if (employeeError) throw employeeError;
-      if (!employeeData) {
-        setEmployee(null);
-        setPayslips([]);
-        return;
+      if (employeeData) {
+        setEmployee({
+          ...employeeData,
+          department: employeeData.departments?.name,
+          position: employeeData.job_positions?.title
+        });
       }
 
-      setEmployee(employeeData as any);
-
-      const { data: payslipRows, error: payslipError } = await supabase
-        .from('payslips')
-        .select('*')
-        .eq('employee_id', employeeData.id)
-        .order('payment_date', { ascending: false });
-
-      if (payslipError) throw payslipError;
-
-      const normalizePayslipStatus = (raw: any): Payslip['status'] => {
-        const s = String(raw || '').trim();
-        if (s === 'Paid') return 'Paid';
-        if (s === 'Published') return 'Published';
-        if (s === 'Draft') return 'Draft';
-        if (s === 'Final') return 'Published';
-        if (s === 'Corrected') return 'Published';
-        return 'Published';
-      };
-
+      // Load payslips for the employee
+      const employeePayslips = await payrollService.getPayslipsByEmployeeId(currentEmployeeId);
+      
+      // Load detailed pay components for each payslip
       const payslipsWithDetails: Payslip[] = await Promise.all(
-        ((payslipRows as any[]) || []).map(async (p) => {
+        employeePayslips.map(async (p) => {
           const { data: components } = await supabase
             .from('pay_components')
             .select('*')
@@ -121,16 +104,16 @@ export default function EmployeePayslipsPage() {
 
           const mapped: Payslip = {
             id: p.id,
-            period_start: String(p.pay_period_start ?? p.period_start ?? ''),
-            period_end: String(p.pay_period_end ?? p.period_end ?? ''),
-            gross_pay: Number(p.gross_earnings ?? p.gross_pay ?? 0),
-            net_pay: Number(p.net_pay || 0),
-            tax_withheld: Number(p.income_tax ?? p.tax_withheld ?? p.payg_tax ?? 0),
-            superannuation: Number(p.superannuation || 0),
-            allowances: Number(p.allowances || 0),
-            overtime: Number(p.overtime || 0),
-            payment_date: String(p.payment_date ?? ''),
-            status: normalizePayslipStatus(p.status),
+            period_start: (p as any).period_start ?? (p as any).periodStart,
+            period_end: (p as any).period_end ?? (p as any).periodEnd,
+            gross_pay: (p as any).gross_pay ?? (p as any).grossPay ?? 0,
+            net_pay: (p as any).net_pay ?? (p as any).netPay ?? 0,
+            tax_withheld: (p as any).tax_withheld ?? (p as any).paygTax ?? 0,
+            superannuation: (p as any).superannuation ?? 0,
+            allowances: (p as any).allowances ?? 0,
+            overtime: (p as any).overtime ?? 0,
+            payment_date: (p as any).payment_date ?? (p as any).paymentDate,
+            status: (p as any).status,
             pay_components: (components as any) || []
           };
           return mapped;
@@ -139,12 +122,7 @@ export default function EmployeePayslipsPage() {
 
       setPayslips(payslipsWithDetails);
     } catch (error) {
-      setEmployee(null);
-      setPayslips([]);
-      setLoadError('Unable to load your payslips right now. Please refresh and try again.');
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('Error loading employee payslips:', error);
-      }
+      console.error('Error loading employee payslips:', error);
     } finally {
       setLoading(false);
     }
@@ -153,42 +131,24 @@ export default function EmployeePayslipsPage() {
   const downloadPayslip = async (payslipId: string) => {
     try {
       setDownloading(payslipId);
-
-      const payslip = payslips.find((p) => p.id === payslipId);
-      if (!payslip) throw new Error('Payslip not found');
-
-      const pdfUrl = (payslip as any).pdf_url as string | undefined;
-      const pdfBucket = (payslip as any).pdf_bucket as string | undefined;
-      const pdfPath = (payslip as any).pdf_path as string | undefined;
-
-      if (pdfUrl) {
-        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-        await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF_URL' });
-        return;
-      }
-
-      if (pdfBucket && pdfPath) {
-        const { data, error } = await supabase.storage.from(pdfBucket).createSignedUrl(pdfPath, 60);
-        if (!error && data?.signedUrl) {
-          window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
-          await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF_SIGNED_URL' });
-          return;
-        }
-      }
-
-      const integrity = validatePayslip(payslip as any);
-      if (!integrity.isValid) throw new Error('Payslip data is incomplete or corrupted');
-
-      const { paymentDate } = getPayslipDates(payslip as any);
-      const ytd = paymentDate ? computeCalendarYearYtdTotals(payslips as any, paymentDate) : undefined;
-
-      pdfGeneratorService.generatePayslipPdf({
-        payslip,
-        employee,
-        ytd: ytd || undefined,
-      });
-
-      await auditService.logAction('payslips', payslipId, 'SYSTEM_ACTION', null, { event: 'DOWNLOAD_PDF' });
+      
+      // Generate PDF for the payslip
+      const pdfBuffer = await comprehensivePayrollService.generatePayslipPDF(payslipId);
+      
+      // Create blob and download
+      const arrayBuffer: ArrayBuffer = (pdfBuffer as any)?.buffer instanceof ArrayBuffer 
+        ? (pdfBuffer as any).buffer 
+        : (pdfBuffer as unknown as ArrayBuffer);
+      const blob = new Blob([pdfBuffer as any], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `payslip-${selectedPayslip?.period_start}-${selectedPayslip?.period_end}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
     } catch (error) {
       console.error('Error downloading payslip:', error);
       alert('Error downloading payslip. Please try again.');
@@ -199,7 +159,6 @@ export default function EmployeePayslipsPage() {
 
   const viewPayslipDetails = (payslip: Payslip) => {
     setSelectedPayslip(payslip);
-    auditService.logAction('payslips', payslip.id, 'SYSTEM_ACTION', null, { event: 'VIEW' }).catch(() => {});
   };
 
   const formatCurrency = (amount: number) => {
@@ -209,23 +168,8 @@ export default function EmployeePayslipsPage() {
     }).format(amount);
   };
 
-  const filteredPayslips = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return payslips
-      .filter((p) => (statusFilter === 'all' ? true : p.status === statusFilter))
-      .filter((p) => {
-        if (!q) return true;
-        const ref = String((p as any).payment_reference || (p as any).payslip_number || p.id).toLowerCase();
-        const range = `${p.period_start} ${p.period_end}`.toLowerCase();
-        return ref.includes(q) || range.includes(q) || String(p.status).toLowerCase().includes(q);
-      });
-  }, [payslips, search, statusFilter]);
-
   const formatDate = (dateString: string) => {
-    if (!dateString) return '-';
-    const d = new Date(dateString);
-    if (Number.isNaN(d.getTime())) return '-';
-    return d.toLocaleDateString('en-AU', {
+    return new Date(dateString).toLocaleDateString('en-AU', {
       day: '2-digit',
       month: 'long',
       year: 'numeric'
@@ -297,42 +241,10 @@ export default function EmployeePayslipsPage() {
       {/* Payslips List */}
       <div className="bg-white rounded-lg shadow-sm border">
         <div className="px-6 py-4 border-b border-gray-200">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">Payslip History</h2>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full sm:w-64 rounded-md border border-gray-300 px-3 py-2 text-sm"
-                placeholder="Search by period, status, reference…"
-              />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="w-full sm:w-40 rounded-md border border-gray-300 px-3 py-2 text-sm"
-              >
-                <option value="all">All statuses</option>
-                <option value="Draft">Draft</option>
-                <option value="Published">Published</option>
-                <option value="Paid">Paid</option>
-              </select>
-            </div>
-          </div>
+          <h2 className="text-lg font-semibold text-gray-900">Payslip History</h2>
         </div>
-
-        {loadError && (
-          <div className="px-6 py-4 border-b border-gray-200 bg-red-50">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-red-800">Payslips could not be loaded</div>
-                <div className="text-sm text-red-700">{loadError}</div>
-              </div>
-            </div>
-          </div>
-        )}
         
-        {filteredPayslips.length === 0 ? (
+        {payslips.length === 0 ? (
           <div className="px-6 py-12 text-center">
             <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No payslips found</h3>
@@ -340,7 +252,7 @@ export default function EmployeePayslipsPage() {
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {filteredPayslips.map((payslip) => (
+            {payslips.map((payslip) => (
               <div key={payslip.id} className="px-6 py-4 hover:bg-gray-50">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
@@ -352,9 +264,6 @@ export default function EmployeePayslipsPage() {
                         </p>
                         <p className="text-sm text-gray-600">
                           Payment Date: {formatDate(payslip.payment_date)}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          Ref: {String((payslip as any).payment_reference || (payslip as any).payslip_number || payslip.id)}
                         </p>
                       </div>
                     </div>
@@ -479,8 +388,14 @@ export default function EmployeePayslipsPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-700">Tax Withheld</span>
-                      <span className="font-medium">{formatCurrency(getPayslipAmounts(selectedPayslip as any).taxWithheld)}</span>
+                      <span className="font-medium">{formatCurrency(selectedPayslip.tax_withheld)}</span>
                     </div>
+                    {selectedPayslip.allowances > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-700">Allowances</span>
+                        <span className="font-medium">{formatCurrency(selectedPayslip.allowances)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="border-t border-gray-200 mt-3 pt-3">
                     <div className="flex justify-between text-sm font-medium">
@@ -517,47 +432,6 @@ export default function EmployeePayslipsPage() {
                   </div>
                 </div>
               </div>
-
-              {(() => {
-                const integrity = validatePayslip(selectedPayslip as any);
-                if (integrity.isValid) return null;
-                return (
-                  <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-                    This payslip appears to be incomplete. Please contact HR.
-                  </div>
-                );
-              })()}
-
-              {(() => {
-                const { paymentDate } = getPayslipDates(selectedPayslip as any);
-                if (!paymentDate) return null;
-                const ytd = computeCalendarYearYtdTotals(payslips as any, paymentDate);
-                return (
-                  <div className="mb-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Year-to-date Totals</h3>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">YTD Gross</span>
-                          <span className="font-medium">{formatCurrency(ytd.gross)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">YTD Tax</span>
-                          <span className="font-medium">{formatCurrency(ytd.tax)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">YTD Net</span>
-                          <span className="font-medium">{formatCurrency(ytd.net)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">YTD Super</span>
-                          <span className="font-medium">{formatCurrency(ytd.super)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
 
               {/* Actions */}
               <div className="flex justify-end space-x-3">

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { payrollService, Payslip } from '@/services/payrollService';
 import { format } from 'date-fns';
-import { Download, Eye, Calendar, IndianRupeeIcon } from 'lucide-react';
+import { Download, Eye, Calendar, DollarSign } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function EmployeePayslipsPage() {
@@ -105,12 +105,12 @@ export default function EmployeePayslipsPage() {
         <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
           <div className="flex items-center">
             <div className="flex-shrink-0">
-              <IndianRupeeIcon className="h-8 w-8 text-green-600" />
+              <DollarSign className="h-8 w-8 text-green-600" />
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Current Month Salary</p>
               <p className="text-2xl font-semibold text-gray-900">
-                ₹{payslips.length > 0 ? payslips[0]?.netSalary.toLocaleString() : '0'}
+                ${payslips.length > 0 ? (payslips[0]?.netPay || payslips[0]?.netSalary || 0).toLocaleString() : '0'}
               </p>
             </div>
           </div>
@@ -135,7 +135,7 @@ export default function EmployeePayslipsPage() {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Downloads Available</p>
-              <p className="text-2xl font-semibold text-gray-900">{payslips.filter(p => p.isFinalized).length}</p>
+              <p className="text-2xl font-semibold text-gray-900">{payslips.filter(p => ['Final', 'Paid', 'Published'].includes(p.status)).length}</p>
             </div>
           </div>
         </div>
@@ -194,18 +194,14 @@ export default function EmployeePayslipsPage() {
                       {payslip.payslipNumber}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ₹{payslip.grossSalary.toLocaleString()}
+                      ${(payslip.grossPay || payslip.grossSalary || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ₹{payslip.netSalary.toLocaleString()}
+                      ${(payslip.netPay || payslip.netSalary || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        payslip.isFinalized 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {payslip.isFinalized ? 'Finalized' : 'Draft'}
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${['Final', 'Paid', 'Published'].includes(payslip.status) ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        {['Final', 'Paid', 'Published'].includes(payslip.status) ? 'Finalized' : 'Draft'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -217,7 +213,7 @@ export default function EmployeePayslipsPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                        {payslip.isFinalized && (
+                        {['Final', 'Paid', 'Published'].includes(payslip.status) && (
                           <button
                             onClick={() => handleDownload(payslip.id)}
                             disabled={downloading === payslip.id}
@@ -272,10 +268,10 @@ export default function EmployeePayslipsPage() {
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <h4 className="font-medium text-blue-900 mb-3">Salary Summary</h4>
                   <div className="space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="font-medium">Gross Salary:</span><span>₹{selectedPayslip.grossSalary.toLocaleString()}</span></div>
-                    <div className="flex justify-between"><span className="font-medium">Total Deductions:</span><span>₹{selectedPayslip.totalDeductions.toLocaleString()}</span></div>
+                    <div className="flex justify-between"><span className="font-medium">Gross Salary:</span><span>${(selectedPayslip.grossPay || selectedPayslip.grossSalary || 0).toLocaleString()}</span></div>
+                    <div className="flex justify-between"><span className="font-medium">Total Deductions:</span><span>${selectedPayslip.totalDeductions.toLocaleString()}</span></div>
                     <hr className="my-2" />
-                    <div className="flex justify-between font-medium text-lg"><span>Net Salary:</span><span>₹{selectedPayslip.netSalary.toLocaleString()}</span></div>
+                    <div className="flex justify-between font-medium text-lg"><span>Net Salary:</span><span>${(selectedPayslip.netPay || selectedPayslip.netSalary || 0).toLocaleString()}</span></div>
                   </div>
                 </div>
               </div>
@@ -288,20 +284,20 @@ export default function EmployeePayslipsPage() {
                   <div className="bg-green-50 p-4 rounded-lg">
                     <h5 className="font-medium text-green-900 mb-3">Earnings</h5>
                     <div className="space-y-2 text-sm">
-                      <div className="flex justify-between"><span>Basic Salary:</span><span>₹{selectedPayslip.basicSalary.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>DA Allowance:</span><span>₹{selectedPayslip.daAllowance.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>HRA:</span><span>₹{selectedPayslip.hra.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Conveyance:</span><span>₹{selectedPayslip.conveyance.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Medical:</span><span>₹{selectedPayslip.medical.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Special Allowance:</span><span>₹{selectedPayslip.specialAllowance.toLocaleString()}</span></div>
-                      {selectedPayslip.overtimeAmount > 0 && (
-                        <div className="flex justify-between"><span>Overtime:</span><span>₹{selectedPayslip.overtimeAmount.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Basic Salary:</span><span>${(selectedPayslip.basicPay || selectedPayslip.basicSalary || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>DA Allowance:</span><span>${(selectedPayslip.daAllowance || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>HRA:</span><span>${(selectedPayslip.hra || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Conveyance:</span><span>${(selectedPayslip.conveyance || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Medical:</span><span>${(selectedPayslip.medical || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Special Allowance:</span><span>${(selectedPayslip.specialAllowance || 0).toLocaleString()}</span></div>
+                      {(selectedPayslip.overtimeAmount ?? 0) > 0 && (
+                        <div className="flex justify-between"><span>Overtime:</span><span>${(selectedPayslip.overtimeAmount || 0).toLocaleString()}</span></div>
                       )}
-                      {selectedPayslip.arrears > 0 && (
-                        <div className="flex justify-between"><span>Arrears:</span><span>₹{selectedPayslip.arrears.toLocaleString()}</span></div>
+                      {(selectedPayslip.arrears ?? 0) > 0 && (
+                        <div className="flex justify-between"><span>Arrears:</span><span>${(selectedPayslip.arrears || 0).toLocaleString()}</span></div>
                       )}
                       <hr className="my-2" />
-                      <div className="flex justify-between font-medium"><span>Gross Salary:</span><span>₹{selectedPayslip.grossSalary.toLocaleString()}</span></div>
+                      <div className="flex justify-between font-medium"><span>Gross Salary:</span><span>${(selectedPayslip.grossPay || selectedPayslip.grossSalary || 0).toLocaleString()}</span></div>
                     </div>
                   </div>
 
@@ -309,18 +305,18 @@ export default function EmployeePayslipsPage() {
                   <div className="bg-red-50 p-4 rounded-lg">
                     <h5 className="font-medium text-red-900 mb-3">Deductions</h5>
                     <div className="space-y-2 text-sm">
-                      <div className="flex justify-between"><span>PF Contribution:</span><span>₹{selectedPayslip.pfDeduction.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>ESI Contribution:</span><span>₹{selectedPayslip.esiDeduction.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Professional Tax:</span><span>₹{selectedPayslip.professionalTax.toLocaleString()}</span></div>
-                      <div className="flex justify-between"><span>Income Tax:</span><span>₹{selectedPayslip.incomeTax.toLocaleString()}</span></div>
-                      {selectedPayslip.loanDeductions > 0 && (
-                        <div className="flex justify-between"><span>Loan Deduction:</span><span>₹{selectedPayslip.loanDeductions.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>PF Contribution:</span><span>${(selectedPayslip.pfDeduction || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>ESI Contribution:</span><span>${(selectedPayslip.esiDeduction || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Professional Tax:</span><span>${(selectedPayslip.professionalTax || 0).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Income Tax:</span><span>${(selectedPayslip.taxWithheld || selectedPayslip.incomeTax || 0).toLocaleString()}</span></div>
+                      {(selectedPayslip.loanDeductions ?? 0) > 0 && (
+                        <div className="flex justify-between"><span>Loan Deduction:</span><span>${(selectedPayslip.loanDeductions || 0).toLocaleString()}</span></div>
                       )}
-                      {selectedPayslip.otherDeductions > 0 && (
-                        <div className="flex justify-between"><span>Other Deductions:</span><span>₹{selectedPayslip.otherDeductions.toLocaleString()}</span></div>
+                      {(selectedPayslip.otherDeductions ?? 0) > 0 && (
+                        <div className="flex justify-between"><span>Other Deductions:</span><span>${(selectedPayslip.otherDeductions || 0).toLocaleString()}</span></div>
                       )}
                       <hr className="my-2" />
-                      <div className="flex justify-between font-medium"><span>Total Deductions:</span><span>₹{selectedPayslip.totalDeductions.toLocaleString()}</span></div>
+                      <div className="flex justify-between font-medium"><span>Total Deductions:</span><span>${(selectedPayslip.totalDeductions || 0).toLocaleString()}</span></div>
                     </div>
                   </div>
                 </div>
@@ -334,7 +330,7 @@ export default function EmployeePayslipsPage() {
                 >
                   Close
                 </button>
-                {selectedPayslip.isFinalized && (
+                {['Final', 'Paid', 'Published'].includes(selectedPayslip.status) && (
                   <button
                     onClick={() => handleDownload(selectedPayslip.id)}
                     disabled={downloading === selectedPayslip.id}

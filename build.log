@@ -1,0 +1,28 @@
+
+> stellaris-hrm@1.0.0 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 15.4s
+  Running TypeScript ...
+Failed to compile.
+
+./src/app/(dashboard)/organization/page.tsx:79:58
+Type error: Argument of type '{ id: any; firstName: any; lastName: any; email: any; role: any; departmentId: any; departmentName: string | null; branchId: string | null; }[]' is not assignable to parameter of type 'SetStateAction<Manager[]>'.
+  Type '{ id: any; firstName: any; lastName: any; email: any; role: any; departmentId: any; departmentName: string | null; branchId: string | null; }[]' is not assignable to type 'Manager[]'.
+    Type '{ id: any; firstName: any; lastName: any; email: any; role: any; departmentId: any; departmentName: string | null; branchId: string | null; }' is not assignable to type 'Manager'.
+      Types of property 'branchId' are incompatible.
+        Type 'string | null' is not assignable to type 'string | undefined'.
+          Type 'null' is not assignable to type 'string | undefined'.
+
+[0m [90m 77 |[39m
+ [90m 78 |[39m       [90m// Handle Managers[39m
+[31m[1m>[22m[39m[90m 79 |[39m       [36mif[39m (results[[35m2[39m][33m.[39mstatus [33m===[39m [32m'fulfilled'[39m) setManagers(results[[35m2[39m][33m.[39mvalue)[33m;[39m
+ [90m    |[39m                                                          [31m[1m^[22m[39m
+ [90m 80 |[39m       [36melse[39m console[33m.[39merror([32m'Failed to load managers:'[39m[33m,[39m results[[35m2[39m][33m.[39mreason)[33m;[39m
+ [90m 81 |[39m
+ [90m 82 |[39m       [90m// Handle Audit Logs[39m[0m
+Next.js build worker exited with code: 1 and signal: null

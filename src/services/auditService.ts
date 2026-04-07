@@ -29,12 +29,18 @@ export const auditService = {
     }
 
     const { error } = await supabase.from('audit_logs').insert({
+      user_id: performedBy || null,
       table_name: tableName,
       record_id: recordId,
       action,
+      resource: tableName,
+      resource_id: recordId,
       old_data: oldData,
       new_data: newData,
-      performed_by: performedBy || null
+      details: newData || {},
+      performed_by: performedBy || null,
+      ip_address: null,
+      user_agent: null
     });
 
     if (error) {

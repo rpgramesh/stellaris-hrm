@@ -207,7 +207,7 @@ export const payrollErrorHandlingService = {
 
       if (error) throw error;
 
-      const errors: PayrollError[] = (data || []).map((d: any) => this.mapErrorFromDb(d));
+      const errors: PayrollError[] = data.map((d: any) => this.mapErrorFromDb(d));
       const openErrors = errors.filter(e => e.status === 'Open');
       const criticalErrors = errors.filter(e => e.severity === 'Critical');
 
@@ -328,23 +328,22 @@ export const payrollErrorHandlingService = {
         message += ` (Employee: ${context.employeeId})`;
       }
 
-      // Send notification based on severity (if an employeeId is available)
-      if (context.employeeId) {
-        if (error.severity === 'Critical') {
-          await notificationService.createNotification(
-            context.employeeId,
-            'Critical Payroll Error',
-            message,
-            'error'
-          );
-        } else if (error.severity === 'High') {
-          await notificationService.createNotification(
-            context.employeeId,
-            'High Priority Payroll Error',
-            message,
-            'warning'
-          );
-        }
+      const targetUserId = context.employeeId || '00000000-0000-0000-0000-000000000000';
+      // Send notification based on severity
+      if (error.severity === 'Critical') {
+        await notificationService.createNotification(
+          targetUserId,
+          'Critical Payroll Error',
+          message,
+          'error'
+        );
+      } else if (error.severity === 'High') {
+        await notificationService.createNotification(
+          targetUserId,
+          'High Priority Payroll Error',
+          message,
+          'warning'
+        );
       }
     } catch (notificationError) {
       console.error('Error sending error notification:', notificationError);

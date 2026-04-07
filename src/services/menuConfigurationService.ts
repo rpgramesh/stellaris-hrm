@@ -8,18 +8,6 @@ export interface MenuItemConfig {
   updated_by: string;
 }
 
-const formatSupabaseError = (e: any) => {
-  if (!e) return 'Unknown error';
-  const msg = typeof e?.message === 'string' && e.message ? e.message : typeof e === 'string' ? e : 'Unknown error';
-  const parts = [
-    msg,
-    e?.code ? `code=${e.code}` : null,
-    e?.hint ? `hint=${e.hint}` : null,
-    e?.details ? `details=${e.details}` : null,
-  ].filter(Boolean);
-  return parts.join(' | ');
-};
-
 export const menuConfigurationService = {
   async getAll(): Promise<MenuItemConfig[]> {
     const { data, error } = await supabase
@@ -27,20 +15,7 @@ export const menuConfigurationService = {
       .select('*');
     
     if (error) {
-      const msg = formatSupabaseError(error);
-      const lower = msg.toLowerCase();
-      if (lower.includes('could not find the table') || lower.includes('does not exist') || String((error as any)?.code || '').toLowerCase() === '42p01') {
-        console.warn('Menu configuration table missing:', msg);
-        return [];
-      }
-      if (String((error as any)?.code || '').toLowerCase() === '42501') {
-        try {
-          const { data: session } = await supabase.auth.getSession();
-          if (!session?.session) return [];
-        } catch {
-        }
-      }
-      console.error('Error fetching menu configurations:', msg);
+      console.error('Error fetching menu configurations:', error);
       return [];
     }
     return data || [];
@@ -67,9 +42,8 @@ export const menuConfigurationService = {
       }, { onConflict: 'menu_key' });
 
     if (error) {
-      const msg = formatSupabaseError(error);
-      console.error('Error updating menu configuration:', msg);
-      return { success: false, error: msg };
+      console.error('Error updating menu configuration:', error);
+      return { success: false, error: error.message };
     }
 
     return { success: true };

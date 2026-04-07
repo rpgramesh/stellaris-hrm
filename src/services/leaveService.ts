@@ -64,7 +64,7 @@ export const leaveService = {
       .from('leave_requests')
       .select('*')
       .eq('employee_id', employeeId)
-      .in('status', ['Approved', 'Manager Approved'])
+      .eq('status', 'Approved')
       .lte('start_date', endDate)
       .gte('end_date', startDate);
 

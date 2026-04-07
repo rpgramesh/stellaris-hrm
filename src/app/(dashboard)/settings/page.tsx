@@ -620,27 +620,6 @@ export default function SettingsPage() {
             </div>
           </Link>
 
-          <Link
-            href="/settings/email/config"
-            className="group relative bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 hover:shadow-md transition-all duration-300 overflow-hidden"
-          >
-            <div className="absolute top-0 right-0 p-3 bg-emerald-50 group-hover:bg-emerald-100 transition-colors rounded-bl-2xl">
-              <SettingsIcon className="h-6 w-6 text-emerald-600" />
-            </div>
-            <div className="space-y-3">
-              <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
-                Delivery Configuration
-              </h3>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                Configure sender details and delivery method (SMTP or webhook) for system emails.
-              </p>
-              <div className="pt-4 flex items-center text-sm font-semibold text-blue-600">
-                Configure Delivery
-                <ChevronRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </div>
-          </Link>
-
           <Link 
             href="/settings/email/audit"
             className="group relative bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 hover:shadow-md transition-all duration-300 overflow-hidden"

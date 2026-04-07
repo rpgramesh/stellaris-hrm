@@ -32,6 +32,8 @@ export interface Employee {
   employeeCode?: string;
   userId?: string; // Links to auth.users
   isPasswordChangeRequired?: boolean;
+  isMfaRequired?: boolean;
+  preferredMfaMethod?: 'Email' | 'Authenticator App';
   firstName: string;
   middleName?: string;
   lastName: string;
@@ -100,6 +102,7 @@ export interface Employee {
 
   // Payroll related
   salary?: number; // Annual Base Salary
+  hourlyRate?: number;
   salaryEffectiveDate?: string;
   currency?: string;
   nextReviewDate?: string;
@@ -108,8 +111,7 @@ export interface Employee {
   bankAccount?: string;
   bankBsb?: string;
   payCycle?: 'Weekly' | 'Fortnightly' | 'Monthly' | 'Annually';
-  employmentType?: 'FullTime' | 'PartTime' | 'Casual' | 'Contractor';
-  hourlyRate?: number;
+  employmentType?: 'FullTime' | 'PartTime' | 'Casual' | 'Apprentice' | 'Contractor' | 'Trainee';
   superRate?: number; // Percentage (e.g., 11.5)
   superFundId?: string;
   
@@ -969,6 +971,7 @@ export interface CompanyInformation {
   taxId: string;
   primaryContact: string;
   foundedYear: string;
+  updatedAt?: string;
 }
 
 export interface SystemSettings {
@@ -983,7 +986,6 @@ export interface SystemSettings {
   pushNotifications: boolean;
   twoFactorAuth: boolean;
   sessionTimeout: string;
-  defaultHolidayHours?: number;
 }
 
 // Timesheet & Projects
@@ -1012,7 +1014,7 @@ export interface TimesheetRow {
   timesheetId: string;
   projectId?: string;
   project?: Project;
-  type: 'Project' | 'Break' | 'Holiday' | 'Leave';
+  type: 'Project' | 'Break';
   entries: TimesheetEntry[];
 }
 

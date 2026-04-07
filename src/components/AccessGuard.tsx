@@ -60,6 +60,28 @@ export default function AccessGuard({ children }: { children: React.ReactNode })
           router.push("/login");
           return;
         }
+
+        // Check MFA AAL level
+        const aalData = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        const metadata = user.user_metadata || {};
+        const isMfaRequired = !!metadata.is_mfa_required;
+        const preferredMethod = metadata.preferred_mfa_method || 'Authenticator App';
+
+        if (aalData.data?.nextLevel === 'aal2' && aalData.data?.currentLevel !== 'aal2') {
+          // If native TOTP is required but not met, check if we're using Email fallback or if MFA is disabled
+          if (!isMfaRequired) {
+            console.log('MFA not required for this user. Allowing access.');
+          } else if (isMfaRequired && preferredMethod === 'Email') {
+             // For custom Email MFA, we allow AAL1 as we verify the custom code manually in login/page.tsx
+             console.log('Custom Email MFA verified. Allowing access.');
+          } else {
+            console.warn('MFA AAL2 required but not met for this user. Redirecting.');
+            await supabase.auth.signOut();
+            router.push("/login");
+            return;
+          }
+        }
+
         setUserId(user.id);
         const employee = await employeeService.getByUserId(user.id);
         if (!employee) {

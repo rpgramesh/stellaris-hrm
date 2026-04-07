@@ -30,17 +30,6 @@ export default [
         }
     },
     {
-        files: [
-            "src/**/*.test.{ts,tsx}",
-            "src/**/*.spec.{ts,tsx}",
-            "src/**/__tests__/**/*.{ts,tsx}"
-        ],
-        rules: {
-            "@typescript-eslint/no-require-imports": "off",
-            "@typescript-eslint/no-unused-expressions": "off"
-        }
-    },
-    {
-        ignores: [".next/*", "out/*", "node_modules/*", "scripts/*"]
+        ignores: [".next/*", "out/*", "node_modules/*"]
     }
 ];

@@ -201,6 +201,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
 
     // Others
     remark: '',
+    isMfaRequired: false,
+    preferredMfaMethod: 'Authenticator App' as 'Authenticator App' | 'Email',
   };
 
   const [formData, setFormData] = useState(defaultFormData);
@@ -327,6 +329,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
 
         // Others
         remark: initialData.remark || '',
+        isMfaRequired: initialData.isMfaRequired || false,
+        preferredMfaMethod: initialData.preferredMfaMethod || 'Authenticator App',
       });
     }
   }, [initialData]);
@@ -556,6 +560,8 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
 
       // Others
       remark: formData.remark,
+      isMfaRequired: formData.isMfaRequired,
+      preferredMfaMethod: formData.preferredMfaMethod,
     };
 
     if (!initialData && !inviteLater) {
@@ -950,6 +956,79 @@ export default function EmployeeForm({ initialData, managers = [], onSubmit, tit
                     {renderSelectField('privacyMobilePhone', 'Mobile Visibility', ['Not Accessible', 'Employee', 'Manager'])}
                     {renderSelectField('privacyAddress', 'Address Visibility', ['Not Accessible', 'Employee', 'Manager'])}
                  </div>
+
+                  {initialData?.userId && (
+                    <div className="mt-6 border-t pt-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Security</h4>
+                          <p className="text-xs text-gray-500">
+                            Force this employee to verify their identity on every login.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({ ...prev, isMfaRequired: !prev.isMfaRequired }))}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                            formData.isMfaRequired ? 'bg-blue-600' : 'bg-gray-200'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              formData.isMfaRequired ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {formData.isMfaRequired && (
+                        <div className="mt-4 ml-2 p-3 bg-blue-50 rounded-lg border border-blue-100 animate-fade-in">
+                          <label className="block text-sm font-semibold text-blue-900 mb-2">
+                            Preferred Verification Method
+                          </label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <label className={`flex items-center justify-center p-2 rounded-md border-2 cursor-pointer transition-all ${
+                              formData.preferredMfaMethod === 'Authenticator App'
+                                ? 'border-blue-500 bg-white text-blue-700 shadow-sm'
+                                : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'
+                            }`}>
+                              <input
+                                type="radio"
+                                name="preferredMfaMethod"
+                                value="Authenticator App"
+                                checked={formData.preferredMfaMethod === 'Authenticator App'}
+                                onChange={handleChange}
+                                className="sr-only"
+                              />
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                              <span className="text-sm font-medium">Authenticator App</span>
+                            </label>
+                            
+                            <label className={`flex items-center justify-center p-2 rounded-md border-2 cursor-pointer transition-all ${
+                              formData.preferredMfaMethod === 'Email'
+                                ? 'border-blue-500 bg-white text-blue-700 shadow-sm'
+                                : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'
+                            }`}>
+                              <input
+                                type="radio"
+                                name="preferredMfaMethod"
+                                value="Email"
+                                checked={formData.preferredMfaMethod === 'Email'}
+                                onChange={handleChange}
+                                className="sr-only"
+                              />
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              </svg>
+                              <span className="text-sm font-medium">Email OTP</span>
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                  {!initialData && (
                    <div className="mt-6 border-t pt-4">

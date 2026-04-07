@@ -294,7 +294,7 @@ export const timesheetService = {
     return mapTimesheetFromDb(data);
   },
 
-  async addRow(timesheetId: string, projectId: string | null, type: TimesheetRow['type'] = 'Project'): Promise<TimesheetRow> {
+  async addRow(timesheetId: string, projectId: string | null, type: 'Project' | 'Break' = 'Project'): Promise<TimesheetRow> {
     const { data, error } = await supabase
       .from('timesheet_rows')
       .insert({
@@ -318,7 +318,7 @@ export const timesheetService = {
     if (error) throw error;
   },
 
-  async saveEntry(rowId: string, date: string, hours: number, notes?: string | null): Promise<void> {
+  async saveEntry(rowId: string, date: string, hours: number): Promise<void> {
     // Check if entry exists
     const { data: existing } = await supabase
       .from('timesheet_entries')
@@ -338,8 +338,7 @@ export const timesheetService = {
           id: existing?.id,
           row_id: rowId,
           date: date,
-          hours: hours,
-          ...(notes === undefined ? {} : { notes })
+          hours: hours
         });
       
       if (error) throw error;

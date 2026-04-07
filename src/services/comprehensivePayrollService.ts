@@ -4,6 +4,8 @@ import { auditService } from './auditService';
 import { notificationService } from './notificationService';
 import { payrollValidationService } from './payrollValidationService';
 import { PayrollRun, PayrollEmployee, PayrollCalculationResult, Payslip } from '@/types/payroll';
+import { pdfGeneratorService } from './pdfGeneratorService';
+import { format } from 'date-fns';
 
 export interface PayrollProcessingOptions {
   validateTimesheets?: boolean;
@@ -19,7 +21,6 @@ export interface PayrollValidationResult {
   warnings: string[];
   missingTimesheets: string[];
   unapprovedTimesheets: string[];
-  incompleteTimesheets: string[];
 }
 
 export interface PayrollReport {
@@ -50,169 +51,6 @@ export interface PayrollReport {
     issues: string[];
   };
 }
-
-export const PAYROLL_REPORT_CACHE_VERSION = 1;
-
-const roundMoney = (n: unknown) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round(v * 100) / 100;
-};
-
-const djb2 = (s: string) => {
-  let hash = 5381;
-  for (let i = 0; i < s.length; i++) {
-    hash = ((hash << 5) + hash) ^ s.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-};
-
-export const computePayrollReportChecksum = (report: PayrollReport) => {
-  const normalized = {
-    payrollRunId: String(report.payrollRunId || ''),
-    periodStart: String(report.periodStart || ''),
-    periodEnd: String(report.periodEnd || ''),
-    totalEmployees: Number(report.totalEmployees || 0),
-    totalGrossPay: roundMoney(report.totalGrossPay),
-    totalTax: roundMoney(report.totalTax),
-    totalNetPay: roundMoney(report.totalNetPay),
-    totalSuper: roundMoney(report.totalSuper),
-    employeeBreakdown: (report.employeeBreakdown || [])
-      .map((e) => ({
-        employeeId: String(e.employeeId || ''),
-        employeeName: String(e.employeeName || ''),
-        grossPay: roundMoney(e.grossPay),
-        tax: roundMoney(e.tax),
-        netPay: roundMoney(e.netPay),
-        super: roundMoney(e.super),
-        hoursWorked: roundMoney(e.hoursWorked),
-        status: String(e.status || ''),
-      }))
-      .sort((a, b) => a.employeeId.localeCompare(b.employeeId)),
-  };
-  return djb2(JSON.stringify(normalized));
-};
-
-export const validatePayrollReportIntegrity = (
-  report: PayrollReport,
-  expected?: {
-    totalGrossPay?: number;
-    totalTax?: number;
-    totalNetPay?: number;
-    totalSuper?: number;
-    employeeCount?: number;
-  }
-) => {
-  if (!report || typeof report !== 'object') return { isValid: false, reason: 'missing_report' as const };
-  if (!report.payrollRunId) return { isValid: false, reason: 'missing_payrollRunId' as const };
-
-  const breakdown = Array.isArray(report.employeeBreakdown) ? report.employeeBreakdown : [];
-  if (breakdown.length === 0) {
-    const totalsZero =
-      roundMoney(report.totalGrossPay) === 0 &&
-      roundMoney(report.totalTax) === 0 &&
-      roundMoney(report.totalNetPay) === 0 &&
-      roundMoney(report.totalSuper) === 0;
-    if (Number(report.totalEmployees || 0) === 0 && totalsZero) {
-      return { isValid: true as const };
-    }
-    return { isValid: false as const, reason: 'empty_breakdown' as const };
-  }
-
-  const sums = breakdown.reduce(
-    (acc, e) => ({
-      gross: acc.gross + roundMoney((e as any).grossPay),
-      tax: acc.tax + roundMoney((e as any).tax),
-      net: acc.net + roundMoney((e as any).netPay),
-      super: acc.super + roundMoney((e as any).super),
-    }),
-    { gross: 0, tax: 0, net: 0, super: 0 }
-  );
-
-  const uniqueEmployees = new Set(breakdown.map((e: any) => String(e.employeeId || ''))).size;
-  const within = (a: number, b: number, tol = 0.02) => Math.abs(roundMoney(a) - roundMoney(b)) <= tol;
-
-  if (!within(sums.gross, report.totalGrossPay)) return { isValid: false as const, reason: 'gross_mismatch' as const };
-  if (!within(sums.tax, report.totalTax)) return { isValid: false as const, reason: 'tax_mismatch' as const };
-  if (!within(sums.net, report.totalNetPay)) return { isValid: false as const, reason: 'net_mismatch' as const };
-  if (!within(sums.super, report.totalSuper)) return { isValid: false as const, reason: 'super_mismatch' as const };
-  if (Number(report.totalEmployees || 0) !== uniqueEmployees) return { isValid: false as const, reason: 'employee_count_mismatch' as const };
-
-  if (expected) {
-    if (expected.employeeCount != null && Number(expected.employeeCount) > 0 && uniqueEmployees !== Number(expected.employeeCount)) {
-      return { isValid: false as const, reason: 'expected_employee_count_mismatch' as const };
-    }
-    if (expected.totalGrossPay != null && !within(expected.totalGrossPay, report.totalGrossPay)) {
-      return { isValid: false as const, reason: 'expected_gross_mismatch' as const };
-    }
-    if (expected.totalTax != null && !within(expected.totalTax, report.totalTax)) {
-      return { isValid: false as const, reason: 'expected_tax_mismatch' as const };
-    }
-    if (expected.totalNetPay != null && !within(expected.totalNetPay, report.totalNetPay)) {
-      return { isValid: false as const, reason: 'expected_net_mismatch' as const };
-    }
-    if (expected.totalSuper != null && !within(expected.totalSuper, report.totalSuper)) {
-      return { isValid: false as const, reason: 'expected_super_mismatch' as const };
-    }
-  }
-
-  return { isValid: true as const };
-};
-
-export const filterPayrollReportByEmployeeIds = (report: PayrollReport, employeeIds: string[]) => {
-  const ids = new Set((employeeIds || []).map((id) => String(id)));
-  if (ids.size === 0) return report;
-
-  const filtered = (report.employeeBreakdown || []).filter((e) => ids.has(String((e as any).employeeId)));
-  const totals = filtered.reduce(
-    (acc, e) => ({
-      gross: acc.gross + Number((e as any).grossPay || 0),
-      tax: acc.tax + Number((e as any).tax || 0),
-      net: acc.net + Number((e as any).netPay || 0),
-      super: acc.super + Number((e as any).super || 0),
-    }),
-    { gross: 0, tax: 0, net: 0, super: 0 }
-  );
-
-  return {
-    ...report,
-    totalEmployees: new Set(filtered.map((e) => String((e as any).employeeId || ''))).size,
-    totalGrossPay: totals.gross,
-    totalTax: totals.tax,
-    totalNetPay: totals.net,
-    totalSuper: totals.super,
-    employeeBreakdown: filtered,
-  };
-};
-
-export const validateCachedPayrollReportRow = (
-  row: {
-    report?: unknown;
-    checksum?: string | null;
-    is_valid?: boolean | null;
-  },
-  expected?: {
-    totalGrossPay?: number;
-    totalTax?: number;
-    totalNetPay?: number;
-    totalSuper?: number;
-    employeeCount?: number;
-  }
-) => {
-  const report = row?.report as PayrollReport | undefined;
-  if (!report) return { report: null as PayrollReport | null, reason: 'missing_report' as const };
-  if (row?.is_valid === false) return { report: null as PayrollReport | null, reason: 'marked_invalid' as const };
-
-  const integrity = validatePayrollReportIntegrity(report, expected);
-  if (!integrity.isValid) return { report: null as PayrollReport | null, reason: integrity.reason };
-
-  if (row?.checksum) {
-    const checksum = computePayrollReportChecksum(report);
-    if (checksum !== row.checksum) return { report: null as PayrollReport | null, reason: 'checksum_mismatch' as const };
-  }
-
-  return { report };
-};
 
 export const resolveSelectedPayrollEmployees = (
   allEmployees: PayrollEmployee[],
@@ -258,63 +96,6 @@ export const computeHoursWorkedForReport = (earnings: PayrollCalculationResult['
 };
 
 export const comprehensivePayrollService = {
-  async getCachedPayrollReport(
-    payrollRunId: string,
-    expected?: {
-      totalGrossPay?: number;
-      totalTax?: number;
-      totalNetPay?: number;
-      totalSuper?: number;
-      employeeCount?: number;
-    }
-  ): Promise<PayrollReport | null> {
-    try {
-      const { data, error } = await supabase
-        .from('payroll_run_calculation_cache')
-        .select('report, checksum, is_valid')
-        .eq('payroll_run_id', payrollRunId)
-        .maybeSingle();
-
-      if (error || !data) return null;
-      const { report, reason } = validateCachedPayrollReportRow(data as any, expected);
-      if (report) return report;
-
-      await supabase
-        .from('payroll_run_calculation_cache')
-        .update({ is_valid: false, invalid_reason: String(reason || 'invalid'), validated_at: new Date().toISOString() } as any)
-        .eq('payroll_run_id', payrollRunId);
-
-      return null;
-    } catch {
-      return null;
-    }
-  },
-
-  async upsertCachedPayrollReport(payrollRunId: string, report: PayrollReport): Promise<void> {
-    const integrity = validatePayrollReportIntegrity(report);
-    if (!integrity.isValid) throw new Error(`Refusing to cache invalid payroll report (${integrity.reason || 'invalid'})`);
-
-    const checksum = computePayrollReportChecksum(report);
-    const payload = {
-      payroll_run_id: payrollRunId,
-      report: report as any,
-      report_version: PAYROLL_REPORT_CACHE_VERSION,
-      checksum,
-      is_valid: true,
-      invalid_reason: null,
-      validated_at: new Date().toISOString(),
-    };
-
-    const { error } = await supabase.from('payroll_run_calculation_cache').upsert(payload as any);
-    if (error) {
-      const msg = String((error as any)?.message || '');
-      const lower = msg.toLowerCase();
-      if (lower.includes('could not find the table') && lower.includes('payroll_run_calculation_cache')) return;
-      if (String((error as any)?.code || '').toLowerCase() === '42p01') return;
-      throw error;
-    }
-  },
-
   async getTimesheetsForEmployeesInPeriod(
     employeeIds: string[],
     startDate: string,
@@ -409,7 +190,7 @@ export const comprehensivePayrollService = {
     }
   },
 
-  async validatePayrollRun(payrollRunId: string, selectedEmployeeIds?: string[]): Promise<PayrollValidationResult> {
+  async validatePayrollRun(payrollRunId: string, selectedPayrollEmployeeIds?: string[]): Promise<PayrollValidationResult> {
     try {
       const payrollRun = await this.getPayrollRun(payrollRunId);
       if (!payrollRun) {
@@ -421,37 +202,29 @@ export const comprehensivePayrollService = {
         errors: [],
         warnings: [],
         missingTimesheets: [],
-        unapprovedTimesheets: [],
-        incompleteTimesheets: []
+        unapprovedTimesheets: []
       };
 
       // Get employees for this payroll run
-      const allEmployees = await this.getEmployeesForPayroll(payrollRun);
-      const employees =
-        Array.isArray(selectedEmployeeIds) && selectedEmployeeIds.length > 0
-          ? resolveSelectedPayrollEmployees(allEmployees, selectedEmployeeIds)
-          : allEmployees;
+      const employees = await this.getEmployeesForPayroll(payrollRun);
 
-      if (Array.isArray(selectedEmployeeIds)) {
-        if (selectedEmployeeIds.length === 0) {
-          result.isValid = false;
-          result.errors.push('No employees selected for this payroll run.');
-          return result;
-        }
-        if (employees.length === 0) {
-          result.isValid = false;
-          result.errors.push('Selected employees could not be resolved for this payroll run.');
-          return result;
-        }
+      // Resolve targets based on optional ID list (handles both payroll_employee.id and employee.id)
+      const targetEmployees = selectedPayrollEmployeeIds 
+        ? resolveSelectedPayrollEmployees(employees, selectedPayrollEmployeeIds)
+        : employees;
+
+      // Handle the case where a subset is explicitly requested but empty
+      if (selectedPayrollEmployeeIds && targetEmployees.length === 0) {
+        return result;
       }
 
       const timesheetsByEmployeeId = await this.getTimesheetsForEmployeesInPeriod(
-        employees.map(e => e.employeeId),
+        targetEmployees.map(e => e.employeeId),
         payrollRun.payPeriodStart,
         payrollRun.payPeriodEnd
       );
       
-      for (const employee of employees) {
+      for (const employee of targetEmployees) {
         const employeeValidation = await this.validateEmployeePayroll(employee, payrollRun, {
           timesheetsForPeriod: timesheetsByEmployeeId[employee.employeeId] || []
         });
@@ -460,7 +233,6 @@ export const comprehensivePayrollService = {
         result.warnings.push(...employeeValidation.warnings);
         result.missingTimesheets.push(...employeeValidation.missingTimesheets);
         result.unapprovedTimesheets.push(...employeeValidation.unapprovedTimesheets);
-        result.incompleteTimesheets.push(...(employeeValidation.incompleteTimesheets || []));
       }
 
       // Set overall validity
@@ -509,7 +281,7 @@ export const comprehensivePayrollService = {
       }
 
       // Validate payroll run first
-      const validation = await this.validatePayrollRun(payrollRunId, options.selectedEmployeeIds);
+      const validation = await this.validatePayrollRun(payrollRunId);
       if (!validation.isValid) {
         throw new Error(`Payroll validation failed: ${validation.errors.join(', ')}`);
       }
@@ -533,10 +305,9 @@ export const comprehensivePayrollService = {
       // Generate comprehensive report
       const report = await this.generatePayrollReport(payrollRun, calculationResults);
 
-      try {
-        await this.upsertCachedPayrollReport(payrollRunId, report);
-      } catch (e: any) {
-        console.error('[payroll-cache] failed to store cached payroll report', e?.message || e);
+      // Send notifications if requested
+      if (options.sendNotifications) {
+        await this.sendPayrollNotifications(payrollRun, report);
       }
 
       // Create audit log
@@ -545,7 +316,7 @@ export const comprehensivePayrollService = {
         payrollRunId,
         'UPDATE',
         { status: 'Processing' },
-        { status: 'Processing' },
+        { status: 'Paid' },
         userId // Pass the USER ID for audit logging
       );
 
@@ -564,77 +335,6 @@ export const comprehensivePayrollService = {
     }
   },
 
-  async deletePayrollRun(payrollRunId: string): Promise<void> {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const userId = user?.id;
-
-      // 1. Delete calculation cache
-      await supabase
-        .from('payroll_run_calculation_cache')
-        .delete()
-        .eq('payroll_run_id', payrollRunId);
-
-      // 2. Delete payslips and their components
-      const { data: payslips } = await supabase
-        .from('payslips')
-        .select('id')
-        .eq('payroll_run_id', payrollRunId);
-
-      if (payslips && payslips.length > 0) {
-        const payslipIds = payslips.map(p => p.id);
-        
-        // Delete pay components
-        await supabase
-          .from('pay_components')
-          .delete()
-          .in('payslip_id', payslipIds);
-          
-        // Delete super contributions linked to this run (if applicable)
-        await supabase
-          .from('super_contributions')
-          .delete()
-          .eq('payroll_run_id', payrollRunId);
-
-        // Delete payslips
-        await supabase
-          .from('payslips')
-          .delete()
-          .in('id', payslipIds);
-      }
-
-      // 3. Delete payroll errors
-      await supabase
-        .from('payroll_errors')
-        .delete()
-        .eq('payroll_run_id', payrollRunId);
-
-      // 4. Delete the payroll run record
-      const { error } = await supabase
-        .from('payroll_runs')
-        .delete()
-        .eq('id', payrollRunId);
-
-      if (error) throw error;
-
-      // 5. Log the action
-      if (userId) {
-        await auditService.logAction(
-          'payroll_runs',
-          payrollRunId,
-          'DELETE',
-          null,
-          { action: 'FULL_DELETE_RUN' },
-          userId
-        );
-      }
-
-    } catch (error) {
-      console.error('Error deleting payroll run:', error);
-      throw error;
-    }
-  },
-
   async generatePayslipPDF(payslipId: string): Promise<Buffer> {
     try {
       // Get payslip with all related data
@@ -646,7 +346,7 @@ export const comprehensivePayrollService = {
       // Get employee details
       const { data: employee } = await supabase
         .from('employees')
-        .select('first_name, last_name, email')
+        .select('*, departments:department_id(name), job_positions:position_id(title)')
         .eq('id', payslip.employeeId)
         .single();
 
@@ -654,9 +354,28 @@ export const comprehensivePayrollService = {
         throw new Error('Employee not found');
       }
 
-      // Generate PDF content (simplified implementation)
-      // In a real implementation, you would use a PDF library like Puppeteer or PDFKit
-      const pdfContent = this.generatePayslipContent(payslip, employee);
+      // Fetch all payslips for the current financial year to calculate YTD
+      const periodEndDate = new Date(payslip.periodEnd);
+      const year = periodEndDate.getFullYear();
+      const month = periodEndDate.getMonth();
+      const fyStart = month >= 6 ? `${year}-07-01` : `${year - 1}-07-01`;
+      
+      const { data: ytdPayslips } = await supabase
+        .from('payslips')
+        .select('*, pay_components(*)')
+        .eq('employee_id', payslip.employeeId)
+        .gte('period_start', fyStart)
+        .lte('period_end', payslip.periodEnd);
+
+      // Generate PDF using pdfGeneratorService
+      const doc = pdfGeneratorService.generatePayslipPDF({
+        payslip,
+        employee,
+        ytdPayslips: ytdPayslips || []
+      });
+
+      // Return PDF as Buffer
+      const pdfOutput = doc.output('arraybuffer');
       
       // Create audit log
       await auditService.logAction(
@@ -667,7 +386,7 @@ export const comprehensivePayrollService = {
         { action: 'generate_pdf' }
       );
 
-      return Buffer.from(pdfContent);
+      return Buffer.from(pdfOutput);
     } catch (error) {
       console.error('Error generating payslip PDF:', error);
       throw error;
@@ -735,13 +454,11 @@ export const comprehensivePayrollService = {
     warnings: string[];
     missingTimesheets: string[];
     unapprovedTimesheets: string[];
-    incompleteTimesheets: string[];
   }> {
     const errors: string[] = [];
     const warnings: string[] = [];
     const missingTimesheets: string[] = [];
     const unapprovedTimesheets: string[] = [];
-    const incompleteTimesheets: string[] = [];
 
     try {
       const employeeName = employee.firstName && employee.lastName 
@@ -779,88 +496,16 @@ export const comprehensivePayrollService = {
           missingTimesheets.push(employee.employeeId);
           errors.push(`Employee ${employeeName} has no timesheets for the pay period`);
         } else {
-          const start = new Date(`${payrollRun.payPeriodStart}T00:00:00.000Z`);
-          const end = new Date(`${payrollRun.payPeriodEnd}T00:00:00.000Z`);
-
-          const firstMonday = new Date(start);
-          const day = firstMonday.getUTCDay();
-          const diff = firstMonday.getUTCDate() - day + (day === 0 ? -6 : 1);
-          firstMonday.setUTCDate(diff);
-
-          const expectedWeekStarts: string[] = [];
-          for (let d = new Date(firstMonday); d <= end; d.setUTCDate(d.getUTCDate() + 7)) {
-            expectedWeekStarts.push(d.toISOString().slice(0, 10));
-          }
-
-          const byWeekStart = new Map<string, any>();
-          for (const t of timesheets) {
-            const weekStart = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
-            if (!weekStart) continue;
-            byWeekStart.set(weekStart, t);
-          }
-
-          const weekLabel = (idx: number) => `Week ${idx + 1}`;
-          const formatWeekRange = (weekStart: string) => {
-            const ws = new Date(`${weekStart}T00:00:00.000Z`);
-            const we = new Date(ws);
-            we.setUTCDate(we.getUTCDate() + 6);
-            const displayStart = ws < start ? start : ws;
-            const displayEnd = we > end ? end : we;
-            return `${displayStart.toISOString().slice(0, 10)} to ${displayEnd.toISOString().slice(0, 10)}`;
-          };
-
-          const missingWeeks = expectedWeekStarts.filter((ws) => !byWeekStart.has(ws));
-          if (missingWeeks.length > 0) {
-            missingTimesheets.push(employee.employeeId);
-            for (const ws of missingWeeks) {
-              const idx = expectedWeekStarts.indexOf(ws);
-              errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(ws)}) is missing`);
-            }
-          }
-
-          const statusProblems: Array<{ weekStart: string; status: string }> = [];
-          for (let i = 0; i < expectedWeekStarts.length; i++) {
-            const ws = expectedWeekStarts[i];
-            const t = byWeekStart.get(ws);
-            if (!t) continue;
-            const rawStatus = String((t as any).status || '');
-            const status = rawStatus.toLowerCase();
-            if (status !== 'approved') {
-              statusProblems.push({ weekStart: ws, status: rawStatus || 'Unknown' });
-            }
-          }
-
-          if (statusProblems.length > 0) {
-            unapprovedTimesheets.push(employee.employeeId);
-            for (const p of statusProblems) {
-              const idx = expectedWeekStarts.indexOf(p.weekStart);
-              if (idx === 1 && String(p.status || '').toLowerCase() === 'draft') {
-                errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(p.weekStart)}) is Draft. Submit and get it approved before payroll can proceed.`);
-              } else {
-                errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(p.weekStart)}) is ${p.status}. It must be Approved before payroll can proceed.`);
-              }
-            }
-          }
-
-          const incompleteApproved: any[] = [];
-          for (const t of timesheets) {
-            const weekStart = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
-            if (!weekStart || !expectedWeekStarts.includes(weekStart)) continue;
-            const status = String((t as any).status || '').toLowerCase();
-            if (status !== 'approved') continue;
-            const totalHours = Number((t as any).total_hours ?? (t as any).totalHours ?? 0);
-            const approvedHours = Number((t as any).approved_hours ?? (t as any).approvedHours);
-            if (totalHours > 0 && (!Number.isFinite(approvedHours) || approvedHours <= 0)) {
-              incompleteApproved.push(t);
-            }
-          }
-
-          if (incompleteApproved.length > 0) {
-            incompleteTimesheets.push(employee.employeeId);
-            for (const t of incompleteApproved) {
-              const ws = String((t as any).week_start_date || (t as any).weekStartDate || '').slice(0, 10);
-              const idx = expectedWeekStarts.indexOf(ws);
-              errors.push(`Employee ${employeeName} ${weekLabel(idx)} timesheet (${formatWeekRange(ws)}) is marked Approved but has incomplete entries`);
+          const timesheetsWithHours = timesheets.filter(t => Number((t as any).total_hours ?? (t as any).totalHours ?? 0) > 0);
+          if (timesheetsWithHours.length > 0) {
+            const unapproved = timesheetsWithHours.filter(t => String((t as any).status || '').toLowerCase() !== 'approved');
+            if (unapproved.length > 0) {
+              const detail = unapproved
+                .slice(0, 5)
+                .map(t => `${(t as any).week_start_date || (t as any).weekStartDate || 'unknown'} (${(t as any).status || 'Unknown'})`)
+                .join(', ');
+              unapprovedTimesheets.push(employee.employeeId);
+              errors.push(`Employee ${employeeName} has unapproved timesheets${detail ? `: ${detail}` : ''}`);
             }
           }
         }
@@ -889,7 +534,7 @@ export const comprehensivePayrollService = {
       errors.push(`Error validating employee ${employeeName}: ${error.message}`);
     }
 
-    return { errors, warnings, missingTimesheets, unapprovedTimesheets, incompleteTimesheets };
+    return { errors, warnings, missingTimesheets, unapprovedTimesheets };
   },
 
   async getEmployeeTimesheetsForPeriod(
@@ -932,96 +577,12 @@ export const comprehensivePayrollService = {
       const payrollRun = await this.getPayrollRun(payrollRunId);
       if (!payrollRun) throw new Error('Payroll run not found');
 
-      if (selectedEmployeeIds.length === 0) {
-        if (String((payrollRun as any).status || '').toLowerCase() === 'paid') {
-          try {
-            const { data: payslips, error: payslipErr } = await supabase
-              .from('payslips')
-              .select('*, employees:employee_id(first_name, last_name)')
-              .eq('payroll_run_id', payrollRun.id);
-
-            if (payslipErr) throw payslipErr;
-
-            const mapPayslipRows = (rows: any[]) =>
-              (rows || []).map((p: any) => {
-                const employeeName = [p.employees?.first_name, p.employees?.last_name].filter(Boolean).join(' ') || p.employee_id;
-                const gross = Number(p.gross_earnings ?? p.gross_pay ?? 0);
-                const tax = Number(p.income_tax ?? p.tax_withheld ?? 0);
-                return {
-                  employeeId: p.employee_id,
-                  employeeName,
-                  grossPay: gross,
-                  tax,
-                  netPay: Number(p.net_pay || 0),
-                  super: Number(p.superannuation || 0),
-                  hoursWorked: Number(p.hours_logged || 0),
-                  status: 'Processed' as const,
-                  errors: [],
-                  warnings: []
-                };
-              });
-
-            let employeeBreakdown = mapPayslipRows(payslips || []);
-
-            if (employeeBreakdown.length === 0 && Number((payrollRun as any).employeeCount || 0) > 0) {
-              const { data: session } = await supabase.auth.getSession();
-              const token = session.session?.access_token;
-              if (token) {
-                const res = await fetch(`/api/payroll/payslips/for-run?payrollRunId=${encodeURIComponent(payrollRun.id)}`, {
-                  headers: { Authorization: `Bearer ${token}` },
-                  cache: 'no-store'
-                });
-                if (res.ok) {
-                  const json = await res.json();
-                  employeeBreakdown = mapPayslipRows(json?.payslips || []);
-                }
-              }
-            }
-
-            if (employeeBreakdown.length > 0) {
-              const totals = employeeBreakdown.reduce(
-                (acc, e) => ({
-                  gross: acc.gross + e.grossPay,
-                  tax: acc.tax + e.tax,
-                  net: acc.net + e.netPay,
-                  super: acc.super + e.super,
-                }),
-                { gross: 0, tax: 0, net: 0, super: 0 }
-              );
-              return {
-                payrollRunId: payrollRun.id,
-                periodStart: payrollRun.payPeriodStart,
-                periodEnd: payrollRun.payPeriodEnd,
-                totalEmployees: new Set(employeeBreakdown.map((e) => e.employeeId)).size,
-                totalGrossPay: totals.gross,
-                totalTax: totals.tax,
-                totalNetPay: totals.net,
-                totalSuper: totals.super,
-                employeeBreakdown,
-                complianceStatus: { minimumWageCompliant: true, superCompliant: true, taxCompliant: true, issues: [] }
-              };
-            }
-          } catch {
-          }
-        }
-
-        return {
-          payrollRunId: payrollRun.id,
-          periodStart: payrollRun.payPeriodStart,
-          periodEnd: payrollRun.payPeriodEnd,
-          totalEmployees: Number((payrollRun as any).employeeCount || 0),
-          totalGrossPay: Number((payrollRun as any).totalGrossPay || 0),
-          totalTax: Number((payrollRun as any).totalTax || 0),
-          totalNetPay: Number((payrollRun as any).totalNetPay || 0),
-          totalSuper: Number((payrollRun as any).totalSuper || 0),
-          employeeBreakdown: [],
-          complianceStatus: { minimumWageCompliant: true, superCompliant: true, taxCompliant: true, issues: [] }
-        };
-      }
-
+      // Always perform a live calculation for preview to ensure accuracy with engine updates
       const allEmployees = await this.getEmployeesForPayroll(payrollRun);
       
-      const targetEmployees = resolveSelectedPayrollEmployees(allEmployees, selectedEmployeeIds);
+      const targetEmployees = selectedEmployeeIds.length > 0
+        ? resolveSelectedPayrollEmployees(allEmployees, selectedEmployeeIds)
+        : allEmployees;
 
       const calculationResults: PayrollCalculationResult[] = [];
       for (const employee of targetEmployees) {

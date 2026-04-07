@@ -19,3 +19,42 @@ For the sample data provided ($8,221.25 gross monthly):
 Superannuation: $8,221.25 * 0.12 = $986.55 (Matches sample exactly).
 PAYG Tax: Stage 3 + Medicare Levy ≈ $1,863-$1,868 (Matches sample within rounding ranges).
 Net Pay: $8,221.25 - $1,868.00 = $6,353.25 (Matches sample exactly).
+
+----------
+Phase 1: Deploy Your Web Application
+Before creating an Android app, your Next.js app needs to be hosted publicly on the internet.
+
+Push your code to a GitHub repository.
+Deploy the app using a hosting provider like Vercel or Google Cloud Run. These services natively support Next.js and will give your app a live public URL (e.g., https://stellaris-hrm.vercel.app).
+Phase 2: Convert to an Android App
+Once your web app is live, you can transform it into an Android app. The easiest and most modern method recommended by Google is using Bubblewrap (which creates a Trusted Web Activity).
+
+Prerequisites: You will need to have Node.js and the Java Development Kit (JDK) installed.
+
+Step 1: Install Bubblewrap CLI Open your terminal and run the following command to install Google's Bubblewrap globally:
+
+bash
+npm install -g @bubblewrap/cli
+Step 2: Initialize the Android Project Create a new folder for your mobile app, navigate into it, and initialize Bubblewrap using your live website's URL:
+
+bash
+mkdir stellaris-android
+cd stellaris-android
+bubblewrap init --manifest https://your-hosted-app-url.com/manifest.json
+(Note: Ensure your Next.js app has a basic manifest.json file in the public folder defining the app's name, icons, and theme colors. Bubblewrap relies on this)
+
+Step 3: Build the App Bundle Once initialized, you can build the Android App Bundle (.aab) which is the format Google Play requires:
+
+bash
+bubblewrap build
+During this process, Bubblewrap will ask you to create a "Keystore" (a secure file used to cryptographically sign your app). Store this Keystore password safely. It will successfully generate an .aab file in your folder.
+
+Phase 3: Publish to Google Play Store
+Create a Google Play Developer Account (Requires a one-time $25 registration fee).
+Go to the Play Console and click Create App. Fill in the name, default language, and categorize it as an "App."
+Set up your store listing by providing your app's descriptions, screenshots, and an app icon.
+On the left menu, navigate to Production under the "Release" section.
+Click Create new release and upload the .aab (Android App Bundle) file you generated in Phase 2.
+Submit your app for review! Google typically takes between 1-3 days to review and publish the app.
+
+-----------
