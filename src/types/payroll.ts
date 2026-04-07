@@ -61,14 +61,9 @@ export interface Payslip {
   bonuses: number;
   reimbursements: number;
   overtime: number;
+  payrollTax?: number;
   paymentDate: string;
   status: 'Draft' | 'Published' | 'Paid';
-  referenceNumber?: string;
-  pdfBucket?: string;
-  pdfPath?: string;
-  pdfGeneratedAt?: string;
-  paymentReference?: string;
-  employerEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,8 +77,9 @@ export interface PayrollRun {
   status: 'Draft' | 'Approved' | 'Processing' | 'Paid' | 'STPSubmitted';
   totalGrossPay: number;
   totalTax: number;
-  totalSuper: number;
   totalNetPay: number;
+  totalSuper: number;
+  totalPayrollTax?: number;
   employeeCount: number;
   processedBy?: string;
   processedAt?: string;
@@ -364,6 +360,7 @@ export interface PayrollCalculationResult {
     taxWithheld: number;
     netPay: number;
     superContributions: number;
+    payrollTax?: number;
   };
   validationErrors: string[];
   warnings: string[];
