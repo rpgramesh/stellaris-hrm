@@ -688,6 +688,7 @@ export default function PayrollProcessingPage() {
       // Handle specific error types
       if (error.message?.includes('validation failed')) {
         alert('Payroll validation failed. Please review errors and try again.');
+        setShowErrorDetails(true); // Show details on validation failure
       } else if (error.message?.includes('timesheet')) {
         alert('Timesheet validation error. Please ensure all timesheets are approved.');
       } else if (error.message?.includes('record "new" has no field "updated_at"')) {
@@ -911,6 +912,91 @@ export default function PayrollProcessingPage() {
       </div>
     );
   }
+
+      {/* Validation Details Section */}
+      {validationResult && (validationResult.errors.length > 0 || validationResult.warnings.length > 0 || validationResult.missingTimesheets.length > 0 || validationResult.unapprovedTimesheets.length > 0) && (
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Validation Details</h2>
+            <button
+              onClick={() => setShowErrorDetails(!showErrorDetails)}
+              className="text-blue-600 hover:text-blue-800 text-sm flex items-center space-x-1"
+            >
+              {showErrorDetails ? (
+                <>
+                  <Eye className="h-4 w-4" />
+                  <span>Hide Details</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4" />
+                  <span>Show Details</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {showErrorDetails && (
+            <div className="space-y-4">
+              {validationResult.errors.length > 0 && (
+                <div className="bg-red-50 border-l-4 border-red-400 p-4">
+                  <div className="flex items-center">
+                    <AlertTriangle className="h-5 w-5 text-red-400" />
+                    <h3 className="ml-3 text-sm font-medium text-red-800">Errors ({validationResult.errors.length})</h3>
+                  </div>
+                  <ul className="mt-2 text-sm text-red-700 list-disc pl-5">
+                    {validationResult.errors.map((error, index) => (
+                      <li key={index}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {validationResult.warnings.length > 0 && (
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                  <div className="flex items-center">
+                    <AlertTriangle className="h-5 w-5 text-yellow-400" />
+                    <h3 className="ml-3 text-sm font-medium text-yellow-800">Warnings ({validationResult.warnings.length})</h3>
+                  </div>
+                  <ul className="mt-2 text-sm text-yellow-700 list-disc pl-5">
+                    {validationResult.warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {validationResult.missingTimesheets.length > 0 && (
+                <div className="bg-orange-50 border-l-4 border-orange-400 p-4">
+                  <div className="flex items-center">
+                    <Clock className="h-5 w-5 text-orange-400" />
+                    <h3 className="ml-3 text-sm font-medium text-orange-800">Missing Timesheets ({validationResult.missingTimesheets.length})</h3>
+                  </div>
+                  <ul className="mt-2 text-sm text-orange-700 list-disc pl-5">
+                    {validationResult.missingTimesheets.map((employeeId, index) => (
+                      <li key={index}>Employee ID: {employeeId}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {validationResult.unapprovedTimesheets.length > 0 && (
+                <div className="bg-orange-50 border-l-4 border-orange-400 p-4">
+                  <div className="flex items-center">
+                    <Clock className="h-5 w-5 text-orange-400" />
+                    <h3 className="ml-3 text-sm font-medium text-orange-800">Unapproved Timesheets ({validationResult.unapprovedTimesheets.length})</h3>
+                  </div>
+                  <ul className="mt-2 text-sm text-orange-700 list-disc pl-5">
+                    {validationResult.unapprovedTimesheets.map((employeeId, index) => (
+                      <li key={index}>Employee ID: {employeeId}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
   return (
     <div className="space-y-6">
