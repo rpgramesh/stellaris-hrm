@@ -84,7 +84,7 @@ interface PayrollReport {
     netPay: number;
     super: number;
     hoursWorked: number;
-    status: 'Processed' | 'Error' | 'Warning';
+    status: 'Processed' | 'Error' | 'Warning' | 'Excluded';
     errors: string[];
     warnings: string[];
   }[];
@@ -139,6 +139,7 @@ export default function PayrollProcessingPage() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [approvedHoursByEmployeeId, setApprovedHoursByEmployeeId] = useState<Record<string, number>>({});
+  const [timesheetSummaryByEmployeeId, setTimesheetSummaryByEmployeeId] = useState<Record<string, { approvedCount: number; nonApprovedCount: number }>>({});
   const [loadingApprovedHours, setLoadingApprovedHours] = useState(false);
   const [timesheetPopupEmployee, setTimesheetPopupEmployee] = useState<Employee | null>(null);
   const [timesheetPopupRows, setTimesheetPopupRows] = useState<TimesheetPeriodRow[]>([]);
@@ -159,6 +160,8 @@ export default function PayrollProcessingPage() {
 
   const normalizeStatus = (s: unknown) => String(s || '').trim().toLowerCase();
   const isFinalisedRun = selectedRun ? ['paid', 'stpsubmitted'].includes(normalizeStatus(selectedRun.status)) : false;
+  const canSelectEmployees = isHrAdmin;
+  const canEditPayrollRun = isHrAdmin && !isFinalisedRun;
 
   const employeeIdsKey = useMemo(() => {
     return employees
@@ -170,15 +173,43 @@ export default function PayrollProcessingPage() {
 
   const loadPayrollRuns = async (): Promise<PayrollRun[]> => {
     try {
-      const { data, error } = await supabase
+      // Primary ordering for modern schema
+      const primary = await supabase
         .from('payroll_runs')
         .select('*')
         .order('pay_period_start', { ascending: false });
 
-      if (error) throw error;
-      return data || [];
+      if (!primary.error) {
+        return primary.data || [];
+      }
+
+      // Fallback ordering for older schema variants
+      const fallback = await supabase
+        .from('payroll_runs')
+        .select('*')
+        .order('month_year', { ascending: false });
+
+      if (!fallback.error) {
+        return fallback.data || [];
+      }
+
+      // Last resort: load without explicit ordering
+      const lastResort = await supabase
+        .from('payroll_runs')
+        .select('*');
+
+      if (!lastResort.error) {
+        return lastResort.data || [];
+      }
+
+      console.warn('Unable to load payroll runs with available sort strategies', {
+        primary: primary.error,
+        fallback: fallback.error,
+        lastResort: lastResort.error,
+      });
+      return [];
     } catch (error) {
-      console.error('Error loading payroll runs:', error);
+      console.warn('Error loading payroll runs:', error);
       return [];
     }
   };
@@ -374,7 +405,11 @@ export default function PayrollProcessingPage() {
           .limit(1)
           .maybeSingle();
         const role = String((emp as any)?.role || (emp as any)?.system_access_role || '');
-        const admin = ['HR Admin', 'HR Manager', 'Employer Admin', 'Administrator', 'Super Admin'].includes(role) || role.toLowerCase().includes('hr');
+        const normalized = role.trim().toLowerCase();
+        const admin =
+          ['hr admin', 'hr manager', 'employer admin', 'administrator', 'super admin', 'admin', 'admin user'].includes(normalized) ||
+          normalized.includes('hr') ||
+          normalized.includes('admin');
         setIsHrAdmin(admin);
       } catch {
       }
@@ -385,6 +420,36 @@ export default function PayrollProcessingPage() {
   // Trigger recalculation and validation when employee selection changes
   useEffect(() => {
     if (!selectedRun) return;
+
+    if (isFinalisedRun) {
+      setCalculating(true);
+      setValidating(false);
+      const timer = setTimeout(async () => {
+        try {
+          const selectedEmployeeIds = employees
+            .filter((e) => e.selected)
+            .map((e) => e.employee_id)
+            .filter(Boolean);
+          const report = await loadReportFromPayslips(selectedRun.id, selectedEmployeeIds);
+          setPayrollReport(report);
+          setValidationResult({
+            isValid: true,
+            errors: [],
+            warnings: [],
+            missingTimesheets: [],
+            unapprovedTimesheets: [],
+          });
+          setLastPreviewUpdatedAt(new Date().toLocaleTimeString());
+        } catch (error) {
+          console.warn('[payroll-process] failed to load history report for paid run', error);
+          setPayrollReport(null);
+        } finally {
+          setCalculating(false);
+        }
+      }, 200);
+
+      return () => clearTimeout(timer);
+    }
 
     const selectedPayrollEmployeeIds = employees.filter(e => e.selected).map(e => e.id);
     const selectedEmployeeIds = employees.filter(e => e.selected).map(e => e.employee_id);
@@ -426,16 +491,19 @@ export default function PayrollProcessingPage() {
   useEffect(() => {
     if (!selectedRun) {
       setApprovedHoursByEmployeeId({});
+      setTimesheetSummaryByEmployeeId({});
       return;
     }
     if (!isHrAdmin) {
       setApprovedHoursByEmployeeId({});
+      setTimesheetSummaryByEmployeeId({});
       return;
     }
 
     const employeeIds = employees.map((e) => e.employee_id).filter(Boolean);
     if (employeeIds.length === 0) {
       setApprovedHoursByEmployeeId({});
+      setTimesheetSummaryByEmployeeId({});
       return;
     }
 
@@ -477,10 +545,10 @@ export default function PayrollProcessingPage() {
         const end = new Date(`${selectedRun.pay_period_end}T23:59:59.999Z`);
 
         const next: Record<string, number> = {};
+        const nextSummary: Record<string, { approvedCount: number; nonApprovedCount: number }> = {};
         for (const r of rows) {
           const empId = String(r.employee_id || '');
           if (!empId) continue;
-          if (String(r.status || '') !== 'Approved') continue;
 
           const weekStartStr = String(r.week_start_date || '').slice(0, 10);
           if (!weekStartStr) continue;
@@ -491,12 +559,21 @@ export default function PayrollProcessingPage() {
 
           if (weekStart > end || weekEnd < start) continue;
 
-          const hours = Number((r as any).approved_hours ?? r.total_hours ?? 0);
-          next[empId] = (next[empId] || 0) + (Number.isFinite(hours) ? hours : 0);
+          const normalizedStatus = normalizeStatus(r.status);
+          const bucket = nextSummary[empId] || { approvedCount: 0, nonApprovedCount: 0 };
+          if (normalizedStatus === 'approved') {
+            bucket.approvedCount += 1;
+            const hours = Number((r as any).approved_hours ?? r.total_hours ?? 0);
+            next[empId] = (next[empId] || 0) + (Number.isFinite(hours) ? hours : 0);
+          } else {
+            bucket.nonApprovedCount += 1;
+          }
+          nextSummary[empId] = bucket;
         }
 
         if (!cancelled) {
           setApprovedHoursByEmployeeId(next);
+          setTimesheetSummaryByEmployeeId(nextSummary);
           console.info('[payroll-process] loaded approved hours', {
             payrollRunId: selectedRun.id,
             employeeCount: employeeIds.length,
@@ -616,8 +693,8 @@ export default function PayrollProcessingPage() {
 
   const isEmployeeLocked = (employee: Employee) => {
     if (!selectedRun) return false;
-    if (!isHrAdmin) return true;
-    if (selectedRun.status === 'Paid') return true;
+    if (!canSelectEmployees) return true;
+    if (isFinalisedRun) return false;
     return paidEmployeeIdsForPeriod.has(employee.employee_id);
   };
 
@@ -671,6 +748,10 @@ export default function PayrollProcessingPage() {
       );
 
       setPayrollReport(report);
+      setTimeout(() => {
+        const el = document.getElementById('payroll-summary');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
       
       // Refresh payroll runs
       const updatedRuns = await loadPayrollRuns();
@@ -1157,9 +1238,9 @@ export default function PayrollProcessingPage() {
               <h2 className="text-lg font-semibold text-gray-900">Select Employees</h2>
               <button
                 onClick={() => setShowAddEmployeeModal(true)}
-                disabled={!isHrAdmin || selectedRun.status === 'Paid'}
+                disabled={!canEditPayrollRun}
                 className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center disabled:text-gray-400 disabled:hover:text-gray-400 disabled:cursor-not-allowed"
-                title={!isHrAdmin ? 'Read-only access' : selectedRun.status === 'Paid' ? "This payroll run is already paid and locked" : undefined}
+                title={!canSelectEmployees ? 'Read-only access' : isFinalisedRun ? "This payroll run is already paid and locked" : undefined}
               >
                 <Users className="h-4 w-4 mr-1" />
                 Add Employee to Payroll
@@ -1176,9 +1257,11 @@ export default function PayrollProcessingPage() {
                 <div className="space-y-3 overflow-y-auto pr-2" style={{ maxHeight: '500px', minHeight: '300px' }}>
                   {employees.map((employee) => {
                     const locked = isEmployeeLocked(employee);
-                    const lockedReason = selectedRun.status === 'Paid' || paidEmployeeIdsForPeriod.has(employee.employee_id)
-                      ? "This employee's payroll is already processed and paid"
-                      : 'Read-only access';
+                    const lockedReason = !canSelectEmployees
+                      ? 'Read-only access'
+                      : paidEmployeeIdsForPeriod.has(employee.employee_id) && !isFinalisedRun
+                        ? "This employee's payroll is already processed and paid"
+                        : undefined;
                     return (
                       <div
                         key={employee.id}
@@ -1213,13 +1296,28 @@ export default function PayrollProcessingPage() {
                                 )}
                               </p>
                               {(() => {
+                                const summary = timesheetSummaryByEmployeeId[employee.employee_id];
+                                const approvedCount = summary?.approvedCount ?? 0;
+                                const nonApprovedCount = summary?.nonApprovedCount ?? 0;
+                                const included = approvedCount > 0;
                                 const hours = approvedHoursByEmployeeId[employee.employee_id];
-                                if (typeof hours === 'number') {
+                                if (typeof hours === 'number' || summary) {
                                   return (
                                     <div className="mt-2 flex items-center gap-2">
+                                      {summary && (
+                                        <p
+                                          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                                            included ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'
+                                          }`}
+                                        >
+                                          {included ? 'Included' : 'Excluded'}
+                                        </p>
+                                      )}
+                                      {typeof hours === 'number' && (
                                       <p className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
                                         Approved: {hours.toFixed(1)}h
                                       </p>
+                                      )}
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -1231,6 +1329,11 @@ export default function PayrollProcessingPage() {
                                       >
                                         View
                                       </button>
+                                      {summary && nonApprovedCount > 0 && (
+                                        <p className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                                          Skipped: {nonApprovedCount}
+                                        </p>
+                                      )}
                                     </div>
                                   );
                                 }
@@ -1244,11 +1347,11 @@ export default function PayrollProcessingPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (!isHrAdmin || selectedRun.status === 'Paid') return;
+                              if (!canEditPayrollRun) return;
                               setSelectedEmployeeId(employee.employee_id);
                               setIsUpdateModalOpen(true);
                             }}
-                            disabled={!isHrAdmin || selectedRun.status === 'Paid'}
+                            disabled={!canEditPayrollRun}
                             className="text-gray-400 hover:text-blue-600 p-1 rounded hover:bg-white"
                           >
                             <Edit className="w-3.5 h-3.5" />
@@ -1262,14 +1365,14 @@ export default function PayrollProcessingPage() {
                   <div className="flex space-x-4">
                     <button
                       onClick={() => setEmployees(prev => prev.map(emp => isEmployeeLocked(emp) ? { ...emp, selected: false } : { ...emp, selected: true }))}
-                      disabled={!isHrAdmin || selectedRun.status === 'Paid'}
+                      disabled={!canSelectEmployees}
                       className="text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:text-gray-400"
                     >
                       Select All
                     </button>
                     <button
                       onClick={() => setEmployees(prev => prev.map(emp => ({ ...emp, selected: false })))}
-                      disabled={!isHrAdmin || selectedRun.status === 'Paid'}
+                      disabled={!canSelectEmployees}
                       className="text-xs font-semibold text-gray-500 hover:text-gray-800 disabled:text-gray-400"
                     >
                       Deselect All
@@ -1488,7 +1591,7 @@ export default function PayrollProcessingPage() {
 
       {/* Payroll Report */}
       {payrollReport && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border relative transition-opacity duration-200">
+        <div id="payroll-summary" className="bg-white p-6 rounded-lg shadow-sm border relative transition-opacity duration-200">
           {calculating && (
             <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center rounded-lg backdrop-blur-[1px]">
               <div className="bg-white p-3 rounded-full shadow-lg border border-gray-100">
@@ -1568,6 +1671,7 @@ export default function PayrollProcessingPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                         emp.status === 'Processed' ? 'text-green-600 bg-green-100' :
+                        emp.status === 'Excluded' ? 'text-gray-700 bg-gray-100' :
                         emp.status === 'Error' ? 'text-red-600 bg-red-100' :
                         'text-yellow-600 bg-yellow-100'
                       }`}>

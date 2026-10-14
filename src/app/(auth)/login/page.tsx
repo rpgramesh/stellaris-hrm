@@ -372,7 +372,7 @@ export default function LoginPage() {
         <Link href="/">
           <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md border border-white/20 rounded-full px-4 py-2 shadow-lg">
             <img 
-              src="/logo.png" 
+              src="/logo_bkp.png" 
               alt="Stellaris Logo" 
               className="h-10 w-auto object-contain drop-shadow" 
             />

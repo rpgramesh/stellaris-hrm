@@ -20,7 +20,7 @@ export default function PayslipsPage() {
   const loadPayslips = async () => {
     try {
       setLoading(true);
-      const data = await payrollService.getPayslipsByMonthYear(selectedMonth || format(new Date(), 'yyyy-MM'));
+      const data = await payrollService.getPayslipsByMonthYear(selectedMonth || undefined);
       setPayslips(data);
     } catch (error) {
       console.error('Error loading payslips:', error);
@@ -91,7 +91,7 @@ export default function PayslipsPage() {
               onChange={(e) => setSelectedMonth(e.target.value)}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value="">Current Month</option>
+              <option value="">All Months</option>
               {months.map(month => (
                 <option key={month.value} value={month.value}>
                   {month.label}

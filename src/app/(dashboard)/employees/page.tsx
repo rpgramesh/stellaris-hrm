@@ -4,8 +4,10 @@ import { useState, useRef, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Employee } from '@/types';
+import { supabase } from '@/lib/supabase';
 import { employeeService } from '@/services/employeeService';
 import { toggleMfaRequiredAction } from '@/app/actions/auth';
+import { notificationService } from '@/services/notificationService';
 
 function EmployeesContent() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -17,6 +19,18 @@ function EmployeesContent() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [sendingInvite, setSendingInvite] = useState(false);
   const [mfaUpdatingId, setMfaUpdatingId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [employeeToDeleteId, setEmployeeToDeleteId] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState('table');
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUserId(user?.id || null);
+    };
+    fetchUser();
+  }, []);
 
   useEffect(() => {
     if (viewId && employees.length > 0) {
@@ -127,15 +141,39 @@ function EmployeesContent() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Are you sure you want to delete this employee?')) {
-      try {
-        await employeeService.delete(id);
-        setEmployees(prev => prev.filter(emp => emp.id !== id));
-      } catch (error) {
+  const handleDelete = (id: string) => {
+    setEmployeeToDeleteId(id);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!employeeToDeleteId) return;
+
+    try {
+      // Set isDeleting flag for animation
+      setEmployees(prev => prev.map(emp => 
+        emp.id === employeeToDeleteId ? { ...emp, isDeleting: true } : emp
+      ));
+
+      // Allow animation to play before actual deletion
+      setTimeout(async () => {
+        await employeeService.delete(employeeToDeleteId);
+        setEmployees(prev => prev.filter(emp => emp.id !== employeeToDeleteId));
+        if (currentUserId) {
+          notificationService.createNotification(currentUserId, 'Employee Deleted', 'Employee has been successfully deleted.', 'success');
+        }
+        setShowDeleteConfirm(false);
+        setEmployeeToDeleteId(null);
+      }, 300); // 300ms for fade-out animation
+    } catch (error) {
+      console.error('Failed to delete employee:', error);
+      if (currentUserId) {
+        notificationService.createNotification(currentUserId, 'Deletion Failed', `Failed to delete employee: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+      } else {
         console.error('Failed to delete employee:', error);
-        alert(`Failed to delete employee: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
+      setShowDeleteConfirm(false);
+      setEmployeeToDeleteId(null);
     }
   };
 
@@ -325,7 +363,10 @@ function EmployeesContent() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {employees.map((employee) => (
-                <tr key={employee.id} className="hover:bg-gray-50">
+                <tr 
+                  key={employee.id} 
+                  className={`hover:bg-gray-50 transition-opacity duration-300 ${employee.isDeleting ? 'opacity-0' : ''}`}
+                >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10">
@@ -744,6 +785,37 @@ function EmployeesContent() {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3 text-center">
+              <h3 className="text-lg leading-6 font-medium text-gray-900">Confirm Deletion</h3>
+              <div className="mt-2 px-7 py-3">
+                <p className="text-sm text-gray-500">
+                  Are you sure you want to delete this employee? This action cannot be undone.
+                </p>
+              </div>
+              <div className="items-center px-4 py-3">
+                <button
+                  id="confirm-delete-btn"
+                  className="px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  onClick={confirmDelete}
+                >
+                  Delete
+                </button>
+                <button
+                  id="cancel-delete-btn"
+                  className="mt-3 px-4 py-2 bg-gray-200 text-gray-800 text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                  onClick={() => setShowDeleteConfirm(false)}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

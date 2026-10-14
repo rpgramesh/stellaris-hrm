@@ -90,7 +90,7 @@ export default function CertificatePage() {
                 <div className="flex justify-center mb-8">
                    <div className="relative w-48 h-16">
                      <Image 
-                       src="/logo.png" 
+                      src="/logo_bkp.png" 
                        alt="Stellaris HRM" 
                        fill 
                        className="object-contain"

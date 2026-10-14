@@ -217,7 +217,7 @@ export default function Navbar() {
             className="md:hidden flex items-center"
           >
             <img
-              src="/logo.png"
+              src="/logo_bkp.png"
               alt="Stellaris HRM"
               className="h-8 w-auto object-contain"
             />
@@ -383,7 +383,7 @@ export default function Navbar() {
                 onClick={() => setMobileMenuOpen(false)}
               >
                 <img
-                  src="/logo.png"
+                  src="/logo_bkp.png"
                   alt="Stellaris HRM"
                   className="h-8 w-auto object-contain"
                 />

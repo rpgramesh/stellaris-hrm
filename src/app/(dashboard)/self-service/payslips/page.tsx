@@ -65,34 +65,67 @@ export default function EmployeePayslipsPage() {
     try {
       setLoading(true);
       
-      // In a real implementation, this would get the current employee ID from auth context
-      const currentEmployeeId = 'current-employee-id'; // Placeholder
-      
-      // Load employee details
-      const { data: employeeData } = await supabase
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth.user;
+      if (!user) {
+        setPayslips([]);
+        setEmployee(null);
+        return;
+      }
+
+      let employeeData: any = null;
+
+      const { data: byUserId, error: byUserIdError } = await supabase
         .from('employees')
         .select(`
           id,
           first_name,
           last_name,
           employee_code,
-          departments:name,
-          job_positions:title,
-          employment_type
+          employment_type,
+          department:departments!employees_department_id_fkey(name),
+          position:job_positions(title)
         `)
-        .eq('user_id', 'current-user-id') // Would get from auth
-        .single();
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (byUserIdError) throw byUserIdError;
+      employeeData = byUserId;
+
+      if (!employeeData && user.email) {
+        const { data: byEmail, error: byEmailError } = await supabase
+          .from('employees')
+          .select(`
+            id,
+            first_name,
+            last_name,
+            employee_code,
+            employment_type,
+            department:departments!employees_department_id_fkey(name),
+            position:job_positions(title)
+          `)
+          .eq('email', user.email)
+          .maybeSingle();
+
+        if (byEmailError) throw byEmailError;
+        employeeData = byEmail;
+      }
 
       if (employeeData) {
         setEmployee({
           ...employeeData,
-          department: employeeData.departments?.name,
-          position: employeeData.job_positions?.title
+          department: employeeData.department?.name,
+          position: employeeData.position?.title
         });
       }
 
+      if (!employeeData?.id) {
+        setPayslips([]);
+        return;
+      }
+
       // Load payslips for the employee
-      const employeePayslips = await payrollService.getPayslipsByEmployeeId(currentEmployeeId);
+      const employeePayslips = await payrollService.getPayslipsByEmployeeId(employeeData.id);
       
       // Load detailed pay components for each payslip
       const payslipsWithDetails: Payslip[] = await Promise.all(
@@ -104,11 +137,11 @@ export default function EmployeePayslipsPage() {
 
           const mapped: Payslip = {
             id: p.id,
-            period_start: (p as any).period_start ?? (p as any).periodStart,
-            period_end: (p as any).period_end ?? (p as any).periodEnd,
+            period_start: (p as any).period_start ?? (p as any).periodStart ?? (p as any).payPeriodStart,
+            period_end: (p as any).period_end ?? (p as any).periodEnd ?? (p as any).payPeriodEnd,
             gross_pay: (p as any).gross_pay ?? (p as any).grossPay ?? 0,
             net_pay: (p as any).net_pay ?? (p as any).netPay ?? 0,
-            tax_withheld: (p as any).tax_withheld ?? (p as any).paygTax ?? 0,
+            tax_withheld: (p as any).tax_withheld ?? (p as any).taxWithheld ?? 0,
             superannuation: (p as any).superannuation ?? 0,
             allowances: (p as any).allowances ?? 0,
             overtime: (p as any).overtime ?? 0,
@@ -136,14 +169,14 @@ export default function EmployeePayslipsPage() {
       const pdfBuffer = await comprehensivePayrollService.generatePayslipPDF(payslipId);
       
       // Create blob and download
-      const arrayBuffer: ArrayBuffer = (pdfBuffer as any)?.buffer instanceof ArrayBuffer 
-        ? (pdfBuffer as any).buffer 
-        : (pdfBuffer as unknown as ArrayBuffer);
-      const blob = new Blob([pdfBuffer as any], { type: 'application/pdf' });
+      const uint8Array = new Uint8Array(pdfBuffer as any);
+      const blob = new Blob([uint8Array], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `payslip-${selectedPayslip?.period_start}-${selectedPayslip?.period_end}.pdf`;
+      link.download = selectedPayslip
+        ? `payslip-${selectedPayslip.period_start}-${selectedPayslip.period_end}.pdf`
+        : `payslip_${payslipId}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

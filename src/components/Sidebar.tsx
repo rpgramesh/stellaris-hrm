@@ -389,7 +389,7 @@ export default function Sidebar() {
       <div className={`p-4 border-b border-gray-800 flex items-center transition-all duration-300 whitespace-nowrap overflow-hidden relative ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <Link href="/dashboard" className="flex items-center overflow-hidden">
           <img
-            src="/logo.png"
+            src="/logo_bkp.png"
             alt="Stellaris HRM"
             className={`h-10 w-auto transition-opacity duration-300 ${isExpanded ? 'opacity-100 static' : 'opacity-0 absolute'}`}
           />

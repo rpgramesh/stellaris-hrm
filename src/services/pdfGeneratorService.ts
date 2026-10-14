@@ -292,7 +292,7 @@ export const pdfGeneratorService = {
     
     // 1. Header - Logo and Company Details
     try {
-      doc.addImage('/logo.png', 'PNG', 15, 15, 50, 15);
+      doc.addImage('/logo_bkp.png', 'PNG', 15, 15, 50, 15);
     } catch (e) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(20);
@@ -345,7 +345,7 @@ export const pdfGeneratorService = {
     doc.text(`Pay Period: ${format(new Date(periodStart), 'dd/MM/yyyy')} - ${format(new Date(periodEnd), 'dd/MM/yyyy')}`, 20, 101.5);
     doc.text(`Payment Date: ${format(new Date(payslip.payment_date || payslip.paymentDate), 'dd/MM/yyyy')}`, 65, 101.5);
     doc.setFont('helvetica', 'bold');
-    const grossPay = Number(payslip.gross_pay || payslip.grossPay || payslip.gross_salary || payslip.grossSalary || 0);
+    const grossPay = Number(payslip.gross_earnings || payslip.gross_pay || payslip.grossPay || payslip.gross_salary || payslip.grossSalary || 0);
     const netPay = Number(payslip.net_pay || payslip.netPay || payslip.net_salary || payslip.netSalary || 0);
     doc.text(`Total Earnings: $${grossPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 120, 101.5);
     doc.text(`Net Pay: $${netPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 165, 101.5);

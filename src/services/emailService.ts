@@ -71,6 +71,15 @@ interface WelcomeEmailPayload {
 const getAppBaseUrl = () => {
   const fromEnv = process.env.NEXT_PUBLIC_APP_URL;
   if (fromEnv) return fromEnv.replace(/\/+$/, '');
+  const vercelUrl = process.env.VERCEL_URL || process.env.NEXT_PUBLIC_VERCEL_URL;
+  if (vercelUrl) {
+    const normalized = vercelUrl.startsWith('http') ? vercelUrl : `https://${vercelUrl}`;
+    return normalized.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    const port = process.env.PORT || '3000';
+    return `http://localhost:${port}`;
+  }
   return '';
 };
 

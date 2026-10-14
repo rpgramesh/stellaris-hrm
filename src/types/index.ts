@@ -41,6 +41,7 @@ export interface Employee {
   email: string;
   phone: string;
   profilePhotoUrl?: string;
+  isDeleting?: boolean; // Added for UI animation during deletion
   // Extended Contact
   blogUrl?: string;
   officePhone?: string;

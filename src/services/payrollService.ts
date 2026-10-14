@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { Employee, Department, Designation } from '@/types';
-import { format } from 'date-fns';
+import { addMonths, format } from 'date-fns';
 import { pdfGeneratorService } from './pdfGeneratorService';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -185,6 +185,10 @@ export interface PayrollSummary {
 }
 
 export class PayrollService {
+  private isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
   private mapToSalaryStructure(s: any): SalaryStructure {
     return {
       id: s.id,
@@ -301,8 +305,8 @@ export class PayrollService {
   }
 
   private mapToPayslip(p: any): Payslip {
-    const gross = Number(p.gross_pay || p.gross_earnings || 0);
-    const tax = Number(p.tax_withheld || p.payg_tax || p.income_tax || 0);
+    const gross = Number(p.gross_earnings || p.gross_pay || p.gross_salary || p.gross_earnings || 0);
+    const tax = Number(p.income_tax || p.tax_withheld || p.payg_tax || p.income_tax || 0);
     const net = Number(p.net_pay || 0);
     const superAmt = Number(p.superannuation || 0);
 
@@ -312,8 +316,8 @@ export class PayrollService {
       employeeId: p.employee_id,
       employeeSalaryId: p.employee_salary_id,
       payslipNumber: p.payslip_number,
-      payPeriodStart: p.period_start || p.pay_period_start,
-      payPeriodEnd: p.period_end || p.pay_period_end,
+      payPeriodStart: p.pay_period_start || p.period_start,
+      payPeriodEnd: p.pay_period_end || p.period_end,
       basicPay: Number(p.basic_pay || p.basic_salary || 0),
       grossPay: gross,
       taxWithheld: tax,
@@ -798,15 +802,15 @@ export class PayrollService {
   async syncPayrollRunTotals(payrollRunId: string): Promise<void> {
     const { data: payslips, error } = await supabase
       .from('payslips')
-      .select('gross_pay, tax_withheld, net_pay')
+      .select('gross_earnings, gross_pay, income_tax, tax_withheld, net_pay')
       .eq('payroll_run_id', payrollRunId);
 
     if (error) throw error;
 
     const totals = (payslips || []).reduce(
       (acc, slip) => ({
-        gross: acc.gross + (Number(slip.gross_pay) || 0),
-        tax: acc.tax + (Number(slip.tax_withheld) || 0),
+        gross: acc.gross + (Number((slip as any).gross_earnings || (slip as any).gross_pay) || 0),
+        tax: acc.tax + (Number((slip as any).income_tax || (slip as any).tax_withheld) || 0),
         net: acc.net + (Number(slip.net_pay) || 0),
       }),
       { gross: 0, tax: 0, net: 0 }
@@ -987,10 +991,18 @@ export class PayrollService {
 
   // Reporting
   async getPayrollSummary(monthYear: string): Promise<PayrollSummary> {
-    const { data: payslips } = await supabase
+    const start = new Date(`${monthYear}-01`);
+    const endExclusive = addMonths(start, 1);
+    const startStr = format(start, 'yyyy-MM-dd');
+    const endExclusiveStr = format(endExclusive, 'yyyy-MM-dd');
+
+    const { data: payslips, error } = await supabase
       .from('payslips')
       .select('*')
-      .eq('pay_period_start', format(new Date(monthYear + '-01'), 'yyyy-MM-dd'));
+      .gte('period_start', startStr)
+      .lt('period_start', endExclusiveStr);
+
+    if (error) throw error;
 
     if (!payslips || payslips.length === 0) {
       return {
@@ -1005,15 +1017,21 @@ export class PayrollService {
       };
     }
 
+    const pickGross = (p: any) => Number(p.gross_pay ?? p.gross_salary ?? p.gross_earnings ?? 0);
+    const pickTax = (p: any) => Number(p.tax_withheld ?? p.payg_tax ?? p.income_tax ?? 0);
+    const pickNet = (p: any) => Number(p.net_pay ?? p.net_salary ?? 0);
+    const pickDeductions = (p: any) =>
+      Number(p.total_deductions ?? 0) || pickTax(p);
+
     return {
       totalEmployees: payslips.length,
-      totalGrossPay: payslips.reduce((sum, p) => sum + p.gross_salary, 0),
-      totalDeductions: payslips.reduce((sum, p) => sum + p.total_deductions, 0),
-      totalNetPay: payslips.reduce((sum, p) => sum + p.net_salary, 0),
-      totalPF: payslips.reduce((sum, p) => sum + p.pf_deduction, 0),
-      totalESI: payslips.reduce((sum, p) => sum + p.esi_deduction, 0),
-      totalProfessionalTax: payslips.reduce((sum, p) => sum + p.professional_tax, 0),
-      totalIncomeTax: payslips.reduce((sum, p) => sum + p.income_tax, 0)
+      totalGrossPay: payslips.reduce((sum, p) => sum + pickGross(p), 0),
+      totalDeductions: payslips.reduce((sum, p) => sum + pickDeductions(p), 0),
+      totalNetPay: payslips.reduce((sum, p) => sum + pickNet(p), 0),
+      totalPF: payslips.reduce((sum, p) => sum + Number(p.pf_deduction ?? p.pf_amount ?? 0), 0),
+      totalESI: payslips.reduce((sum, p) => sum + Number(p.esi_deduction ?? p.esi_amount ?? 0), 0),
+      totalProfessionalTax: payslips.reduce((sum, p) => sum + Number(p.professional_tax ?? p.pt_amount ?? 0), 0),
+      totalIncomeTax: payslips.reduce((sum, p) => sum + pickTax(p), 0)
     };
   }
 
@@ -1023,21 +1041,27 @@ export class PayrollService {
       .select('*, employee:employees(*)');
 
     if (monthYear) {
-      query = query.ilike('pay_period_start', `${monthYear}%`);
+      const start = new Date(`${monthYear}-01`);
+      const endExclusive = addMonths(start, 1);
+      const startStr = format(start, 'yyyy-MM-dd');
+      const endExclusiveStr = format(endExclusive, 'yyyy-MM-dd');
+
+      query = query.gte('period_start', startStr).lt('period_start', endExclusiveStr);
     }
 
-    const { data, error } = await query.order('pay_period_start', { ascending: false });
+    const { data, error } = await query.order('period_start', { ascending: false });
 
     if (error) throw error;
     return (data || []).map(p => this.mapToPayslip(p));
   }
 
   async getPayslipsByEmployeeId(employeeId: string): Promise<Payslip[]> {
+    if (!this.isUuid(employeeId)) return [];
     const { data, error } = await supabase
       .from('payslips')
       .select('*, employee:employees(*)')
       .eq('employee_id', employeeId)
-      .order('pay_period_end', { ascending: false });
+      .order('period_end', { ascending: false });
 
     if (error) throw error;
     return (data || []).map(p => this.mapToPayslip(p));
@@ -1047,11 +1071,20 @@ export class PayrollService {
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) throw new Error('Not authenticated');
 
+    const { data: employee, error: employeeError } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('user_id', userData.user.id)
+      .maybeSingle();
+
+    if (employeeError) throw employeeError;
+    if (!employee?.id) throw new Error('Employee profile not found for the logged-in user');
+
     const { data, error } = await supabase
       .from('payslips')
       .select(`*, employee:employees(*, departments(*), designations(*))`)
-      .eq('employee_id', userData.user.id)
-      .order('pay_period_start', { ascending: false });
+      .eq('employee_id', employee.id)
+      .order('period_start', { ascending: false });
 
     if (error) throw error;
     return (data || []).map(p => this.mapToPayslip(p));
@@ -1063,9 +1096,9 @@ export class PayrollService {
       .from('payslips')
       .select('*')
       .eq('employee_id', employeeId)
-      .gte('pay_period_start', `${financialYear}-04-01`)
-      .lte('pay_period_end', `${parseInt(financialYear) + 1}-03-31`)
-      .order('pay_period_start');
+      .gte('period_start', `${financialYear}-04-01`)
+      .lte('period_end', `${parseInt(financialYear) + 1}-03-31`)
+      .order('period_start');
 
     if (!payslips || payslips.length === 0) {
       throw new Error('No payslips found for the financial year');
@@ -1100,9 +1133,9 @@ export class PayrollService {
     doc.text(`Employee ID: ${employee.employee_code || employee.id}`, 20, 110);
     
     // Salary Summary
-    const totalGross = payslips.reduce((sum, p) => sum + p.gross_salary, 0);
-    const totalTax = payslips.reduce((sum, p) => sum + p.income_tax, 0);
-    const totalPF = payslips.reduce((sum, p) => sum + p.pf_deduction, 0);
+    const totalGross = payslips.reduce((sum, p: any) => sum + Number(p.gross_pay ?? p.gross_salary ?? 0), 0);
+    const totalTax = payslips.reduce((sum, p: any) => sum + Number(p.tax_withheld ?? p.payg_tax ?? p.income_tax ?? 0), 0);
+    const totalPF = payslips.reduce((sum, p: any) => sum + Number(p.pf_deduction ?? p.pf_amount ?? 0), 0);
     
     doc.text('Salary Summary:', 20, 130);
     doc.text(`Total Gross Salary: $${totalGross.toFixed(2)}`, 20, 140);
@@ -1115,10 +1148,10 @@ export class PayrollService {
       startY: 185,
       head: [['Month', 'Gross Salary ($)', 'Income Tax ($)', 'Net Pay ($)']],
       body: payslips.map(p => [
-        format(new Date(p.pay_period_start), 'MMM yyyy'),
-        p.gross_salary.toFixed(2),
-        p.income_tax.toFixed(2),
-        p.net_salary.toFixed(2)
+        format(new Date((p as any).period_start ?? (p as any).pay_period_start), 'MMM yyyy'),
+        Number((p as any).gross_pay ?? (p as any).gross_salary ?? 0).toFixed(2),
+        Number((p as any).tax_withheld ?? (p as any).income_tax ?? 0).toFixed(2),
+        Number((p as any).net_pay ?? (p as any).net_salary ?? 0).toFixed(2)
       ]),
       theme: 'grid',
       styles: { fontSize: 10 }

@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { payrollProcessingEngine } from './payrollProcessingEngine';
+import { payrollProcessingEngine, NO_APPROVED_TIMESHEETS_WARNING } from './payrollProcessingEngine';
 import { auditService } from './auditService';
 import { notificationService } from './notificationService';
 import { payrollValidationService } from './payrollValidationService';
@@ -40,7 +40,7 @@ export interface PayrollReport {
     netPay: number;
     super: number;
     hoursWorked: number;
-    status: 'Processed' | 'Error' | 'Warning';
+    status: 'Processed' | 'Error' | 'Warning' | 'Excluded';
     errors: string[];
     warnings: string[];
   }[];
@@ -265,6 +265,9 @@ export const comprehensivePayrollService = {
     try {
       // Resolve current user and employee ID if needed
       const { data: { user } } = await supabase.auth.getUser();
+      if (processedBy === 'current-user' && !user) {
+        throw new Error('Not authenticated');
+      }
       if (user) {
         userId = user.id;
         if (processedBy === 'current-user') {
@@ -280,8 +283,8 @@ export const comprehensivePayrollService = {
         }
       }
 
-      // Validate payroll run first
-      const validation = await this.validatePayrollRun(payrollRunId);
+      // Validate payroll run first (respect selected subset when provided)
+      const validation = await this.validatePayrollRun(payrollRunId, options.selectedEmployeeIds);
       if (!validation.isValid) {
         throw new Error(`Payroll validation failed: ${validation.errors.join(', ')}`);
       }
@@ -587,6 +590,34 @@ export const comprehensivePayrollService = {
       const calculationResults: PayrollCalculationResult[] = [];
       for (const employee of targetEmployees) {
         try {
+          const approvedTimesheets = await payrollProcessingEngine.getTimesheetsForPeriod(
+            employee.employeeId,
+            payrollRun.payPeriodStart,
+            payrollRun.payPeriodEnd
+          );
+
+          if (!approvedTimesheets || approvedTimesheets.length === 0) {
+            const skippedResult: PayrollCalculationResult = {
+              employeeId: employee.employeeId,
+              periodStart: payrollRun.payPeriodStart,
+              periodEnd: payrollRun.payPeriodEnd,
+              components: { earnings: [], deductions: [], superContributions: [] },
+              totals: {
+                grossPay: 0,
+                taxableIncome: 0,
+                totalDeductions: 0,
+                taxWithheld: 0,
+                netPay: 0,
+                superContributions: 0,
+              },
+              validationErrors: ['No approved timesheets for the pay period'],
+              warnings: [NO_APPROVED_TIMESHEETS_WARNING],
+            };
+
+            calculationResults.push(skippedResult);
+            continue;
+          }
+
           const result = await payrollProcessingEngine.calculateEmployeePayroll(employee, payrollRun);
           calculationResults.push(result);
         } catch (error) {
@@ -610,8 +641,10 @@ export const comprehensivePayrollService = {
     let totalTax = 0;
     let totalNetPay = 0;
     let totalSuper = 0;
+    let includedEmployeeCount = 0;
 
     for (const result of calculationResults) {
+      const isExcluded = (result.warnings || []).includes(NO_APPROVED_TIMESHEETS_WARNING);
       // Get employee details
       const { data: employee } = await supabase
         .from('employees')
@@ -641,28 +674,32 @@ export const comprehensivePayrollService = {
       employeeBreakdown.push({
         employeeId: result.employeeId,
         employeeName,
-        grossPay: result.totals.grossPay,
-        tax: result.totals.taxWithheld,
-        netPay: result.totals.netPay,
-        super: result.totals.superContributions,
-        hoursWorked,
-        status: result.validationErrors.length > 0 ? 'Error' : 
+        grossPay: isExcluded ? 0 : result.totals.grossPay,
+        tax: isExcluded ? 0 : result.totals.taxWithheld,
+        netPay: isExcluded ? 0 : result.totals.netPay,
+        super: isExcluded ? 0 : result.totals.superContributions,
+        hoursWorked: isExcluded ? 0 : hoursWorked,
+        status: isExcluded ? 'Excluded' :
+                result.validationErrors.length > 0 ? 'Error' :
                 result.warnings.length > 0 ? 'Warning' : 'Processed',
         errors: result.validationErrors,
         warnings: result.warnings
       });
 
-      totalGrossPay += result.totals.grossPay;
-      totalTax += result.totals.taxWithheld;
-      totalNetPay += result.totals.netPay;
-      totalSuper += result.totals.superContributions;
+      if (!isExcluded) {
+        includedEmployeeCount += 1;
+        totalGrossPay += result.totals.grossPay;
+        totalTax += result.totals.taxWithheld;
+        totalNetPay += result.totals.netPay;
+        totalSuper += result.totals.superContributions;
+      }
     }
 
     return {
       payrollRunId: payrollRun.id,
       periodStart: payrollRun.payPeriodStart,
       periodEnd: payrollRun.payPeriodEnd,
-      totalEmployees: calculationResults.length,
+      totalEmployees: includedEmployeeCount,
       totalGrossPay,
       totalTax,
       totalNetPay,

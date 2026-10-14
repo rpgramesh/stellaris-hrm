@@ -8,6 +8,14 @@ import { attendanceService } from './attendanceService';
 import { Timesheet } from '@/types';
 import { supabase } from '@/lib/supabase';
 
+export const NO_APPROVED_TIMESHEETS_WARNING = 'SKIPPED:NO_APPROVED_TIMESHEETS';
+
+export const normalizeTimesheetStatus = (status: unknown): string =>
+  String(status ?? '').trim().toLowerCase();
+
+export const isApprovedTimesheetStatus = (status: unknown): boolean =>
+  normalizeTimesheetStatus(status) === 'approved';
+
 export const payrollProcessingEngine = {
   async processPayrollRun(payrollRunId: string, processedBy: string, selectedEmployeeIds?: string[]): Promise<PayrollCalculationResult[]> {
     const payrollRun = await this.getPayrollRun(payrollRunId);
@@ -48,10 +56,108 @@ export const payrollProcessingEngine = {
     try {
       for (const employee of employees) {
         try {
+          const approvedTimesheets = await this.getTimesheetsForPeriod(
+            employee.employeeId,
+            payrollRun.payPeriodStart,
+            payrollRun.payPeriodEnd
+          );
+
+          const start = new Date(`${payrollRun.payPeriodStart}T00:00:00.000Z`);
+          const end = new Date(`${payrollRun.payPeriodEnd}T23:59:59.999Z`);
+          const startMinus6 = new Date(start);
+          startMinus6.setUTCDate(startMinus6.getUTCDate() - 6);
+          const startMinus6Str = startMinus6.toISOString().slice(0, 10);
+
+          let timesheetsForAudit: any[] = [];
+          try {
+            const { data } = await supabase
+              .from('timesheets')
+              .select('id, status, week_start_date')
+              .eq('employee_id', employee.employeeId)
+              .gte('week_start_date', startMinus6Str)
+              .lte('week_start_date', payrollRun.payPeriodEnd);
+            timesheetsForAudit = Array.isArray(data) ? data : [];
+          } catch {
+            timesheetsForAudit = [];
+          }
+
+          const auditRelevant = timesheetsForAudit.filter((ts: any) => {
+            const weekStartStr = String(ts.week_start_date || '').slice(0, 10);
+            if (!weekStartStr) return false;
+            const weekStart = new Date(`${weekStartStr}T00:00:00.000Z`);
+            if (Number.isNaN(weekStart.getTime())) return false;
+            const weekEnd = new Date(weekStart);
+            weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+            return weekStart <= end && weekEnd >= start;
+          });
+
+          const processedTimesheetIds = approvedTimesheets.map((ts: any) => ts.id).filter(Boolean);
+          const skippedTimesheets = auditRelevant
+            .filter((ts: any) => !isApprovedTimesheetStatus(ts.status))
+            .map((ts: any) => ({
+              id: ts.id,
+              status: ts.status,
+              week_start_date: String(ts.week_start_date || '').slice(0, 10),
+            }));
+
+          if (processedTimesheetIds.length === 0) {
+            const skippedResult: PayrollCalculationResult = {
+              employeeId: employee.employeeId,
+              periodStart: payrollRun.payPeriodStart,
+              periodEnd: payrollRun.payPeriodEnd,
+              components: { earnings: [], deductions: [], superContributions: [] },
+              totals: {
+                grossPay: 0,
+                taxableIncome: 0,
+                totalDeductions: 0,
+                taxWithheld: 0,
+                netPay: 0,
+                superContributions: 0,
+              },
+              validationErrors: ['No approved timesheets for the pay period'],
+              warnings: [NO_APPROVED_TIMESHEETS_WARNING],
+            };
+
+            results.push(skippedResult);
+
+            await auditService.logAction(
+              'payroll_runs',
+              payrollRunId,
+              'SYSTEM_ACTION',
+              null,
+              {
+                event: 'PAYROLL_TIMESHEETS_SKIPPED',
+                employeeId: employee.employeeId,
+                periodStart: payrollRun.payPeriodStart,
+                periodEnd: payrollRun.payPeriodEnd,
+                processedTimesheetIds,
+                skippedTimesheets,
+              },
+              processedBy
+            );
+
+            continue;
+          }
+
           const result = await this.calculateEmployeePayroll(employee, payrollRun);
           results.push(result);
+
+          await auditService.logAction(
+            'payroll_runs',
+            payrollRunId,
+            'SYSTEM_ACTION',
+            null,
+            {
+              event: 'PAYROLL_TIMESHEETS_PROCESSED',
+              employeeId: employee.employeeId,
+              periodStart: payrollRun.payPeriodStart,
+              periodEnd: payrollRun.payPeriodEnd,
+              processedTimesheetIds,
+              skippedTimesheets,
+            },
+            processedBy
+          );
           
-          // Create payslip
           await this.createPayslipFromCalculation(result, payrollRunId);
         } catch (calcError) {
           console.error(`Error calculating payroll for employee ${employee.employeeId}:`, calcError);
@@ -780,12 +886,13 @@ export const payrollProcessingEngine = {
   },
 
   async updatePayrollRunTotals(payrollRunId: string, results: PayrollCalculationResult[]): Promise<void> {
+    const included = results.filter((r) => !(r.warnings || []).includes(NO_APPROVED_TIMESHEETS_WARNING));
     const totals = {
-      total_gross_pay: results.reduce((sum, r) => sum + r.totals.grossPay, 0),
-      total_tax: results.reduce((sum, r) => sum + r.totals.taxWithheld, 0),
-      total_net_pay: results.reduce((sum, r) => sum + r.totals.netPay, 0),
-      total_super: results.reduce((sum, r) => sum + r.totals.superContributions, 0),
-      employee_count: results.length,
+      total_gross_pay: included.reduce((sum, r) => sum + r.totals.grossPay, 0),
+      total_tax: included.reduce((sum, r) => sum + r.totals.taxWithheld, 0),
+      total_net_pay: included.reduce((sum, r) => sum + r.totals.netPay, 0),
+      total_super: included.reduce((sum, r) => sum + r.totals.superContributions, 0),
+      employee_count: included.length,
       processed_at: new Date().toISOString()
     };
     
@@ -1076,9 +1183,19 @@ export const payrollProcessingEngine = {
   },
 
   async getTimesheetsForPeriod(employeeId: string, periodStart: string, periodEnd: string): Promise<Timesheet[]> {
+    const filterOverlap = (rows: any[]): Timesheet[] => {
+      const periodStartDate = new Date(periodStart);
+      return (rows || []).filter((ts) => {
+        const weekStartDateStr = ts.week_start_date || (ts as any).weekStartDate;
+        if (!weekStartDateStr) return false;
+        const weekStart = new Date(weekStartDateStr);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 7);
+        return weekEnd >= periodStartDate;
+      }) as any;
+    };
+
     try {
-      // Fetch all timesheets for the employee that overlap with the period
-      // Including rows and entries to ensure we can calculate hours if the summary field is 0
       const { data, error } = await supabase
         .from('timesheets')
         .select(`
@@ -1089,29 +1206,61 @@ export const payrollProcessingEngine = {
           )
         `)
         .eq('employee_id', employeeId)
-        .eq('status', 'Approved')
+        .ilike('status', 'approved')
         .lte('week_start_date', periodEnd);
 
       if (error) throw error;
-      
-      // Filter out timesheets that are too old
-      const periodStartDate = new Date(periodStart);
-      return (data || []).filter(ts => {
-        const weekStartDateStr = ts.week_start_date || (ts as any).weekStartDate;
-        if (!weekStartDateStr) return false;
-        
-        const weekStart = new Date(weekStartDateStr);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 7);
-        return weekEnd >= periodStartDate;
-      });
+      const filtered = filterOverlap(data || []);
+      if (filtered.length > 0) return filtered;
     } catch (error) {
-      console.error('Error fetching timesheets for period:', error);
+      console.warn('Error fetching timesheets for period (direct query), will try admin API fallback:', error);
+    }
+
+    try {
+      if (typeof window === 'undefined') return [];
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) return [];
+
+      const res = await fetch('/api/payroll/timesheets/for-period', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          employeeIds: [employeeId],
+          startDate: periodStart,
+          endDate: periodEnd,
+        }),
+      });
+
+      if (!res.ok) return [];
+      const json = await res.json().catch(() => ({}));
+      const rows = Array.isArray(json?.rows) ? json.rows : [];
+
+      const mapped = rows
+        .filter((r: any) => isApprovedTimesheetStatus(r.status))
+        .map((r: any) => ({
+          id: r.id,
+          employee_id: r.employee_id,
+          week_start_date: r.week_start_date,
+          status: r.status,
+          total_hours: Number((r as any).approved_hours ?? r.total_hours ?? 0),
+          rows: [],
+        }));
+
+      return filterOverlap(mapped);
+    } catch (error) {
+      console.warn('Error fetching timesheets for period (admin API fallback):', error);
       return [];
     }
   },
 
   calculateHoursFromTimesheet(timesheet: Timesheet): { regularHours: number; overtimeHours: number; totalHours: number } {
+    if (!isApprovedTimesheetStatus((timesheet as any).status)) {
+      return { regularHours: 0, overtimeHours: 0, totalHours: 0 };
+    }
     // Handle both snake_case and camelCase
     let totalHours = Number(timesheet.totalHours || (timesheet as any).total_hours || 0);
     

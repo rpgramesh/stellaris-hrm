@@ -45,7 +45,7 @@ export default function LandingPage() {
            {/* Logo */}
            <div className="flex items-center">
              <img 
-               src="/logo.png" 
+               src="/logo_bkp.png" 
                alt="Stellaris Logo" 
                className="h-16 w-auto object-contain"
              />
